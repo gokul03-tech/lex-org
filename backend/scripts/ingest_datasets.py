@@ -121,7 +121,7 @@ def ingest_acts_pdfs() -> dict[str, int]:
 
 # ── GovIntel KG Import ───────────────────────────────────────
 def ingest_govintel_kg() -> dict[str, int]:
-    """Import GovIntel sections and edges into Neo4j.
+    """Import GovIntel sections and edges into FalkorDB.
 
     Returns:
         Dict with stats (sections, edges, cross_code_edges, judgment_edges).
@@ -130,9 +130,9 @@ def ingest_govintel_kg() -> dict[str, int]:
     logger.info("Starting GovIntel KG ingestion...")
 
     try:
-        from app.kg.neo4j_client import get_neo4j_client
+        from app.kg.falkordb_client import get_falkordb_client
     except ImportError as exc:
-        logger.error(f"Cannot import neo4j_client: {exc}")
+        logger.error(f"Cannot import falkordb_client: {exc}")
         return {"sections": 0, "edges": 0, "cross_code": 0, "judgment": 0}
 
     legal_corpus = settings.PROJECT_ROOT / settings.LEGAL_CORPUS_DIR
@@ -150,14 +150,14 @@ def ingest_govintel_kg() -> dict[str, int]:
     }
 
     async def _import() -> dict[str, int]:
-        neo4j = await get_neo4j_client()
-        connected = await neo4j.verify_connectivity()
+        falkordb = await get_falkordb_client()
+        connected = await falkordb.verify_connectivity()
         if not connected:
-            logger.warning("Neo4j not available, skipping KG import.")
+            logger.warning("FalkorDB not available, skipping KG import.")
             return stats
 
-        # Use the seed importer from the neo4j client
-        result = await neo4j.seed_from_govintel()
+        # Use the seed importer from the falkordb client
+        result = await falkordb.seed_from_govintel()
         return result
 
     try:

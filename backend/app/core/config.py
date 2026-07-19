@@ -42,11 +42,11 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/lexorch.db"
     DB_ECHO: bool = False
 
-    # ── Neo4j Knowledge Graph ───────────────────────────────────
-    NEO4J_URI: str = "bolt://localhost:7687"
-    NEO4J_USER: str = "neo4j"
-    NEO4J_PASSWORD: str = "password"
-    NEO4J_DATABASE: str = "neo4j"
+    # ── FalkorDB Knowledge Graph ────────────────────────────────
+    FALKORDB_HOST: str = "localhost"
+    FALKORDB_PORT: int = 6379
+    FALKORDB_PASSWORD: str = ""
+    FALKORDB_GRAPH_NAME: str = "lexorch"
 
     # ── Qdrant Vector Database ──────────────────────────────────
     QDRANT_URL: str = "http://localhost:6333"

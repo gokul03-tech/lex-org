@@ -38,11 +38,11 @@ CaseUnderstanding → LegalResearch → KnowledgeGraph → EvidenceReliability
 - **Novelty**: 4-way parallel retrieval with intent-adaptive weighting
 
 ### 3. KnowledgeGraphAgent
-- **Purpose**: Build dynamic evidence graph in Neo4j
+- **Purpose**: Build dynamic evidence graph in FalkorDB
 - **LLM**: None (graph operations)
 - **Input**: `entities`, `applicable_sections`
 - **Output**: `kg_data` (nodes + edges)
-- **Novelty**: Real-time graph mutation as evidence is added; falls back to local graph when Neo4j unavailable
+- **Novelty**: Real-time graph mutation as evidence is added; falls back to local graph when FalkorDB unavailable
 
 ### 4. EvidenceReliabilityAgent
 - **Purpose**: Score evidence reliability using multi-factor analysis

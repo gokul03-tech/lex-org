@@ -193,7 +193,7 @@ async def legal_research_agent(state: AgentState) -> AgentState:
 
 # ── Agent 3: Knowledge Graph Agent ─────────────────────────
 async def knowledge_graph_agent(state: AgentState) -> AgentState:
-    """Build dynamic evidence graph in Neo4j from extracted entities.
+    """Build dynamic evidence graph in FalkorDB from extracted entities.
 
     Input: state.entities, state.case_id, state.applicable_sections
     Output: kg_data
@@ -202,15 +202,15 @@ async def knowledge_graph_agent(state: AgentState) -> AgentState:
     logger.info(f"[KnowledgeGraph] Building case graph")
 
     try:
-        from app.kg.neo4j_client import get_neo4j_client
+        from app.kg.falkordb_client import get_falkordb_client
 
         kg_data: dict[str, Any] = {"nodes": [], "edges": [], "status": "unavailable"}
 
-        neo4j = await get_neo4j_client()
-        connected = await neo4j.verify_connectivity()
+        falkordb = await get_falkordb_client()
+        connected = await falkordb.verify_connectivity()
 
         if not connected:
-            logger.warning("[KnowledgeGraph] Neo4j unavailable - creating local graph structure")
+            logger.warning("[KnowledgeGraph] FalkorDB unavailable - creating local graph structure")
             # Build local graph from extracted entities
             entities = state.get("entities", {})
             sections = state.get("applicable_sections", [])
@@ -233,10 +233,10 @@ async def knowledge_graph_agent(state: AgentState) -> AgentState:
 
             kg_data["status"] = "local"
         else:
-            # Query Neo4j for related sections and precedents
+            # Query FalkorDB for related sections and precedents
             sections = state.get("applicable_sections", [])
             for section in sections[:10]:
-                results = await neo4j.run_query(
+                results = await falkordb.run_query(
                     """
                     MATCH (s:Section {section_number: $num, act: $act})
                     OPTIONAL MATCH (s)-[r]-(related:Section)
@@ -253,7 +253,7 @@ async def knowledge_graph_agent(state: AgentState) -> AgentState:
                         if rel:
                             kg_data["edges"].append({"source": node.get("section_id", ""), "target": rel.get("target_id", ""), "type": rel.get("type", "")})
 
-            kg_data["status"] = "neo4j"
+            kg_data["status"] = "falkordb"
 
         state["kg_data"] = kg_data
         confidence = 0.75 if kg_data["nodes"] else 0.30

@@ -4,7 +4,7 @@ LexOrch-KG introduces 8 independent novelty modules, each with clear interfaces:
 
 ## 1. Dynamic Evidence Graph
 **File**: `agents/knowledge_graph_agent.py`
-**Algorithm**: Real-time Neo4j graph mutation as new evidence is added to a case. Nodes represent legal entities (Parties, Sections, Evidence Items, Courts), edges represent relationships (REFERENCES, CONTRADICTS, CORROBORATES). Falls back to local JSON graph when Neo4j unavailable.
+**Algorithm**: Real-time FalkorDB graph mutation as new evidence is added to a case. Nodes represent legal entities (Parties, Sections, Evidence Items, Courts), edges represent relationships (REFERENCES, CONTRADICTS, CORROBORATES). Falls back to local JSON graph when FalkorDB unavailable.
 
 ## 2. Adaptive Multi-Stage RAG
 **Files**: `rag/` (full directory)

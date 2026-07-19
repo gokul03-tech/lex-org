@@ -1,4 +1,4 @@
-"""Knowledge Graph retriever using Neo4j.
+"""Knowledge Graph retriever using FalkorDB.
 
 Performs Cypher-based traversals for related sections,
 precedents, cross-references, and entity connections.
@@ -13,7 +13,7 @@ from loguru import logger
 
 
 class KnowledgeGraphRetriever:
-    """Neo4j knowledge graph search for legal retrieval.
+    """FalkorDB knowledge graph search for legal retrieval.
 
     Leverages the pre-built knowledge graph of sections,
     precedents, and cross-references to find legally
@@ -45,22 +45,22 @@ class KnowledgeGraphRetriever:
         results: list[dict[str, Any]] = []
 
         try:
-            from app.kg.neo4j_client import get_neo4j_client
+            from app.kg.falkordb_client import get_falkordb_client
             from app.kg.queries.legal_queries import get_query
 
-            neo4j = await get_neo4j_client()
-            connected = await neo4j.verify_connectivity()
+            falkordb = await get_falkordb_client()
+            connected = await falkordb.verify_connectivity()
 
             if not connected:
-                logger.warning("Neo4j unavailable for KG search")
+                logger.warning("FalkorDB unavailable for KG search")
                 return []
 
             # If we have section numbers, do direct expansion
             if section_numbers:
-                results.extend(await self._search_by_sections(neo4j, section_numbers, act_filter))
+                results.extend(await self._search_by_sections(falkordb, section_numbers, act_filter))
             else:
                 # Text search on sections
-                results.extend(await self._search_by_text(neo4j, query, top_k))
+                results.extend(await self._search_by_text(falkordb, query, top_k))
 
             # Add KG source annotation and scores
             for i, r in enumerate(results):
@@ -78,7 +78,7 @@ class KnowledgeGraphRetriever:
 
     async def _search_by_sections(
         self,
-        neo4j,
+        falkordb,
         section_numbers: list[str],
         act_filter: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -87,7 +87,7 @@ class KnowledgeGraphRetriever:
 
         for section_num in section_numbers[:5]:  # Limit to 5 to avoid fan-out
             # Get the section
-            section_records = await neo4j.run_query(
+            section_records = await falkordb.run_query(
                 """
                 MATCH (s:Section)
                 WHERE toString(s.section_number) CONTAINS $num
@@ -114,7 +114,7 @@ class KnowledgeGraphRetriever:
 
                 # Get related sections
                 if section_id:
-                    related = await neo4j.run_query(
+                    related = await falkordb.run_query(
                         """
                         MATCH (s:Section {section_id: $sid})-[r]-(related:Section)
                         RETURN related.section_id AS id, related.title AS title,
@@ -139,7 +139,7 @@ class KnowledgeGraphRetriever:
 
     async def _search_by_text(
         self,
-        neo4j,
+        falkordb,
         query: str,
         top_k: int,
     ) -> list[dict[str, Any]]:
@@ -151,10 +151,10 @@ class KnowledgeGraphRetriever:
         results: list[dict[str, Any]] = []
 
         if section_matches:
-            return await self._search_by_sections(neo4j, section_matches)
+            return await self._search_by_sections(falkordb, section_matches)
 
         # Try full-text search on title
-        records = await neo4j.run_query(
+        records = await falkordb.run_query(
             """
             MATCH (s:Section)
             WHERE s.title CONTAINS $text OR s.text CONTAINS $text

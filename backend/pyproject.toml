@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = [
     "legal-ai", "knowledge-graph", "rag", "langgraph", "multi-agent",
-    "explainable-ai", "neo4j", "llm", "indian-law"
+    "explainable-ai", "falkordb", "llm", "indian-law"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -67,7 +67,7 @@ dependencies = [
     # Vector DB
     "qdrant-client>=1.10.0",
     # Knowledge Graph
-    "neo4j>=5.22.0",
+    "falkordb>=1.0.0",
     # RAG
     "rank-bm25>=0.2.2",
     # Sandbox

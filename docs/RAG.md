@@ -2,7 +2,7 @@
 
 ## Overview
 
-The RAG pipeline implements a 5-stage adaptive retrieval system optimized for legal queries. It combines dense vector search (BGE-M3), knowledge graph traversal (Neo4j), citation extraction, and lexical matching (BM25) with intent-adaptive weighting and cross-encoder reranking.
+The RAG pipeline implements a 5-stage adaptive retrieval system optimized for legal queries. It combines dense vector search (BGE-M3), knowledge graph traversal (FalkorDB), citation extraction, and lexical matching (BM25) with intent-adaptive weighting and cross-encoder reranking.
 
 ## Pipeline Stages
 
@@ -32,7 +32,7 @@ LLM-based rewriting with rule-based fallback.
 | Retriever | Backend | Strengths |
 |-----------|---------|-----------|
 | Vector Search | Qdrant HNSW + BGE-M3 | Semantic similarity, multilingual |
-| KG Search | Neo4j Cypher traversal | Legal relationships, cross-references |
+| KG Search | FalkorDB Cypher traversal | Legal relationships, cross-references |
 | Citation Search | Regex + direct lookup | Exact section matching |
 | Keyword Search | BM25 (custom impl.) | Lexical matching, exact terms |
 

@@ -1,0 +1,18 @@
+2026-07-19 11:14:22.460 | INFO     | __main__:ingest_govintel_kg:129 - ============================================================
+2026-07-19 11:14:22.460 | INFO     | __main__:ingest_govintel_kg:130 - Starting GovIntel KG ingestion...
+2026-07-19 11:14:22.514 | INFO     | app.kg.falkordb_client:verify_connectivity:66 - FalkorDB connection verified
+2026-07-19 11:14:22.514 | INFO     | app.kg.falkordb_client:verify_connectivity:66 - FalkorDB connection verified
+2026-07-19 11:14:23.566 | ERROR    | app.kg.falkordb_client:seed_from_govintel:272 - Failed to import edges from cross_code_edges.json: 'str' object has no attribute 'get'
+2026-07-19 11:14:23.568 | ERROR    | app.kg.falkordb_client:seed_from_govintel:272 - Failed to import edges from judgment_edges.json: 'str' object has no attribute 'get'
+2026-07-19 11:14:23.569 | ERROR    | app.kg.falkordb_client:seed_from_govintel:272 - Failed to import edges from autonomous_edges.json: 'str' object has no attribute 'get'
+2026-07-19 11:14:23.871 | INFO     | app.kg.falkordb_client:seed_from_govintel:275 - KG seeding complete: 1605 sections, 2548 edges
+2026-07-19 11:14:23.872 | INFO     | __main__:ingest_govintel_kg:170 - GovIntel KG ingestion complete: {'sections': 1605, 'edges': 2548, 'errors': 3}
+2026-07-19 11:14:23.872 | INFO     | __main__:main:302 - ============================================================
+2026-07-19 11:14:23.872 | INFO     | __main__:main:303 - Ingestion complete in 1.4s
+2026-07-19 11:14:23.872 | INFO     | __main__:main:304 - Summary: {
+  "kg": {
+    "sections": 1605,
+    "edges": 2548,
+    "errors": 3
+  }
+}

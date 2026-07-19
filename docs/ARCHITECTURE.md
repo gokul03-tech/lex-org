@@ -24,7 +24,7 @@ LexOrch-KG follows a microservices-inspired modular monolith architecture with c
 │  └──────────┬──────────────┬──────────────┬───────────────────┘ │
 │             │              │              │                      │
 │  ┌──────────▼──┐ ┌────────▼──┐ ┌────────▼──────────┐           │
-│  │ RAG Pipeline│ │ Neo4j KG  │ │ LLM Providers     │           │
+│  │ RAG Pipeline│ │FalkorDB KG│ │ LLM Providers     │           │
 │  │ (5-stage)   │ │ (Cypher)  │ │ (Mock/Qwen/DS-R1) │           │
 │  └──────┬──────┘ └───────────┘ └───────────────────┘           │
 │         │                                                        │
@@ -33,7 +33,7 @@ LexOrch-KG follows a microservices-inspired modular monolith architecture with c
 ┌─────────▼────────────────────────────────────────────────────────┐
 │                     Data Layer                                    │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐ │
-│  │ SQLite   │  │ Qdrant   │  │ Neo4j    │  │ Redis (Celery)   │ │
+│  │ SQLite   │  │ Qdrant   │  │ FalkorDB │  │ Redis (Celery)   │ │
 │  │ (Users,  │  │ (Vector  │  │ (Graph   │  │ (Async Tasks)    │ │
 │  │  Cases)  │  │  Search) │  │  DB)     │  │                  │ │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────────────┘ │
@@ -46,7 +46,7 @@ LexOrch-KG follows a microservices-inspired modular monolith architecture with c
 1. User uploads PDF/DOCX/TXT → `POST /documents/upload`
 2. Celery task picks up: Parse → OCR (if needed) → Clean → Chunk → Embed
 3. Chunks + embeddings → Qdrant (`legal_documents` collection)
-4. Entities extracted → Neo4j (if available)
+4. Entities extracted → FalkorDB (if available)
 5. Document status updated to `complete`
 
 ### Case Analysis Flow
@@ -67,7 +67,7 @@ LexOrch-KG follows a microservices-inspired modular monolith architecture with c
 2. Query rewritten into 3-5 variants (LLM or rule-based)
 3. 4 parallel retrievers execute:
    - Vector (Qdrant HNSW with BGE-M3)
-   - Knowledge Graph (Neo4j Cypher traversal)
+   - Knowledge Graph (FalkorDB Cypher traversal)
    - Citation (regex extraction + direct lookup)
    - Keyword (BM25 over indexed corpus)
 4. RRF merges with intent-adaptive source weights
