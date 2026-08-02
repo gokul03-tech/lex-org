@@ -3,14 +3,8 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard,
-  MessageSquare,
-  Search,
-  FileSpreadsheet,
-  Network,
   Briefcase,
-  BookOpen,
   Scale,
-  BarChart3,
   Settings as SettingsIcon,
   LogOut,
   Menu,
@@ -32,15 +26,8 @@ import { useAuthStore } from '@/stores/authStore';
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/chat', label: 'AI Chat', icon: MessageSquare },
-  { href: '/research', label: 'Legal Research', icon: Search },
-  { href: '/document-analysis', label: 'Doc Analysis', icon: FileSpreadsheet },
-  { href: '/graph', label: 'Knowledge Graph', icon: Network },
-  { href: '/cases', label: 'Case Explorer', icon: Briefcase },
-  { href: '/statutes', label: 'Statutes Tree', icon: BookOpen },
-  { href: '/judgments', label: 'Judgments', icon: Scale },
-  { href: '/analytics', label: 'Analytics', icon: BarChart3 },
-  { href: '/settings', label: 'Settings', icon: SettingsIcon },
+  { href: '/cases', label: 'Cases', icon: Briefcase },
+  { href: '/admin', label: 'Admin', icon: SettingsIcon },
 ];
 
 export default function Layout() {
@@ -145,10 +132,7 @@ export default function Layout() {
 
         {/* User profile / Logout */}
         <div className="border-t border-white/5 p-4 space-y-2">
-          <Link
-            to="/profile"
-            className="flex items-center gap-3 rounded-lg p-2 text-sm text-muted-foreground hover:bg-white/5 hover:text-foreground"
-          >
+          <div className="flex items-center gap-3 rounded-lg p-2 text-sm text-muted-foreground hover:bg-white/5 hover:text-foreground">
             <User className="h-5 w-5 shrink-0" />
             {!sidebarCollapsed && (
               <div className="flex flex-col overflow-hidden text-left">
@@ -156,7 +140,7 @@ export default function Layout() {
                 <span className="truncate text-xs text-muted-foreground">{user?.role || 'Researcher'}</span>
               </div>
             )}
-          </Link>
+          </div>
           <Button
             variant="ghost"
             onClick={() => { logout(); navigate('/login'); }}
