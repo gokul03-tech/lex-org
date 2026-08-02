@@ -1,28 +1,26 @@
-"""Alembic migration script template configuration."""
+"""${message}
 
-from logging.config import fileConfig
+Revision ID: ${up_revision}
+Revises: ${down_revision}
+Create Date: ${create_date}
 
-from alembic import context
+"""
+from typing import Sequence, Union
 
-# this is the Alembic Config object
-config = context.config
+from alembic import op
+import sqlalchemy as sa
+${imports if imports else ""}
 
-# Interpret the config file for Python logging
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
-
-# Leave target_metadata as None - it's set in env.py
-target_metadata = None
-
-
-def run_migrations_offline() -> None:
-    """Run offline migrations."""
-    url = config.get_main_option("sqlalchemy.url")
-    context.configure(url=url, target_metadata=target_metadata, literal_binds=True)
-    with context.begin_transaction():
-        context.run_migrations()
+# revision identifiers, used by Alembic.
+revision: str = ${repr(up_revision)}
+down_revision: Union[str, None] = ${repr(down_revision)}
+branch_labels: Union[str, Sequence[str], None] = ${repr(branch_labels)}
+depends_on: Union[str, Sequence[str], None] = ${repr(depends_on)}
 
 
-def run_migrations_online() -> None:
-    """Run online migrations."""
-    raise NotImplementedError("Use env.py for async migrations")
+def upgrade() -> None:
+    ${upgrades if upgrades else "pass"}
+
+
+def downgrade() -> None:
+    ${downgrades if downgrades else "pass"}

@@ -32,7 +32,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     restart: unless-stopped
+
 
   # ── Redis (Celery Broker) ──────────────────────────────────
   redis:

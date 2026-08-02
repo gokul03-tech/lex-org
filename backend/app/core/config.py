@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
     # ── LLM Configuration ───────────────────────────────────────
-    LLM_BACKEND: Literal["llama_cpp", "mock", "openai_compatible"] = "mock"
+    LLM_BACKEND: Literal["llama_cpp", "mock", "openai_compatible", "transformers"] = "mock"
     QWEN_MODEL_PATH: str = ""
     DEEPSEEK_MODEL_PATH: str = ""
     LLM_N_CTX: int = 8192
@@ -69,6 +69,20 @@ class Settings(BaseSettings):
     LLM_N_GPU_LAYERS: int = 0
     LLM_TEMPERATURE: float = 0.1
     LLM_MAX_TOKENS: int = 2048
+
+    # OpenAI-compatible API configurations (vLLM / Ollama)
+    LLM_API_BASE: str = "http://localhost:8000/v1"
+    LLM_API_KEY: str = ""
+    QWEN_MODEL_NAME: str = "Qwen/Qwen3-8B-AWQ"
+    DEEPSEEK_MODEL_NAME: str = "deepseek-ai/DeepSeek-R1-Distill-Qwen-8B"
+
+    # Transformers local model configurations
+    QWEN_HF_MODEL_ID: str = "Qwen/Qwen3-8B-AWQ"
+    DEEPSEEK_HF_MODEL_ID: str = "deepseek-ai/DeepSeek-R1-Distill-Qwen-8B"
+
+    # Indian Kanoon API configurations
+    INDIANKANOON_API_KEY: str = ""
+    INDIANKANOON_API_BASE: str = "https://api.indiankanoon.org"
 
     # ── Embedding Model ─────────────────────────────────────────
     EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"

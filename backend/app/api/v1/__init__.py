@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.v1 import admin, analysis, auth, cases, documents, reports
+from app.api.v1 import admin, analysis, auth, cases, documents, indiankanoon, reports
 
 api_router = APIRouter()
 
@@ -17,3 +17,4 @@ api_router.include_router(documents.router, prefix="/documents", tags=["Document
 api_router.include_router(analysis.router, prefix="/analysis", tags=["Analysis"])
 api_router.include_router(reports.router, prefix="/reports", tags=["Reports"])
 api_router.include_router(admin.router, prefix="/admin", tags=["Admin"])
+api_router.include_router(indiankanoon.router, prefix="/indiankanoon", tags=["Indian Kanoon"])

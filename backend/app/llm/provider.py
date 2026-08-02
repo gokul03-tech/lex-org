@@ -136,8 +136,23 @@ def get_llm_provider(model_type: str = "qwen") -> LLMProvider:
         )
 
     if settings.LLM_BACKEND == "openai_compatible":
-        from app.llm.mock_provider import MockProvider
+        from app.llm.openai_compatible_provider import OpenAICompatibleProvider
 
-        return MockProvider(model_name=f"{model_type}-api")
+        model_id = settings.QWEN_MODEL_NAME if model_type == "qwen" else settings.DEEPSEEK_MODEL_NAME
+        return OpenAICompatibleProvider(
+            model_name=f"{model_type}-openai-compatible",
+            api_base=settings.LLM_API_BASE,
+            api_key=settings.LLM_API_KEY,
+            model_id=model_id,
+        )
+
+    if settings.LLM_BACKEND == "transformers":
+        from app.llm.transformers_provider import TransformersProvider
+
+        model_id = settings.QWEN_HF_MODEL_ID if model_type == "qwen" else settings.DEEPSEEK_HF_MODEL_ID
+        return TransformersProvider(
+            model_name=f"{model_type}-transformers",
+            model_id=model_id,
+        )
 
     raise ValueError(f"Unsupported LLM backend: {settings.LLM_BACKEND}")

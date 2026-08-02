@@ -1,0 +1,47 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+backend/.venv/
+
+# Caching
+.pytest_cache/
+.cache/
+.ipynb_checkpoints/
+
+# Local configuration / secrets
+.env
+backend/.env
+configs/.env
+
+# Big model files and weights
+models/
+*.safetensors
+*.bin
+*.model
+model.safetensors.index.json
+
+# Local datasets and logs
+datasets/
+json_output/
+logs/
+outputs/
+data/
+
+# Frontend dependencies and builds
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+.svelte-kit/
+.next/
+
+# OS files
+.DS_Store
+Thumbs.db
