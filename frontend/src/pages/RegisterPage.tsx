@@ -27,11 +27,25 @@ export default function RegisterPage() {
     setError('');
     setLoading(true);
     try {
-      await register(email, password, fullName, role);
+      // Map select values to lowercased backend enums
+      let backendRole = 'advocate';
+      if (role === 'Legal Researcher') backendRole = 'researcher';
+      if (role === 'Law Student') backendRole = 'student';
+
+      await register(email, password, fullName, backendRole);
       setSuccess('Account created successfully! Redirecting to login...');
       setTimeout(() => navigate('/login'), 2000);
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to register account. User may already exist.');
+      const detail = err.response?.data?.detail;
+      let errMsg = 'Failed to register account. User may already exist.';
+      if (typeof detail === 'string') {
+        errMsg = detail;
+      } else if (Array.isArray(detail)) {
+        errMsg = detail.map((d: any) => `${d.loc.join('.')}: ${d.msg}`).join(', ');
+      } else if (detail && typeof detail === 'object') {
+        errMsg = JSON.stringify(detail);
+      }
+      setError(errMsg);
     } finally {
       setLoading(false);
     }

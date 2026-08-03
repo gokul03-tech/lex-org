@@ -34,7 +34,16 @@ export default function LoginPage() {
       await login(email, password);
       navigate('/dashboard');
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Invalid email or password.');
+      const detail = err.response?.data?.detail;
+      let errMsg = 'Invalid email or password.';
+      if (typeof detail === 'string') {
+        errMsg = detail;
+      } else if (Array.isArray(detail)) {
+        errMsg = detail.map((d: any) => `${d.loc.join('.')}: ${d.msg}`).join(', ');
+      } else if (detail && typeof detail === 'object') {
+        errMsg = JSON.stringify(detail);
+      }
+      setError(errMsg);
     } finally {
       setLoading(false);
     }

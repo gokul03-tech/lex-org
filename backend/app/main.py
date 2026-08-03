@@ -26,9 +26,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # These are deferred to actual service initialization to avoid import failures
     # when optional dependencies (neo4j, qdrant, etc.) are not installed.
     try:
-        logger.info("Application startup complete")
+        from app.db.base import Base
+        from app.db.session import engine
+        import app.db.models  # Import to register schemas
+        
+        # Ensure database folder exists
+        import os
+        db_path = settings.DATABASE_URL.replace("sqlite+aiosqlite:///", "")
+        db_dir = os.path.dirname(db_path)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+            logger.info(f"Created database directory: {db_dir}")
+
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database tables initialized successfully.")
     except Exception as exc:
-        logger.error(f"Startup error: {exc}")
+        logger.error(f"Startup DB error: {exc}")
 
     yield
 
