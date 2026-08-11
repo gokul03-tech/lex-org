@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Briefcase, FileText, CheckCircle2, Cpu, PlusCircle, Search, 
-  ChevronRight, Clock, FolderOpen, X, Loader2, Sparkles, Scale, Info
+  ChevronRight, Clock, FolderOpen, X, Loader2, Sparkles, Scale, Info, Upload
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import apiClient from '@/lib/api';
@@ -28,6 +28,7 @@ export default function DashboardPage() {
   const [newClient, setNewClient] = useState('');
   const [newType, setNewType] = useState('Criminal Defense');
   const [newDesc, setNewDesc] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -48,20 +49,25 @@ export default function DashboardPage() {
 
   const handleCreateCase = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTitle.trim()) return;
+    if (!selectedFile) return;
 
     setSubmitting(true);
     try {
-      const res = await apiClient.post('/cases/', {
-        title: newTitle,
-        description: `Client: ${newClient}. ${newDesc}`,
-        case_type: newType,
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('title', newTitle);
+      formData.append('case_type', newType);
+      formData.append('description', `Client: ${newClient}. ${newDesc}`);
+
+      const res = await apiClient.post('/cases/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
       });
       
       setCases((prev) => [res.data, ...prev]);
       setNewTitle('');
       setNewClient('');
       setNewDesc('');
+      setSelectedFile(null);
       setCreateOpen(false);
       
       // Redirect directly to the analysis upload view of this case
@@ -245,7 +251,39 @@ export default function DashboardPage() {
               </h2>
               <p className="text-xs text-muted-foreground mt-0.5">Define case matter coordinates before triggering AI ingestion pipeline.</p>
 
-              <form onSubmit={handleCreateCase} className="mt-5 space-y-4 text-xs">
+               <form onSubmit={handleCreateCase} className="mt-5 space-y-4 text-xs">
+                <div>
+                  <label className="font-semibold text-muted-foreground uppercase tracking-wider">Upload Case Document (PDF, DOCX, TXT) *</label>
+                  <div className="mt-1 border border-dashed border-white/10 rounded-lg p-4 bg-background/50 hover:bg-background transition-all text-center relative cursor-pointer">
+                    <input
+                      type="file"
+                      required
+                      accept=".pdf,.docx,.txt"
+                      onChange={(e) => {
+                        if (e.target.files?.[0]) {
+                          const file = e.target.files[0];
+                          setSelectedFile(file);
+                          // Autofill case title from filename
+                          const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
+                          setNewTitle(nameWithoutExt.charAt(0).toUpperCase() + nameWithoutExt.slice(1));
+                        }
+                      }}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                    {selectedFile ? (
+                      <div className="flex items-center justify-center gap-2 text-slate-200">
+                        <FileText className="h-5 w-5 text-primary" />
+                        <span className="font-bold truncate max-w-[240px]">{selectedFile.name}</span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-1.5 text-muted-foreground">
+                        <Upload className="h-6 w-6 text-primary" />
+                        <span>Drag & drop or click to choose file</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div>
                   <label className="font-semibold text-muted-foreground uppercase tracking-wider">Case Title / Matter Reference</label>
                   <input

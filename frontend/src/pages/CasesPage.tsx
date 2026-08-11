@@ -53,10 +53,13 @@ export default function CasesPage() {
 
     setSubmitting(true);
     try {
-      const res = await apiClient.post('/cases/', {
-        title: newTitle,
-        description: `Client: ${newClient}. ${newDesc}`,
-        case_type: newType,
+      const formData = new FormData();
+      formData.append('title', newTitle);
+      formData.append('case_type', newType);
+      formData.append('description', `Client: ${newClient}. ${newDesc}`);
+
+      const res = await apiClient.post('/cases/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
       });
       setCases((prev) => [res.data, ...prev]);
       setNewTitle('');
