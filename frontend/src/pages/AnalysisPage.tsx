@@ -5,7 +5,7 @@ import {
   Brain, Scale, ShieldCheck, CheckCircle2, AlertTriangle, FileText, ChevronLeft,
   Sparkles, TrendingUp, Award, Upload, ArrowRight, Download, Share2, Copy, BookOpen,
   Calendar, File, HelpCircle, Check, Loader2, Send, Cpu, LayoutGrid, Users, FileQuestion,
-  ChevronDown, ChevronUp, Network, Clock, ShieldAlert, BarChart3, Fingerprint, Info
+  ChevronDown, ChevronUp, Network, Clock, ShieldAlert, BarChart3, Fingerprint, Info, Layers
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -389,53 +389,59 @@ export default function AnalysisPage() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 5 }}
                 transition={{ duration: 0.15 }}
-                className="space-y-6"
+                className="space-y-8"
               >
                 
                 {/* TAB 1: SUMMARY */}
                 {activeTab === 'summary' && (
                   <>
                     {/* Document metadata info table */}
-                    <Card className="border-white/5 bg-card/25 backdrop-blur-md overflow-hidden text-left">
-                      <div className="border-b border-white/5 bg-white/2 px-5 py-3 flex items-center justify-between">
-                        <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                          <FileText className="h-4 w-4 text-primary" /> Document Directory Details
+                    <Card className="border-white/5 bg-card/25 backdrop-blur-md overflow-hidden text-left shadow-lg">
+                      <div className="border-b border-white/5 bg-white/2 px-6 py-4 flex items-center justify-between">
+                        <span className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                          <FileText className="h-5 w-5 text-primary" /> Document Information
                         </span>
-                        <span className="rounded-full bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 text-[9px] font-bold text-primary font-mono">
+                        <span className="rounded-full bg-blue-500/10 border border-blue-500/20 px-3 py-1 text-[10px] font-bold text-primary font-mono uppercase">
                           {analysisData.document_info.status}
                         </span>
                       </div>
-                      <CardContent className="p-5 grid gap-4 sm:grid-cols-2 md:grid-cols-3 text-xs">
+                      <CardContent className="p-6 grid gap-6 sm:grid-cols-2 md:grid-cols-3 text-sm">
                         {[
-                          { label: 'File Name', val: analysisData.document_info.file_name },
-                          { label: 'Document Type', val: analysisData.document_info.document_type },
-                          { label: 'Jurisdiction', val: analysisData.document_info.jurisdiction },
-                          { label: 'Court Matter', val: analysisData.document_info.court },
-                          { label: 'Filing Number', val: analysisData.document_info.case_number },
-                          { label: 'Decision Date', val: analysisData.document_info.decision_date },
-                          { label: 'Presiding Judge(s)', val: analysisData.document_info.judges },
-                          { label: 'Petitioner / Applicant', val: analysisData.document_info.petitioner },
-                          { label: 'Respondent', val: analysisData.document_info.respondent },
-                          { label: 'Citation Number', val: analysisData.document_info.citation },
-                          { label: 'Document Language', val: analysisData.document_info.language },
-                          { label: 'Page Count', val: `${analysisData.document_info.pages} Pages` }
-                        ].map((m) => (
-                          <div key={m.label} className="border-b border-white/5 pb-2">
-                            <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">{m.label}</span>
-                            <p className="font-bold text-slate-200 mt-0.5 truncate">{m.val}</p>
-                          </div>
-                        ))}
+                          { label: 'File Name', val: analysisData.document_info.file_name, icon: File },
+                          { label: 'Document Type', val: analysisData.document_info.document_type, icon: FileText },
+                          { label: 'Jurisdiction', val: analysisData.document_info.jurisdiction, icon: Scale },
+                          { label: 'Court Matter', val: analysisData.document_info.court, icon: Scale },
+                          { label: 'Filing Number', val: analysisData.document_info.case_number, icon: FileText },
+                          { label: 'Decision Date', val: analysisData.document_info.decision_date, icon: Calendar },
+                          { label: 'Presiding Judge(s)', val: analysisData.document_info.judges, icon: Users },
+                          { label: 'Petitioner / Applicant', val: analysisData.document_info.petitioner, icon: Users },
+                          { label: 'Respondent', val: analysisData.document_info.respondent, icon: Users },
+                          { label: 'Citation Number', val: analysisData.document_info.citation, icon: FileText },
+                          { label: 'Document Language', val: analysisData.document_info.language, icon: Info },
+                          { label: 'Page Count', val: `${analysisData.document_info.pages} Pages`, icon: Layers }
+                        ].map((m) => {
+                          const Icon = m.icon;
+                          return (
+                            <div key={m.label} className="border-b border-white/5 pb-3 flex gap-3 items-start hover:border-white/10 transition-colors">
+                              <Icon className="h-4 w-4 text-primary shrink-0 mt-1" />
+                              <div>
+                                <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">{m.label}</span>
+                                <p className="font-semibold text-slate-200 mt-1 text-xs break-all leading-normal">{m.val || 'N/A'}</p>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </CardContent>
                     </Card>
 
                     {/* AI generated Legal Summary */}
-                    <Card className="border-white/5 bg-card/25 backdrop-blur-md text-left">
-                      <div className="border-b border-white/5 bg-white/2 px-5 py-3">
-                        <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                          <Sparkles className="h-4 w-4 text-cyan-400" /> Executive Legal Advisory Summary
+                    <Card className="border-white/5 bg-card/25 backdrop-blur-md text-left shadow-lg">
+                      <div className="border-b border-white/5 bg-white/2 px-6 py-4">
+                        <span className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                          <Sparkles className="h-5 w-5 text-cyan-400" /> Executive Legal Advisory Summary
                         </span>
                       </div>
-                      <CardContent className="p-6 text-slate-300 text-xs leading-relaxed space-y-4">
+                      <CardContent className="p-6 text-slate-200 text-sm leading-relaxed space-y-4 font-normal">
                         {analysisData.summary.split('\n\n').map((paragraph: string, idx: number) => (
                           <p key={idx}>{paragraph}</p>
                         ))}
@@ -444,8 +450,8 @@ export default function AnalysisPage() {
 
                     {/* Facts Timeline Progression */}
                     <div className="space-y-4 text-left">
-                      <h3 className="text-sm font-bold text-white flex items-center gap-1.5 uppercase tracking-wider">
-                        <Clock className="h-4.5 w-4.5 text-primary" /> Case Facts Progression Timeline
+                      <h3 className="text-sm font-bold text-white flex items-center gap-2 uppercase tracking-wider">
+                        <Clock className="h-5 w-5 text-primary" /> Case Facts Progression Timeline
                       </h3>
                       <div className="relative pl-6 border-l border-white/5 space-y-6">
                         {analysisData.timeline.map((step: any, idx: number) => (
@@ -457,11 +463,11 @@ export default function AnalysisPage() {
                             className="relative"
                           >
                             <span className="absolute -left-9 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-card border border-primary/35 shadow shadow-primary/20">
-                              <span className="h-2 w-2 rounded-full bg-primary" />
+                              <span className="h-2.5 w-2.5 rounded-full bg-primary" />
                             </span>
-                            <div className="rounded-xl border border-white/5 bg-card/15 p-4 text-xs">
-                              <span className="font-bold font-mono text-primary text-[10px]">{step.date}</span>
-                              <p className="text-slate-300 font-medium leading-relaxed mt-1">{step.event}</p>
+                            <div className="rounded-xl border border-white/5 bg-card/15 p-5 text-sm">
+                              <span className="font-bold font-mono text-primary text-xs">{step.date}</span>
+                              <p className="text-slate-200 font-semibold leading-relaxed mt-1.5">{step.event}</p>
                             </div>
                           </motion.div>
                         ))}
@@ -472,17 +478,17 @@ export default function AnalysisPage() {
 
                 {/* TAB 2: STATUTES & PRECEDENTS */}
                 {activeTab === 'statutes' && (
-                  <div className="space-y-6 text-left">
+                  <div className="space-y-8 text-left">
                     
                     {/* Legal Issues */}
-                    <div className="space-y-3">
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                        <FileQuestion className="h-4.5 w-4.5 text-primary" /> Extracted Legal Questions Under Review
+                    <div className="space-y-4">
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                        <FileQuestion className="h-5 w-5 text-primary" /> Legal Questions Under Review
                       </h3>
-                      <div className="grid gap-3">
+                      <div className="grid gap-4">
                         {analysisData.legal_issues.map((issue: string, idx: number) => (
-                          <div key={idx} className="flex gap-3 rounded-lg border border-white/5 bg-card/20 p-4 text-xs text-slate-300">
-                            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-bold font-mono text-[10px]">
+                          <div key={idx} className="flex gap-4 rounded-xl border border-white/5 bg-card/20 p-5 text-sm text-slate-200 shadow-md">
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary border border-primary/20 font-bold font-mono text-xs">
                               {idx + 1}
                             </span>
                             <span className="font-semibold leading-relaxed mt-0.5">{issue}</span>
@@ -493,27 +499,27 @@ export default function AnalysisPage() {
 
                     {/* Identified Acts & Sections */}
                     <div className="space-y-4">
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                        <BookOpen className="h-4.5 w-4.5 text-cyan-400" /> Statutory Provisions & Penal Codes
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                        <BookOpen className="h-5 w-5 text-cyan-400" /> Statutory Provisions & Penal Codes
                       </h3>
                       
                       <div className="grid gap-4">
                         {analysisData.sections.map((sec: any) => {
                           const isExpanded = expandedSections[sec.num];
                           return (
-                            <div key={sec.num} className="rounded-xl border border-white/5 bg-card/20 overflow-hidden">
+                            <div key={sec.num} className="rounded-xl border border-white/5 bg-card/20 overflow-hidden shadow-md">
                               <button
                                 onClick={() => toggleSection(sec.num)}
-                                className="w-full flex items-center justify-between p-4 hover:bg-white/2 text-left"
+                                className="w-full flex items-center justify-between p-5 hover:bg-white/2 text-left"
                               >
                                 <div className="flex items-center gap-3">
-                                  <span className="rounded bg-primary/15 border border-primary/20 px-2.5 py-0.5 text-[10px] font-bold text-primary font-mono">
+                                  <span className="rounded-lg bg-primary/15 border border-primary/20 px-3 py-1 text-xs font-bold text-primary font-mono">
                                     {sec.num}
                                   </span>
-                                  <span className="font-bold text-xs text-slate-200">{sec.title}</span>
+                                  <span className="font-bold text-sm text-slate-200">{sec.title}</span>
                                 </div>
-                                <div className="flex items-center gap-3.5">
-                                  <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded ${
+                                <div className="flex items-center gap-4">
+                                  <span className={`text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full ${
                                     sec.importance === 'Critical' 
                                       ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' 
                                       : sec.importance === 'High'
@@ -522,14 +528,14 @@ export default function AnalysisPage() {
                                   }`}>
                                     {sec.importance}
                                   </span>
-                                  {isExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                                  {isExpanded ? <ChevronUp className="h-5 w-5 text-muted-foreground" /> : <ChevronDown className="h-5 w-5 text-muted-foreground" />}
                                 </div>
                               </button>
                               
                               {isExpanded && (
-                                <div className="p-4 border-t border-white/5 bg-white/2 text-xs text-muted-foreground leading-relaxed">
-                                  <p className="text-slate-300 font-medium mb-1">Description:</p>
-                                  <p>{sec.desc}</p>
+                                <div className="p-5 border-t border-white/5 bg-white/2 text-sm text-slate-200 leading-relaxed">
+                                  <p className="text-slate-300 font-bold mb-1">Scope & Definition:</p>
+                                  <p className="text-slate-200 mt-1 leading-6">{sec.desc}</p>
                                 </div>
                               )}
                             </div>
@@ -541,20 +547,20 @@ export default function AnalysisPage() {
                     {/* Identified Constitution Articles */}
                     {analysisData.articles && (
                       <div className="space-y-4">
-                        <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                          <Scale className="h-4.5 w-4.5 text-purple-400" /> Constitutional Articles
+                        <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                          <Scale className="h-5 w-5 text-purple-400" /> Constitutional Articles
                         </h3>
                         <div className="grid gap-4 sm:grid-cols-2">
                           {analysisData.articles.map((art: any) => (
-                            <div key={art.num} className="rounded-xl border border-white/5 bg-card/25 p-5 space-y-2">
-                              <div className="flex items-center justify-between text-xs font-bold text-primary">
-                                <span className="flex items-center gap-1.5">
-                                  <Award className="h-4 w-4 text-primary" /> {art.num}
+                            <div key={art.num} className="rounded-xl border border-white/5 bg-card/25 p-5 space-y-3 shadow-md">
+                              <div className="flex items-center justify-between text-sm font-bold text-primary">
+                                <span className="flex items-center gap-2">
+                                  <Award className="h-4.5 w-4.5 text-primary" /> {art.num}
                                 </span>
-                                <span className="text-[10px] text-muted-foreground font-mono">{art.meaning}</span>
+                                <span className="text-[10px] text-muted-foreground font-mono uppercase">{art.meaning}</span>
                               </div>
-                              <p className="text-xs text-muted-foreground leading-relaxed">
-                                <span className="font-semibold text-white">Applicability:</span> {art.applicability}
+                              <p className="text-xs text-slate-300 leading-relaxed leading-5">
+                                <span className="font-bold text-white">Applicability:</span> {art.applicability}
                               </p>
                             </div>
                           ))}
@@ -564,29 +570,29 @@ export default function AnalysisPage() {
 
                     {/* Similar precedents judgements retrieved */}
                     <div className="space-y-4">
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                        <TrendingUp className="h-4.5 w-4.5 text-emerald-400" /> Similar Precedents & Judgments (Qdrant Match)
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                        <TrendingUp className="h-5 w-5 text-emerald-400" /> Similar Precedents & Judgments
                       </h3>
                       
                       <div className="grid gap-4">
                         {analysisData.precedents.map((prec: any, idx: number) => (
-                          <div key={idx} className="rounded-xl border border-white/5 bg-card/20 p-5 flex flex-col justify-between md:flex-row gap-4">
-                            <div className="space-y-2 flex-1">
-                              <div className="flex flex-wrap items-center gap-2 text-[10px]">
-                                <span className="rounded bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 font-bold text-emerald-400">
-                                  Score: {(prec.score * 100).toFixed(1)}%
+                          <div key={idx} className="rounded-xl border border-white/5 bg-card/20 p-5 flex flex-col justify-between md:flex-row gap-6 shadow-md hover:border-white/10 transition-all">
+                            <div className="space-y-2.5 flex-1">
+                              <div className="flex flex-wrap items-center gap-2.5 text-xs">
+                                <span className="rounded-md bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 font-bold text-emerald-400">
+                                  Similarity: {(prec.score * 100).toFixed(0)}%
                                 </span>
                                 <span className="text-muted-foreground font-mono">{prec.court} • {prec.year}</span>
                               </div>
-                              <h4 className="text-xs font-bold text-white">{prec.case_name}</h4>
-                              <p className="text-xs text-muted-foreground leading-relaxed">{prec.summary}</p>
-                              <div className="flex flex-wrap gap-2 pt-1.5 text-[9px] font-mono">
-                                <span className="rounded border border-white/5 bg-white/5 px-2 py-0.5 font-semibold text-slate-400">Acts: {prec.acts}</span>
-                                <span className="rounded border border-white/5 bg-white/5 px-2 py-0.5 font-semibold text-slate-400">Section: {prec.sections}</span>
+                              <h4 className="text-sm font-bold text-white">{prec.case_name}</h4>
+                              <p className="text-xs text-slate-300 leading-relaxed leading-5">{prec.summary}</p>
+                              <div className="flex flex-wrap gap-2 pt-1 text-[10px] font-mono">
+                                <span className="rounded border border-white/5 bg-white/5 px-2.5 py-0.5 font-semibold text-slate-400">Acts: {prec.acts}</span>
+                                <span className="rounded border border-white/5 bg-white/5 px-2.5 py-0.5 font-semibold text-slate-400">Section: {prec.sections}</span>
                               </div>
                             </div>
-                            <Button variant="ghost" className="shrink-0 self-end md:self-center text-primary text-xs font-semibold hover:bg-primary/5">
-                              Open Case Brief <ArrowRight className="h-4 w-4 ml-1" />
+                            <Button variant="ghost" className="shrink-0 self-end md:self-center text-primary text-xs font-semibold hover:bg-primary/5 cursor-pointer">
+                              Open Case Brief <ArrowRight className="h-4 w-4 ml-1.5" />
                             </Button>
                           </div>
                         ))}
@@ -597,77 +603,97 @@ export default function AnalysisPage() {
 
                 {/* TAB 3: ARGUMENTS & EVIDENCE */}
                 {activeTab === 'arguments' && (
-                  <div className="space-y-6 text-left">
+                  <div className="space-y-8 text-left">
                     {/* Arguments split column */}
                     <div className="grid gap-6 md:grid-cols-2">
                       {/* Prosecution */}
-                      <div className="rounded-xl border border-rose-500/10 bg-rose-500/5 p-6 space-y-4">
-                        <h4 className="text-xs font-extrabold text-rose-400 uppercase tracking-widest flex items-center gap-1.5 border-b border-rose-500/10 pb-3">
-                          <ShieldAlert className="h-4.5 w-4.5" /> Prosecution Case Arguments
+                      <div className="rounded-xl border border-rose-500/10 bg-rose-500/5 p-6 space-y-4 shadow-lg">
+                        <h4 className="text-sm font-bold text-rose-400 uppercase tracking-wider flex items-center gap-2 border-b border-rose-500/10 pb-3">
+                          <ShieldAlert className="h-5 w-5 shrink-0" /> Prosecution Arguments
                         </h4>
-                        <ul className="space-y-3 text-xs text-slate-300 leading-relaxed list-disc pl-4">
+                        <ul className="space-y-3.5 text-sm text-slate-200 leading-relaxed pl-4 list-none">
                           {analysisData.arguments.prosecution.map((arg: string, idx: number) => (
-                            <li key={idx}>{arg}</li>
+                            <li key={idx} className="flex gap-2.5 items-start">
+                              <span className="h-2 w-2 rounded-full bg-rose-500 shrink-0 mt-2" />
+                              <span>{arg}</span>
+                            </li>
                           ))}
                         </ul>
                       </div>
 
                       {/* Defense */}
-                      <div className="rounded-xl border border-blue-500/10 bg-blue-500/5 p-6 space-y-4">
-                        <h4 className="text-xs font-extrabold text-blue-400 uppercase tracking-widest flex items-center gap-1.5 border-b border-blue-500/10 pb-3">
-                          <ShieldCheck className="h-4.5 w-4.5" /> Defense Rebuttals & Arguments
+                      <div className="rounded-xl border border-blue-500/10 bg-blue-500/5 p-6 space-y-4 shadow-lg">
+                        <h4 className="text-sm font-bold text-blue-400 uppercase tracking-wider flex items-center gap-2 border-b border-blue-500/10 pb-3">
+                          <ShieldCheck className="h-5 w-5 shrink-0" /> Defense Rebuttals
                         </h4>
-                        <ul className="space-y-3 text-xs text-slate-300 leading-relaxed list-disc pl-4">
+                        <ul className="space-y-3.5 text-sm text-slate-200 leading-relaxed pl-4 list-none">
                           {analysisData.arguments.defense.map((arg: string, idx: number) => (
-                            <li key={idx}>{arg}</li>
+                            <li key={idx} className="flex gap-2.5 items-start">
+                              <span className="h-2 w-2 rounded-full bg-blue-500 shrink-0 mt-2" />
+                              <span>{arg}</span>
+                            </li>
                           ))}
                         </ul>
                       </div>
                     </div>
 
                     {/* Arguments support details */}
-                    <Card className="border-white/5 bg-card/25 p-5 space-y-3">
-                      <h4 className="text-xs font-bold text-white uppercase tracking-wider">Supporting Evidence Matrix</h4>
-                      <p className="text-xs text-slate-300 leading-relaxed">{analysisData.arguments.supporting}</p>
-                      <div className="grid gap-4 sm:grid-cols-2 pt-2 text-xs">
-                        <div className="rounded bg-white/5 p-3.5 border border-white/5">
+                    <Card className="border-white/5 bg-card/25 p-6 space-y-4 shadow-lg">
+                      <h4 className="text-xs font-bold text-white uppercase tracking-wider">Supporting Evidence Synthesis</h4>
+                      <p className="text-sm text-slate-200 leading-relaxed leading-6">{analysisData.arguments.supporting}</p>
+                      <div className="grid gap-6 sm:grid-cols-2 pt-2 text-xs">
+                        <div className="rounded-xl bg-white/5 p-5 border border-white/5 space-y-2">
                           <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">Defense Case Weaknesses</span>
-                          <p className="text-slate-300 mt-1">{analysisData.arguments.weaknesses}</p>
+                          <p className="text-slate-200 text-xs leading-relaxed mt-1">{analysisData.arguments.weaknesses}</p>
                         </div>
-                        <div className="rounded bg-white/5 p-3.5 border border-white/5">
+                        <div className="rounded-xl bg-white/5 p-5 border border-white/5 space-y-2">
                           <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">Anticipated Prosecution Counter</span>
-                          <p className="text-slate-300 mt-1">{analysisData.arguments.counter_arguments}</p>
+                          <p className="text-slate-200 text-xs leading-relaxed mt-1">{analysisData.arguments.counter_arguments}</p>
                         </div>
                       </div>
                     </Card>
 
                     {/* Evidence Assessment cards */}
                     <div className="space-y-4">
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                        <Fingerprint className="h-4.5 w-4.5 text-primary" /> Case Material Evidence & Reliability
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                        <Fingerprint className="h-5 w-5 text-primary" /> Case Material Evidence & Reliability
                       </h3>
                       
                       <div className="grid gap-4 sm:grid-cols-3">
-                        {analysisData.evidence.map((ev: any, idx: number) => (
-                          <div key={idx} className="rounded-xl border border-white/5 bg-card/20 p-5 space-y-3 flex flex-col justify-between">
-                            <div className="space-y-1.5">
-                              <span className="rounded bg-primary/10 border border-primary/20 px-2 py-0.5 text-[9px] font-bold text-primary font-mono uppercase tracking-wider">
-                                {ev.type}
-                              </span>
-                              <p className="text-xs text-slate-300 font-semibold leading-relaxed pt-1">{ev.description}</p>
+                        {analysisData.evidence.map((ev: any, idx: number) => {
+                          const reliability = ev.reliability.toLowerCase();
+                          const isHigh = reliability.includes('high');
+                          const isMedium = reliability.includes('medium');
+                          
+                          return (
+                            <div key={idx} className={`rounded-xl border p-5 space-y-4 flex flex-col justify-between shadow-md ${
+                              isHigh 
+                                ? 'border-emerald-500/10 bg-emerald-500/5' 
+                                : isMedium
+                                ? 'border-amber-500/10 bg-amber-500/5'
+                                : 'border-rose-500/10 bg-rose-500/5'
+                            }`}>
+                              <div className="space-y-2 text-left">
+                                <span className={`rounded-full px-2.5 py-0.5 text-[9px] font-bold font-mono uppercase tracking-wider border ${
+                                  isHigh 
+                                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20' 
+                                    : isMedium
+                                    ? 'bg-amber-500/15 text-amber-400 border-amber-500/20'
+                                    : 'bg-rose-500/15 text-rose-400 border-rose-500/20'
+                                }`}>
+                                  {ev.type}
+                                </span>
+                                <p className="text-xs text-slate-200 font-semibold leading-relaxed pt-1.5">{ev.description}</p>
+                              </div>
+                              <div className="border-t border-white/5 pt-3 flex items-center justify-between text-[11px]">
+                                <span className="text-muted-foreground font-mono">Reliability Rating:</span>
+                                <span className={`font-bold uppercase ${
+                                  isHigh ? 'text-emerald-400' : isMedium ? 'text-amber-400' : 'text-rose-400'
+                                }`}>{ev.reliability}</span>
+                              </div>
                             </div>
-                            <div className="border-t border-white/5 pt-2.5 flex items-center justify-between text-[10px]">
-                              <span className="text-muted-foreground font-mono">Reliability:</span>
-                              <span className={`font-bold uppercase ${
-                                ev.reliability.includes('High') 
-                                  ? 'text-emerald-400' 
-                                  : ev.reliability.includes('Medium')
-                                  ? 'text-amber-400'
-                                  : 'text-rose-400'
-                              }`}>{ev.reliability}</span>
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
@@ -677,8 +703,8 @@ export default function AnalysisPage() {
                 {activeTab === 'graph' && (
                   <div className="space-y-4">
                     <div className="flex flex-col gap-2">
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                        <Network className="h-4.5 w-4.5 text-primary" /> Indian Statutes & Citation Knowledge Graph
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                        <Network className="h-5 w-5 text-primary" /> Indian Statutes & Citation Knowledge Graph
                       </h3>
                       <p className="text-xs text-muted-foreground leading-relaxed">
                         Explorable visual map of structural connections linking the defendant, evidence nodes, specific sections of the BNS/BNSS, precedents, and the presiding High Court.
@@ -693,51 +719,63 @@ export default function AnalysisPage() {
 
                 {/* TAB 5: RISK & OPINION */}
                 {activeTab === 'opinion' && (
-                  <div className="space-y-6 text-left">
+                  <div className="space-y-8 text-left">
                     
                     {/* Legal Opinion */}
-                    <Card className="border-white/5 bg-card/25 p-6 space-y-4">
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5 border-b border-white/5 pb-3">
-                        <Brain className="h-5 w-5 text-primary" /> Synthesized AI Advisory Legal Opinion
+                    <Card className="border-white/5 bg-card/25 p-6 space-y-4 shadow-lg">
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2 border-b border-white/5 pb-3">
+                        <Brain className="h-5.5 w-5.5 text-primary" /> Synthesized AI Advisory Legal Opinion
                       </h3>
-                      <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">
+                      <p className="text-sm text-slate-200 leading-relaxed whitespace-pre-line leading-6">
                         {analysisData.legal_opinion}
                       </p>
                     </Card>
 
                     {/* Risk Analysis Card */}
-                    <Card className="border-white/5 bg-card/25 p-6 space-y-5">
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                    <div className="space-y-4">
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
                         <ShieldAlert className="h-5 w-5 text-rose-400" /> Evidence Strengths & Procedural Risks
                       </h3>
                       
-                      <div className="grid gap-4 sm:grid-cols-2 text-xs">
-                        <div className="rounded-lg bg-white/2 p-4 border border-white/5 space-y-2">
-                          <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">Advisory Case Strengths</span>
-                          <p className="text-slate-300 leading-relaxed">{analysisData.risk_analysis.strength}</p>
+                      <div className="grid gap-4 sm:grid-cols-2 text-sm">
+                        {/* Strengths */}
+                        <div className="rounded-xl border border-emerald-500/10 bg-emerald-500/5 p-5 space-y-2.5 shadow-md">
+                          <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                            <CheckCircle2 className="h-4 w-4 text-emerald-400" /> Case Strengths
+                          </span>
+                          <p className="text-slate-200 leading-relaxed text-xs leading-5">{analysisData.risk_analysis.strength}</p>
                         </div>
-                        <div className="rounded-lg bg-white/2 p-4 border border-white/5 space-y-2">
-                          <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">Advisory Case Weaknesses</span>
-                          <p className="text-slate-300 leading-relaxed">{analysisData.risk_analysis.weaknesses}</p>
+                        {/* Weaknesses */}
+                        <div className="rounded-xl border border-amber-500/10 bg-amber-500/5 p-5 space-y-2.5 shadow-md">
+                          <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                            <AlertTriangle className="h-4 w-4 text-amber-400" /> Case Weaknesses
+                          </span>
+                          <p className="text-slate-200 leading-relaxed text-xs leading-5">{analysisData.risk_analysis.weaknesses}</p>
                         </div>
-                        <div className="rounded-lg bg-white/2 p-4 border border-white/5 space-y-2">
-                          <span className="text-[10px] text-rose-400 font-bold uppercase tracking-wider">Missing Evidence Gaps</span>
-                          <p className="text-slate-300 leading-relaxed">{analysisData.risk_analysis.missing}</p>
+                        {/* Gaps */}
+                        <div className="rounded-xl border border-rose-500/10 bg-rose-500/5 p-5 space-y-2.5 shadow-md">
+                          <span className="text-[10px] text-rose-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                            <ShieldAlert className="h-4 w-4 text-rose-400" /> Investigation Gaps
+                          </span>
+                          <p className="text-slate-200 leading-relaxed text-xs leading-5">{analysisData.risk_analysis.missing}</p>
                         </div>
-                        <div className="rounded-lg bg-white/2 p-4 border border-white/5 space-y-2">
-                          <span className="text-[10px] text-purple-400 font-bold uppercase tracking-wider">Procedural Compliance Risks</span>
-                          <p className="text-slate-300 leading-relaxed">{analysisData.risk_analysis.procedural}</p>
+                        {/* Procedural */}
+                        <div className="rounded-xl border border-purple-500/10 bg-purple-500/5 p-5 space-y-2.5 shadow-md">
+                          <span className="text-[10px] text-purple-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                            <Scale className="h-4 w-4 text-purple-400" /> Procedural Risks
+                          </span>
+                          <p className="text-slate-200 leading-relaxed text-xs leading-5">{analysisData.risk_analysis.procedural}</p>
                         </div>
                       </div>
                       
-                      <div className="rounded-lg bg-rose-500/5 p-4 border border-rose-500/10 text-xs text-slate-300 flex gap-3">
+                      <div className="rounded-xl bg-rose-500/5 p-5 border border-rose-500/10 text-xs text-slate-200 flex gap-3.5 shadow-md">
                         <Info className="h-5 w-5 text-rose-400 shrink-0 mt-0.5" />
                         <div>
-                          <span className="font-bold text-white">Investigation Gaps:</span>
-                          <p className="mt-1 leading-relaxed">{analysisData.risk_analysis.gaps}</p>
+                          <span className="font-bold text-white text-sm">Critical Discrepancy Alerts:</span>
+                          <p className="mt-1 leading-relaxed text-xs text-slate-300 leading-5">{analysisData.risk_analysis.gaps}</p>
                         </div>
                       </div>
-                    </Card>
+                    </div>
                   </div>
                 )}
 
