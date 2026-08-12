@@ -239,9 +239,9 @@ class QdrantManager:
                 if conditions:
                     query_filter = rest.Filter(must=conditions)
 
-            results = self._client.search(
+            response = self._client.query_points(
                 collection_name=collection,
-                query_vector=query_vector,
+                query=query_vector,
                 limit=top_k,
                 query_filter=query_filter,
                 with_payload=True,
@@ -256,8 +256,9 @@ class QdrantManager:
                     "doc_type": r.payload.get("doc_type", ""),
                     "act": r.payload.get("act", ""),
                     "chunk_index": r.payload.get("chunk_index", 0),
+                    "metadata": r.payload.get("metadata", {}),
                 }
-                for r in results
+                for r in response.points
             ]
         except Exception as exc:
             logger.error(f"Qdrant search failed: {exc}")
@@ -285,11 +286,13 @@ class QdrantManager:
         collection = collection_name or settings.QDRANT_COLLECTION_DOCS
 
         try:
-            results = self._client.search_batch(
+            from qdrant_client.http import models as rest
+            
+            results = self._client.query_batch_points(
                 collection_name=collection,
                 requests=[
-                    self.models.SearchRequest(
-                        vector=qv,
+                    rest.QueryRequest(
+                        query=qv,
                         limit=top_k,
                         with_payload=True,
                     )
@@ -305,8 +308,12 @@ class QdrantManager:
                         "text": r.payload.get("text", ""),
                         "score": float(r.score),
                         "source": r.payload.get("source", ""),
+                        "doc_type": r.payload.get("doc_type", ""),
+                        "act": r.payload.get("act", ""),
+                        "chunk_index": r.payload.get("chunk_index", 0),
+                        "metadata": r.payload.get("metadata", {}),
                     }
-                    for r in batch_results
+                    for r in batch_results.points
                 ])
             return formatted
         except Exception as exc:

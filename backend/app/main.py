@@ -41,6 +41,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("Database tables initialized successfully.")
+        
+        # Ensure Qdrant collections exist
+        try:
+            from app.embeddings.qdrant_client import get_qdrant_manager
+            qdrant = get_qdrant_manager()
+            if qdrant.is_available():
+                qdrant.create_collections()
+                logger.info("Qdrant collections verified/created successfully.")
+        except Exception as q_exc:
+            logger.error(f"Startup Qdrant collections setup error: {q_exc}")
     except Exception as exc:
         logger.error(f"Startup DB error: {exc}")
 

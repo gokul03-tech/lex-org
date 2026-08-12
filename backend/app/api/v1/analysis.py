@@ -454,7 +454,7 @@ async def analyze_case(
         d_result = await db.execute(
             select(Document).where(Document.case_id == case_id).order_by(Document.created_at.desc())
         )
-        doc = d_result.scalar_one_or_none()
+        doc = d_result.scalars().first()
         if not doc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -519,7 +519,7 @@ async def get_analysis(
     d_result = await db.execute(
         select(Document).where(Document.case_id == case_id).order_by(Document.created_at.desc())
     )
-    doc = d_result.scalar_one_or_none()
+    doc = d_result.scalars().first()
     doc_name = doc.filename if doc else "unspecified_file.pdf"
     
     # Get report opinion
@@ -585,7 +585,7 @@ async def stream_analysis(
     d_result = await db.execute(
         select(Document).where(Document.case_id == case_id).order_by(Document.created_at.desc())
     )
-    doc = d_result.scalar_one_or_none()
+    doc = d_result.scalars().first()
     if not doc:
         raise HTTPException(
             status_code=400,
