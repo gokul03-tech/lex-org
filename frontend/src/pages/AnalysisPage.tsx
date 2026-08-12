@@ -396,12 +396,12 @@ export default function AnalysisPage() {
                 {activeTab === 'summary' && (
                   <>
                     {/* Document metadata info table */}
-                    <Card className="border-white/5 bg-card/25 backdrop-blur-md overflow-hidden text-left shadow-lg">
-                      <div className="border-b border-white/5 bg-white/2 px-6 py-4 flex items-center justify-between">
+                    <Card className="border-white/10 bg-[#090e1a] overflow-hidden text-left shadow-2xl">
+                      <div className="border-b border-white/10 bg-white/2 px-6 py-4 flex items-center justify-between">
                         <span className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                          <FileText className="h-5 w-5 text-primary" /> Document Information
+                          <FileText className="h-5 w-5 text-white" /> Document Information
                         </span>
-                        <span className="rounded-full bg-blue-500/10 border border-blue-500/20 px-3 py-1 text-[10px] font-bold text-primary font-mono uppercase">
+                        <span className="rounded-full bg-white/5 border border-white/10 px-3 py-1 text-[10px] font-bold text-white font-mono uppercase">
                           {analysisData.document_info.status}
                         </span>
                       </div>
@@ -423,7 +423,7 @@ export default function AnalysisPage() {
                           const Icon = m.icon;
                           return (
                             <div key={m.label} className="border-b border-white/5 pb-3 flex gap-3 items-start hover:border-white/10 transition-colors">
-                              <Icon className="h-4 w-4 text-primary shrink-0 mt-1" />
+                              <Icon className="h-4 w-4 text-white shrink-0 mt-1" />
                               <div>
                                 <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">{m.label}</span>
                                 <p className="font-semibold text-slate-200 mt-1 text-xs break-all leading-normal">{m.val || 'N/A'}</p>
@@ -435,10 +435,10 @@ export default function AnalysisPage() {
                     </Card>
 
                     {/* AI generated Legal Summary */}
-                    <Card className="border-white/5 bg-card/25 backdrop-blur-md text-left shadow-lg">
-                      <div className="border-b border-white/5 bg-white/2 px-6 py-4">
+                    <Card className="border-white/10 bg-[#090e1a] text-left shadow-2xl">
+                      <div className="border-b border-white/10 bg-white/2 px-6 py-4">
                         <span className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                          <Sparkles className="h-5 w-5 text-cyan-400" /> Executive Legal Advisory Summary
+                          <Sparkles className="h-5 w-5 text-white" /> Executive Legal Advisory Summary
                         </span>
                       </div>
                       <CardContent className="p-6 text-slate-200 text-sm leading-relaxed space-y-4 font-normal">
@@ -451,9 +451,9 @@ export default function AnalysisPage() {
                     {/* Facts Timeline Progression */}
                     <div className="space-y-4 text-left">
                       <h3 className="text-sm font-bold text-white flex items-center gap-2 uppercase tracking-wider">
-                        <Clock className="h-5 w-5 text-primary" /> Case Facts Progression Timeline
+                        <Clock className="h-5 w-5 text-white" /> Case Facts Progression Timeline
                       </h3>
-                      <div className="relative pl-6 border-l border-white/5 space-y-6">
+                      <div className="relative pl-6 border-l border-white/10 space-y-6">
                         {analysisData.timeline.map((step: any, idx: number) => (
                           <motion.div
                             key={idx}
@@ -462,11 +462,11 @@ export default function AnalysisPage() {
                             transition={{ delay: idx * 0.05 }}
                             className="relative"
                           >
-                            <span className="absolute -left-9 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-card border border-primary/35 shadow shadow-primary/20">
-                              <span className="h-2.5 w-2.5 rounded-full bg-primary" />
+                            <span className="absolute -left-9 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-card border border-white/20 shadow">
+                              <span className="h-2.5 w-2.5 rounded-full bg-white" />
                             </span>
-                            <div className="rounded-xl border border-white/5 bg-card/15 p-5 text-sm">
-                              <span className="font-bold font-mono text-primary text-xs">{step.date}</span>
+                            <div className="rounded-xl border border-white/10 bg-[#090e1a] p-5 text-sm shadow-md">
+                              <span className="font-bold font-mono text-white text-xs">{step.date}</span>
                               <p className="text-slate-200 font-semibold leading-relaxed mt-1.5">{step.event}</p>
                             </div>
                           </motion.div>
@@ -483,12 +483,12 @@ export default function AnalysisPage() {
                     {/* Legal Issues */}
                     <div className="space-y-4">
                       <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                        <FileQuestion className="h-5 w-5 text-primary" /> Legal Questions Under Review
+                        <FileQuestion className="h-5 w-5 text-white" /> Legal Questions Under Review
                       </h3>
                       <div className="grid gap-4">
                         {analysisData.legal_issues.map((issue: string, idx: number) => (
-                          <div key={idx} className="flex gap-4 rounded-xl border border-white/5 bg-card/20 p-5 text-sm text-slate-200 shadow-md">
-                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary border border-primary/20 font-bold font-mono text-xs">
+                          <div key={idx} className="flex gap-4 rounded-xl border border-white/10 bg-[#090e1a] p-5 text-sm text-slate-200 shadow-lg">
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/5 text-white border border-white/10 font-bold font-mono text-xs">
                               {idx + 1}
                             </span>
                             <span className="font-semibold leading-relaxed mt-0.5">{issue}</span>
@@ -500,20 +500,20 @@ export default function AnalysisPage() {
                     {/* Identified Acts & Sections */}
                     <div className="space-y-4">
                       <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                        <BookOpen className="h-5 w-5 text-cyan-400" /> Statutory Provisions & Penal Codes
+                        <BookOpen className="h-5 w-5 text-white" /> Statutory Provisions & Penal Codes
                       </h3>
                       
                       <div className="grid gap-4">
                         {analysisData.sections.map((sec: any) => {
                           const isExpanded = expandedSections[sec.num];
                           return (
-                            <div key={sec.num} className="rounded-xl border border-white/5 bg-card/20 overflow-hidden shadow-md">
+                            <div key={sec.num} className="rounded-xl border border-white/10 bg-[#090e1a] overflow-hidden shadow-lg">
                               <button
                                 onClick={() => toggleSection(sec.num)}
                                 className="w-full flex items-center justify-between p-5 hover:bg-white/2 text-left"
                               >
                                 <div className="flex items-center gap-3">
-                                  <span className="rounded-lg bg-primary/15 border border-primary/20 px-3 py-1 text-xs font-bold text-primary font-mono">
+                                  <span className="rounded-lg bg-white/5 border border-white/10 px-3 py-1 text-xs font-bold text-white font-mono">
                                     {sec.num}
                                   </span>
                                   <span className="font-bold text-sm text-slate-200">{sec.title}</span>
@@ -524,7 +524,7 @@ export default function AnalysisPage() {
                                       ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' 
                                       : sec.importance === 'High'
                                       ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                                      : 'bg-blue-500/10 text-primary border border-primary/20'
+                                      : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
                                   }`}>
                                     {sec.importance}
                                   </span>
@@ -533,7 +533,7 @@ export default function AnalysisPage() {
                               </button>
                               
                               {isExpanded && (
-                                <div className="p-5 border-t border-white/5 bg-white/2 text-sm text-slate-200 leading-relaxed">
+                                <div className="p-5 border-t border-white/10 bg-white/1 text-sm text-slate-200 leading-relaxed">
                                   <p className="text-slate-300 font-bold mb-1">Scope & Definition:</p>
                                   <p className="text-slate-200 mt-1 leading-6">{sec.desc}</p>
                                 </div>
@@ -548,14 +548,14 @@ export default function AnalysisPage() {
                     {analysisData.articles && (
                       <div className="space-y-4">
                         <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                          <Scale className="h-5 w-5 text-purple-400" /> Constitutional Articles
+                          <Scale className="h-5 w-5 text-white" /> Constitutional Articles
                         </h3>
                         <div className="grid gap-4 sm:grid-cols-2">
                           {analysisData.articles.map((art: any) => (
-                            <div key={art.num} className="rounded-xl border border-white/5 bg-card/25 p-5 space-y-3 shadow-md">
-                              <div className="flex items-center justify-between text-sm font-bold text-primary">
+                            <div key={art.num} className="rounded-xl border border-white/10 bg-[#090e1a] p-5 space-y-3 shadow-lg">
+                              <div className="flex items-center justify-between text-sm font-bold text-white">
                                 <span className="flex items-center gap-2">
-                                  <Award className="h-4.5 w-4.5 text-primary" /> {art.num}
+                                  <Award className="h-4.5 w-4.5 text-white" /> {art.num}
                                 </span>
                                 <span className="text-[10px] text-muted-foreground font-mono uppercase">{art.meaning}</span>
                               </div>
@@ -571,15 +571,15 @@ export default function AnalysisPage() {
                     {/* Similar precedents judgements retrieved */}
                     <div className="space-y-4">
                       <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                        <TrendingUp className="h-5 w-5 text-emerald-400" /> Similar Precedents & Judgments
+                        <TrendingUp className="h-5 w-5 text-white" /> Similar Precedents & Judgments
                       </h3>
                       
                       <div className="grid gap-4">
                         {analysisData.precedents.map((prec: any, idx: number) => (
-                          <div key={idx} className="rounded-xl border border-white/5 bg-card/20 p-5 flex flex-col justify-between md:flex-row gap-6 shadow-md hover:border-white/10 transition-all">
+                          <div key={idx} className="rounded-xl border border-white/10 bg-[#090e1a] p-5 flex flex-col justify-between md:flex-row gap-6 shadow-lg hover:border-white/20 transition-all">
                             <div className="space-y-2.5 flex-1">
                               <div className="flex flex-wrap items-center gap-2.5 text-xs">
-                                <span className="rounded-md bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 font-bold text-emerald-400">
+                                <span className="rounded-md bg-white/5 border border-white/10 px-2.5 py-0.5 font-bold text-white font-mono">
                                   Similarity: {(prec.score * 100).toFixed(0)}%
                                 </span>
                                 <span className="text-muted-foreground font-mono">{prec.court} • {prec.year}</span>
@@ -587,11 +587,11 @@ export default function AnalysisPage() {
                               <h4 className="text-sm font-bold text-white">{prec.case_name}</h4>
                               <p className="text-xs text-slate-300 leading-relaxed leading-5">{prec.summary}</p>
                               <div className="flex flex-wrap gap-2 pt-1 text-[10px] font-mono">
-                                <span className="rounded border border-white/5 bg-white/5 px-2.5 py-0.5 font-semibold text-slate-400">Acts: {prec.acts}</span>
-                                <span className="rounded border border-white/5 bg-white/5 px-2.5 py-0.5 font-semibold text-slate-400">Section: {prec.sections}</span>
+                                <span className="rounded border border-white/10 bg-white/5 px-2.5 py-0.5 font-semibold text-slate-400">Acts: {prec.acts}</span>
+                                <span className="rounded border border-white/10 bg-white/5 px-2.5 py-0.5 font-semibold text-slate-400">Section: {prec.sections}</span>
                               </div>
                             </div>
-                            <Button variant="ghost" className="shrink-0 self-end md:self-center text-primary text-xs font-semibold hover:bg-primary/5 cursor-pointer">
+                            <Button variant="ghost" className="shrink-0 self-end md:self-center text-white border border-white/10 hover:bg-white/5 text-xs font-semibold cursor-pointer">
                               Open Case Brief <ArrowRight className="h-4 w-4 ml-1.5" />
                             </Button>
                           </div>
@@ -607,14 +607,14 @@ export default function AnalysisPage() {
                     {/* Arguments split column */}
                     <div className="grid gap-6 md:grid-cols-2">
                       {/* Prosecution */}
-                      <div className="rounded-xl border border-rose-500/10 bg-rose-500/5 p-6 space-y-4 shadow-lg">
-                        <h4 className="text-sm font-bold text-rose-400 uppercase tracking-wider flex items-center gap-2 border-b border-rose-500/10 pb-3">
-                          <ShieldAlert className="h-5 w-5 shrink-0" /> Prosecution Arguments
+                      <div className="rounded-xl border border-white/10 bg-[#090e1a] p-6 space-y-4 shadow-2xl">
+                        <h4 className="text-sm font-bold text-rose-400 uppercase tracking-wider flex items-center gap-2 border-b border-white/10 pb-3">
+                          <ShieldAlert className="h-5 w-5 shrink-0 text-rose-400" /> Prosecution Arguments
                         </h4>
                         <ul className="space-y-3.5 text-sm text-slate-200 leading-relaxed pl-4 list-none">
                           {analysisData.arguments.prosecution.map((arg: string, idx: number) => (
                             <li key={idx} className="flex gap-2.5 items-start">
-                              <span className="h-2 w-2 rounded-full bg-rose-500 shrink-0 mt-2" />
+                              <span className="h-1.5 w-1.5 rounded-full bg-white shrink-0 mt-2" />
                               <span>{arg}</span>
                             </li>
                           ))}
@@ -622,14 +622,14 @@ export default function AnalysisPage() {
                       </div>
 
                       {/* Defense */}
-                      <div className="rounded-xl border border-blue-500/10 bg-blue-500/5 p-6 space-y-4 shadow-lg">
-                        <h4 className="text-sm font-bold text-blue-400 uppercase tracking-wider flex items-center gap-2 border-b border-blue-500/10 pb-3">
-                          <ShieldCheck className="h-5 w-5 shrink-0" /> Defense Rebuttals
+                      <div className="rounded-xl border border-white/10 bg-[#090e1a] p-6 space-y-4 shadow-2xl">
+                        <h4 className="text-sm font-bold text-blue-400 uppercase tracking-wider flex items-center gap-2 border-b border-white/10 pb-3">
+                          <ShieldCheck className="h-5 w-5 shrink-0 text-blue-400" /> Defense Rebuttals
                         </h4>
                         <ul className="space-y-3.5 text-sm text-slate-200 leading-relaxed pl-4 list-none">
                           {analysisData.arguments.defense.map((arg: string, idx: number) => (
                             <li key={idx} className="flex gap-2.5 items-start">
-                              <span className="h-2 w-2 rounded-full bg-blue-500 shrink-0 mt-2" />
+                              <span className="h-1.5 w-1.5 rounded-full bg-white shrink-0 mt-2" />
                               <span>{arg}</span>
                             </li>
                           ))}
@@ -638,15 +638,15 @@ export default function AnalysisPage() {
                     </div>
 
                     {/* Arguments support details */}
-                    <Card className="border-white/5 bg-card/25 p-6 space-y-4 shadow-lg">
+                    <Card className="border-white/10 bg-[#090e1a] p-6 space-y-4 shadow-2xl">
                       <h4 className="text-xs font-bold text-white uppercase tracking-wider">Supporting Evidence Synthesis</h4>
                       <p className="text-sm text-slate-200 leading-relaxed leading-6">{analysisData.arguments.supporting}</p>
                       <div className="grid gap-6 sm:grid-cols-2 pt-2 text-xs">
-                        <div className="rounded-xl bg-white/5 p-5 border border-white/5 space-y-2">
+                        <div className="rounded-xl bg-white/1 p-5 border border-white/10 space-y-2">
                           <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">Defense Case Weaknesses</span>
                           <p className="text-slate-200 text-xs leading-relaxed mt-1">{analysisData.arguments.weaknesses}</p>
                         </div>
-                        <div className="rounded-xl bg-white/5 p-5 border border-white/5 space-y-2">
+                        <div className="rounded-xl bg-white/1 p-5 border border-white/10 space-y-2">
                           <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">Anticipated Prosecution Counter</span>
                           <p className="text-slate-200 text-xs leading-relaxed mt-1">{analysisData.arguments.counter_arguments}</p>
                         </div>
@@ -656,7 +656,7 @@ export default function AnalysisPage() {
                     {/* Evidence Assessment cards */}
                     <div className="space-y-4">
                       <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                        <Fingerprint className="h-5 w-5 text-primary" /> Case Material Evidence & Reliability
+                        <Fingerprint className="h-5 w-5 text-white" /> Case Material Evidence & Reliability
                       </h3>
                       
                       <div className="grid gap-4 sm:grid-cols-3">
@@ -666,21 +666,9 @@ export default function AnalysisPage() {
                           const isMedium = reliability.includes('medium');
                           
                           return (
-                            <div key={idx} className={`rounded-xl border p-5 space-y-4 flex flex-col justify-between shadow-md ${
-                              isHigh 
-                                ? 'border-emerald-500/10 bg-emerald-500/5' 
-                                : isMedium
-                                ? 'border-amber-500/10 bg-amber-500/5'
-                                : 'border-rose-500/10 bg-rose-500/5'
-                            }`}>
+                            <div key={idx} className="rounded-xl border border-white/10 bg-[#090e1a] p-5 space-y-4 flex flex-col justify-between shadow-lg">
                               <div className="space-y-2 text-left">
-                                <span className={`rounded-full px-2.5 py-0.5 text-[9px] font-bold font-mono uppercase tracking-wider border ${
-                                  isHigh 
-                                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20' 
-                                    : isMedium
-                                    ? 'bg-amber-500/15 text-amber-400 border-amber-500/20'
-                                    : 'bg-rose-500/15 text-rose-400 border-rose-500/20'
-                                }`}>
+                                <span className="rounded-full px-2.5 py-0.5 text-[9px] font-bold font-mono uppercase tracking-wider border border-white/10 bg-white/5 text-slate-300">
                                   {ev.type}
                                 </span>
                                 <p className="text-xs text-slate-200 font-semibold leading-relaxed pt-1.5">{ev.description}</p>
@@ -722,9 +710,9 @@ export default function AnalysisPage() {
                   <div className="space-y-8 text-left">
                     
                     {/* Legal Opinion */}
-                    <Card className="border-white/5 bg-card/25 p-6 space-y-4 shadow-lg">
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2 border-b border-white/5 pb-3">
-                        <Brain className="h-5.5 w-5.5 text-primary" /> Synthesized AI Advisory Legal Opinion
+                    <Card className="border-white/10 bg-[#090e1a] p-6 space-y-4 shadow-2xl">
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2 border-b border-white/10 pb-3">
+                        <Brain className="h-5.5 w-5.5 text-white" /> Synthesized AI Advisory Legal Opinion
                       </h3>
                       <p className="text-sm text-slate-200 leading-relaxed whitespace-pre-line leading-6">
                         {analysisData.legal_opinion}
@@ -739,28 +727,28 @@ export default function AnalysisPage() {
                       
                       <div className="grid gap-4 sm:grid-cols-2 text-sm">
                         {/* Strengths */}
-                        <div className="rounded-xl border border-emerald-500/10 bg-emerald-500/5 p-5 space-y-2.5 shadow-md">
+                        <div className="rounded-xl border border-white/10 bg-[#090e1a] p-5 space-y-2.5 shadow-lg">
                           <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                             <CheckCircle2 className="h-4 w-4 text-emerald-400" /> Case Strengths
                           </span>
                           <p className="text-slate-200 leading-relaxed text-xs leading-5">{analysisData.risk_analysis.strength}</p>
                         </div>
                         {/* Weaknesses */}
-                        <div className="rounded-xl border border-amber-500/10 bg-amber-500/5 p-5 space-y-2.5 shadow-md">
+                        <div className="rounded-xl border border-white/10 bg-[#090e1a] p-5 space-y-2.5 shadow-lg">
                           <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                             <AlertTriangle className="h-4 w-4 text-amber-400" /> Case Weaknesses
                           </span>
                           <p className="text-slate-200 leading-relaxed text-xs leading-5">{analysisData.risk_analysis.weaknesses}</p>
                         </div>
                         {/* Gaps */}
-                        <div className="rounded-xl border border-rose-500/10 bg-rose-500/5 p-5 space-y-2.5 shadow-md">
+                        <div className="rounded-xl border border-white/10 bg-[#090e1a] p-5 space-y-2.5 shadow-lg">
                           <span className="text-[10px] text-rose-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                             <ShieldAlert className="h-4 w-4 text-rose-400" /> Investigation Gaps
                           </span>
                           <p className="text-slate-200 leading-relaxed text-xs leading-5">{analysisData.risk_analysis.missing}</p>
                         </div>
                         {/* Procedural */}
-                        <div className="rounded-xl border border-purple-500/10 bg-purple-500/5 p-5 space-y-2.5 shadow-md">
+                        <div className="rounded-xl border border-white/10 bg-[#090e1a] p-5 space-y-2.5 shadow-lg">
                           <span className="text-[10px] text-purple-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                             <Scale className="h-4 w-4 text-purple-400" /> Procedural Risks
                           </span>
@@ -768,8 +756,8 @@ export default function AnalysisPage() {
                         </div>
                       </div>
                       
-                      <div className="rounded-xl bg-rose-500/5 p-5 border border-rose-500/10 text-xs text-slate-200 flex gap-3.5 shadow-md">
-                        <Info className="h-5 w-5 text-rose-400 shrink-0 mt-0.5" />
+                      <div className="rounded-xl bg-white/2 p-5 border border-white/10 text-xs text-slate-200 flex gap-3.5 shadow-lg">
+                        <Info className="h-5 w-5 text-white shrink-0 mt-0.5" />
                         <div>
                           <span className="font-bold text-white text-sm">Critical Discrepancy Alerts:</span>
                           <p className="mt-1 leading-relaxed text-xs text-slate-300 leading-5">{analysisData.risk_analysis.gaps}</p>
