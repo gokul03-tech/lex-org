@@ -58,9 +58,192 @@ class MockProvider(LLMProvider):
         system_prompt: str = "",
         temperature: float = 0.1,
     ) -> dict[str, Any]:
-        """Generate a mock structured response that loosely follows the schema."""
-        text_response = self.generate(prompt, system_prompt, temperature=temperature)
-        return {"text": text_response, "confidence": 0.85, "source": "mock_provider"}
+        """Generate a mock structured response that complies with the requested schema."""
+        prompt_lower = prompt.lower()
+        properties = output_schema.get("properties", {})
+
+        # Extract petitioner and respondent dynamically
+        petitioner = "V. K. Srinivasa Setty"
+        respondent = "Premier Life And General Insurance Co"
+        decision_date = "09 October 1957"
+        court = "High Court of Judicature"
+
+        # Try finding common case verses/vs syntax
+        vs_match = re.search(
+            r'([A-Z][a-zA-Z0-9\s\.\,\-\'\&]+)\s+(?:versus|v\.\s*s\s*\.?|v\s*\.\s*|vs\s*\.?)\s+([A-Z][a-zA-Z0-9\s\.\,\-\'\&]+)',
+            prompt
+        )
+        if vs_match:
+            p_candidate = vs_match.group(1).strip().split('\n')[-1].strip()
+            r_candidate = vs_match.group(2).strip().split('\n')[0].strip()
+            if 3 < len(p_candidate) < 100:
+                petitioner = p_candidate
+            if 3 < len(r_candidate) < 100:
+                respondent = r_candidate
+
+        # Try finding date in prompt
+        date_match = re.search(r'(?:on|dated)\s+(\d+\s+[A-Za-z]+\s+\d{4})', prompt)
+        if date_match:
+            decision_date = date_match.group(1).strip()
+
+        # Try finding court
+        if "bombay" in prompt_lower:
+            court = "Bombay High Court"
+        elif "delhi" in prompt_lower:
+            court = "Delhi High Court"
+        elif "karnataka" in prompt_lower:
+            court = "High Court of Karnataka"
+        elif "madras" in prompt_lower:
+            court = "Madras High Court"
+        elif "calcutta" in prompt_lower:
+            court = "Calcutta High Court"
+
+        # 1. Case Understanding Agent Schema
+        if "summary" in properties and "facts" in properties and "parties" in properties:
+            return {
+                "summary": f"The case concerns a legal dispute between the petitioner, {petitioner}, and the respondent, {respondent}.",
+                "facts": [
+                    f"The dispute arose between {petitioner} and {respondent} regarding the performance of statutory or contractual obligations.",
+                    f"{petitioner} filed a suit/application claiming relief against {respondent}.",
+                    f"The matter was presented before the Court for final determination of the rights of the parties."
+                ],
+                "parties": {"plaintiff": petitioner, "defendant": respondent, "others": []},
+                "legal_issues": [
+                    f"Whether the claims of {petitioner} are legally sustainable against {respondent}.",
+                    "Whether statutory compliance was properly adhered to by the parties."
+                ],
+                "timeline": [{"date": decision_date, "event": "Judgment/Order delivered by the court"}],
+                "entities": {"courts": [court], "judges": ["Honorable Justice"], "advocates": [], "witnesses": [], "organizations": []}
+            }
+
+        # 2. Evidence Reliability Agent Schema
+        if "overall_score" in properties and "items" in properties and "summary" in properties:
+            return {
+                "overall_score": 0.85,
+                "items": [
+                    {
+                        "description": f"Documentary evidence regarding the claims of {petitioner} vs {respondent}.",
+                        "source_score": 0.9,
+                        "corroboration": 0.8,
+                        "chain_of_custody": 0.85,
+                        "consistency": 0.9,
+                        "relevance": 0.95,
+                        "overall": 0.88,
+                        "notes": "Officially filed and sealed records."
+                    }
+                ],
+                "summary": "The primary documentary evidence is highly reliable and corroborated."
+            }
+
+        # 3. Contradiction Detection Agent Schema
+        if "contradictions" in properties and "overall_contradiction_score" in properties:
+            return {
+                "contradictions": [
+                    {
+                        "type": "timeline_discrepancy",
+                        "statement_a": f"{petitioner} alleged date of event.",
+                        "statement_b": f"{respondent} records indicating alternative date.",
+                        "severity": "medium",
+                        "confidence": 0.75,
+                        "resolvable": True,
+                        "notes": "Can be reconciled via transaction timestamps."
+                    }
+                ],
+                "overall_contradiction_score": 0.25
+            }
+
+        # 4. Procedural Compliance Agent Schema
+        if "compliance_score" in properties and "violations" in properties:
+            return {
+                "compliance_score": 0.9,
+                "checks": [
+                    {"aspect": "Filing Timeline", "status": "compliant", "score": 0.95, "notes": "Filing matches statutory timeline"},
+                    {"aspect": "Jurisdiction", "status": "compliant", "score": 1.0, "notes": "Proper court jurisdiction verified"}
+                ],
+                "violations": [],
+                "summary": "Procedural compliance is high. All filings and timelines are within statutory limitation periods."
+            }
+
+        # 5. Legal Reasoning Agent Schema
+        if "issues_identified" in properties and "rules" in properties and "application" in properties:
+            return {
+                "issues_identified": [
+                    f"Whether the claims of {petitioner} are legally sustainable against {respondent}.",
+                    "Whether statutory compliance was properly adhered to."
+                ],
+                "rules": [
+                    {"section": "Section 482 / Contract Law", "provision": "Defines the scope of liability and court discretion."}
+                ],
+                "application": f"The facts show that {petitioner} has provided sufficient prima facie evidence of claim validity, whereas {respondent} has raised procedural objections.",
+                "conclusion": f"The case merits a favorable advisory for {petitioner} subject to verification of raw evidence records.",
+                "alternative_interpretations": ["The respondent may argue statutory limitation or lack of notice."],
+                "confidence": 0.85
+            }
+
+        # 6. Strategy Recommendation Agent Schema
+        if "strategies" in properties and "recommended_strategy" in properties:
+            return {
+                "strategies": [
+                    {
+                        "name": "Amicable Settlement",
+                        "description": "Enter out-of-court mediation to resolve claims quickly.",
+                        "legal_basis": ["Section 89 CPC / BNSS guidelines"],
+                        "success_probability": 0.75,
+                        "pros": ["Low cost", "Guaranteed outcome", "Time saving"],
+                        "cons": ["Potential compromise on claim value"],
+                        "recommended_actions": ["Submit a settlement proposal"],
+                        "fallback": "Proceed with full litigation if mediation fails."
+                    },
+                    {
+                        "name": "Aggressive Litigation",
+                        "description": "Proceed with full trial on merits.",
+                        "legal_basis": ["Statutory provisions cited"],
+                        "success_probability": 0.65,
+                        "pros": ["Potential full recovery"],
+                        "cons": ["High cost", "Significant delay", "Unpredictable outcome"],
+                        "recommended_actions": ["File application for early hearing"],
+                        "fallback": "Consider mediation if court observations are unfavorable."
+                    }
+                ],
+                "recommended_strategy": "Amicable Settlement based on initial documentation strength.",
+                "overall_confidence": 0.8
+            }
+
+        # 7. Risk Assessment Agent Schema
+        if "overall_strength" in properties and "strengths" in properties and "weaknesses" in properties:
+            return {
+                "overall_strength": 0.75,
+                "strengths": [f"Well-documented initial claim by {petitioner}.", "Favorable statutory interpretations."],
+                "weaknesses": [f"Procedural delays or lack of pre-suit notice to {respondent}."],
+                "outcome_probabilities": {
+                    "favorable": 0.65,
+                    "unfavorable": 0.15,
+                    "settlement": 0.20
+                },
+                "key_risks": ["Potential limitation period objections."],
+                "mitigation": ["Draft a strong reply highlighting exceptions to limitation rules."],
+                "confidence": 0.85
+            }
+
+        # Fallback dynamic generic schema matching
+        result = {}
+        for prop_name, prop_info in properties.items():
+            prop_type = prop_info.get("type", "string")
+            if prop_type == "string":
+                result[prop_name] = f"Mock {prop_name} response"
+            elif prop_type == "number":
+                result[prop_name] = 0.85
+            elif prop_type == "integer":
+                result[prop_name] = 1
+            elif prop_type == "boolean":
+                result[prop_name] = True
+            elif prop_type == "array":
+                result[prop_name] = []
+            elif prop_type == "object":
+                result[prop_name] = {}
+
+        return result
+
 
     def stream_generate(
         self,
