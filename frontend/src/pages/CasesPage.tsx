@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Briefcase, Search, PlusCircle, FileText, Clock, ChevronRight,
-  FolderOpen, Calendar, Layers, X, Loader2
+  FolderOpen, Calendar, Layers, X, Loader2, Trash2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import apiClient from '@/lib/api';
@@ -30,6 +30,20 @@ export default function CasesPage() {
   const [newType, setNewType] = useState('Criminal Defense');
   const [newDesc, setNewDesc] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  const handleDeleteCase = async (e: React.MouseEvent, caseId: string) => {
+    e.stopPropagation();
+    if (!window.confirm("Are you sure you want to delete this case folder? All associated documents and analysis will be permanently deleted.")) {
+      return;
+    }
+    try {
+      await apiClient.delete(`/cases/${caseId}`);
+      setCases((prev) => prev.filter((c) => c.id !== caseId));
+    } catch (err) {
+      console.error("Failed to delete case:", err);
+      alert("Failed to delete case folder. Please try again.");
+    }
+  };
 
   useEffect(() => {
     fetchCases();
@@ -147,9 +161,18 @@ export default function CasesPage() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold text-muted-foreground font-mono bg-white/5 border border-white/5 px-2 py-0.5 rounded">{c.id}</span>
-                  <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${getStatusColor(c.status)}`}>
-                    {getStatusLabel(c.status)}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={(e) => handleDeleteCase(e, c.id)}
+                      className="p-1 rounded hover:bg-red-500/10 hover:text-red-400 text-muted-foreground transition-colors cursor-pointer"
+                      title="Delete Case Folder"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                    <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${getStatusColor(c.status)}`}>
+                      {getStatusLabel(c.status)}
+                    </span>
+                  </div>
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-white group-hover:text-primary transition-colors">
