@@ -49,8 +49,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             if qdrant.is_available():
                 qdrant.create_collections()
                 logger.info("Qdrant collections verified/created successfully.")
+                
+                # Startup Validation: check collections & dimensions
+                for col in [settings.QDRANT_COLLECTION_DOCS, settings.QDRANT_COLLECTION_SECTIONS]:
+                    try:
+                        info = qdrant.client.get_collection(collection_name=col)
+                        logger.info(f"Qdrant collection '{col}' is healthy. Points count: {info.points_count} | Vector size: {info.config.params.vectors.size}")
+                        if info.config.params.vectors.size != settings.QDRANT_VECTOR_SIZE:
+                            logger.error(f"CRITICAL: Qdrant collection '{col}' vector size mismatch! Expected {settings.QDRANT_VECTOR_SIZE}, got {info.config.params.vectors.size}")
+                    except Exception as col_err:
+                        logger.error(f"Failed to validate collection '{col}': {col_err}")
+            else:
+                logger.error("CRITICAL: Qdrant vector database is unavailable! Retrieval services will run in DEGRADED mode.")
         except Exception as q_exc:
             logger.error(f"Startup Qdrant collections setup error: {q_exc}")
+
+        # Check FalkorDB Connectivity
+        try:
+            from app.kg.falkordb_client import get_falkordb_client
+            falkor = await get_falkordb_client()
+            if await falkor.verify_connectivity():
+                logger.info("FalkorDB connection verified successfully. Knowledge Graph features are active.")
+            else:
+                logger.error("CRITICAL: FalkorDB is unavailable on port 6379! Knowledge Graph features will run in DEGRADED mode.")
+        except Exception as f_exc:
+            logger.error(f"Startup FalkorDB connectivity check failed: {f_exc}")
     except Exception as exc:
         logger.error(f"Startup DB error: {exc}")
 

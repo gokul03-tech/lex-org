@@ -235,32 +235,63 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
     keywords_list = extract_keywords(doc_text)
 
     # Map petitioner, respondent, court
-    parties = state.get("entities", {}).get("parties", {})
-    if isinstance(parties, list):
-        p_name = parties[0] if len(parties) > 0 else "Unknown Petitioner"
-        r_name = parties[1] if len(parties) > 1 else "Unknown Respondent"
-    elif isinstance(parties, dict):
-        p_name = parties.get("plaintiff") or parties.get("petitioner") or "Unknown Petitioner"
-        r_name = parties.get("defendant") or parties.get("respondent") or "Unknown Respondent"
-    else:
-        p_name = "Unknown Petitioner"
-        r_name = "Unknown Respondent"
+    meta = doc.metadata_ or {}
+    
+    p_meta = meta.get("petitioner", {})
+    p_name = p_meta.get("value") if isinstance(p_meta, dict) else p_meta
+    if not p_name:
+        parties = state.get("entities", {}).get("parties", {})
+        if isinstance(parties, list):
+            p_name = parties[0] if len(parties) > 0 else "Not found in document"
+        elif isinstance(parties, dict):
+            p_name = parties.get("plaintiff") or parties.get("petitioner") or "Not found in document"
+        else:
+            p_name = "Not found in document"
 
-    courts = state.get("entities", {}).get("courts", [])
-    court_name = courts[0] if courts and isinstance(courts, list) else case.court_name or "High Court of Judicature"
+    r_meta = meta.get("respondent", {})
+    r_name = r_meta.get("value") if isinstance(r_meta, dict) else r_meta
+    if not r_name:
+        parties = state.get("entities", {}).get("parties", {})
+        if isinstance(parties, list):
+            r_name = parties[1] if len(parties) > 1 else "Not found in document"
+        elif isinstance(parties, dict):
+            r_name = parties.get("defendant") or parties.get("respondent") or "Not found in document"
+        else:
+            r_name = "Not found in document"
+
+    court_meta = meta.get("court", {})
+    court_name = court_meta.get("value") if isinstance(court_meta, dict) else court_meta
+    if not court_name:
+        courts = state.get("entities", {}).get("courts", [])
+        court_name = courts[0] if courts and isinstance(courts, list) else case.court_name or "Not found in document"
+
+    dec_date_meta = meta.get("date", {})
+    dec_date = dec_date_meta.get("value") if isinstance(dec_date_meta, dict) else dec_date_meta
+    if not dec_date:
+        dec_date = "Not found in document"
+
+    case_num_meta = meta.get("case_number", {})
+    case_num = case_num_meta.get("value") if isinstance(case_num_meta, dict) else case_num_meta
+    if not case_num:
+        case_num = case.case_number or "Not found in document"
+
+    citation_meta = meta.get("citation", {})
+    citation_val = citation_meta.get("value") if isinstance(citation_meta, dict) else citation_meta
+    if not citation_val:
+        citation_val = "Not found in document"
 
     doc_info = {
         "file_name": doc.filename,
-        "document_type": doc.document_type or "Legal Document",
+        "document_type": meta.get("document_type", {}).get("value") or doc.document_type or "Legal Document",
         "court": court_name,
-        "case_number": case.case_number or doc.metadata_.get("case_number") or "Unspecified",
-        "decision_date": doc.metadata_.get("decision_date") or "Unknown",
-        "judges": ", ".join(state.get("entities", {}).get("judges", [])) if isinstance(state.get("entities", {}).get("judges"), list) else "Unknown",
+        "case_number": case_num,
+        "decision_date": dec_date,
+        "judges": ", ".join(state.get("entities", {}).get("judges", [])) if isinstance(state.get("entities", {}).get("judges"), list) and state.get("entities", {}).get("judges") else "Not found in document",
         "jurisdiction": "India",
         "petitioner": p_name,
         "respondent": r_name,
-        "citation": doc.metadata_.get("citation") or "Unknown",
-        "language": doc.metadata_.get("language") or "English",
+        "citation": citation_val,
+        "language": "English",
         "pages": doc.page_count or 1,
         "upload_date": doc.created_at.strftime("%d %B %Y") if doc.created_at else "Unknown",
         "status": "Complete",
@@ -540,29 +571,26 @@ async def get_analysis(
             elif s["title"] == "Arguments":
                 arguments = s["content"]
                 
-    # Format and combine to return complete enterprise dashboard payload
-    full_data = generate_mock_analysis_data(case.title, doc_name, case_id)
-    
     return {
         "id": analysis.id,
         "case_id": case_id,
-        "document_info": analysis.procedural_status or full_data["document_info"],
-        "summary": summary or full_data["summary"],
-        "timeline": analysis.strategy_options or full_data["timeline"],
-        "legal_issues": analysis.legal_issues or full_data["legal_issues"],
-        "acts": analysis.applicable_acts or full_data["acts"],
-        "sections": analysis.applicable_sections or full_data["sections"],
-        "articles": (analysis.procedural_status or {}).get("articles") or full_data["articles"],  # articles list
-        "principles": full_data["principles"],
-        "keywords": (analysis.procedural_status or {}).get("keywords") or full_data["keywords"],
-        "precedents": analysis.precedents or full_data["precedents"],
-        "evidence": analysis.contradictions or full_data["evidence"],
-        "arguments": arguments or full_data["arguments"],
-        "legal_opinion": opinion or full_data["legal_opinion"],
-        "risk_analysis": analysis.risk_assessment or full_data["risk_analysis"],
-        "confidence": {"score": int(analysis.trust_score), "reason": full_data["confidence"]["reason"]},
-        "agents": analysis.agent_results or full_data["agents"],
-        "kg_data": analysis.explanation_graph or full_data["kg_data"]
+        "document_info": analysis.procedural_status or {},
+        "summary": summary or "No summary available.",
+        "timeline": analysis.strategy_options or [],
+        "legal_issues": analysis.legal_issues or [],
+        "acts": analysis.applicable_acts or [],
+        "sections": analysis.applicable_sections or [],
+        "articles": (analysis.procedural_status or {}).get("articles") or [],
+        "principles": [],
+        "keywords": (analysis.procedural_status or {}).get("keywords") or [],
+        "precedents": analysis.precedents or [],
+        "evidence": analysis.contradictions or [],
+        "arguments": arguments or {},
+        "legal_opinion": opinion or "No opinion available.",
+        "risk_analysis": analysis.risk_assessment or {},
+        "confidence": {"score": int(analysis.trust_score), "reason": f"Analysis grounded with confidence score of {int(analysis.trust_score)}%."},
+        "agents": analysis.agent_results or [],
+        "kg_data": analysis.explanation_graph or {"nodes": [], "edges": []}
     }
 
 
@@ -708,46 +736,65 @@ async def chat_about_document(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     """Ask questions regarding document contents and legal advisory notes."""
-    question = body.get("question", "").lower()
+    question = body.get("question", "")
     if not question:
         raise HTTPException(status_code=400, detail="Question is required")
         
-    # Look up analysis data to create smart context-aware answers
-    c_result = await db.execute(select(Case).where(Case.id == case_id))
-    case = c_result.scalar_one_or_none()
-    
-    answer = (
-        "Based on Section 111 of the Bharatiya Nyaya Sanhita (BNS), 2023, the prosecution must establish a clear "
-        "mens rea (guilty intent) and show a direct financial trail connecting the accused to the syndicate's illicit "
-        "gains. Since the bank audits demonstrate no financial transactions between your account and the co-accused's "
-        "accounts, the conspiracy link is legally weak. I recommend relying on the Sanjay Chandra v. CBI precedent to "
-        "secure bail, as custodial interrogation is already completed."
+    # Verify case ownership
+    c_result = await db.execute(
+        select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     )
-    
-    if "section 302" in question or "murder" in question:
-        answer = (
-            "Section 302 of the IPC (now mapped to Section 101 of the BNS, 2023) specifies punishment for murder. "
-            "For this case, since the primary allegation is organized cyber fraud under Section 111 BNS, homicide charges "
-            "do not apply. Make sure the prosecution does not mischaracterize logistical activities to infer violent criminal conspiracy."
+    case = c_result.scalar_one_or_none()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case directory not found")
+
+    try:
+        from app.rag.rag_pipeline import RAGPipeline
+        from app.llm.qwen import get_qwen_provider, QWEN_SYSTEM_PROMPT
+
+        # Search for chunks belonging to this case in Qdrant
+        rag = RAGPipeline()
+        filter_conds = {
+            "case_id": case_id,
+            "doc_type": "uploaded_document"
+        }
+        
+        # Search the case documents
+        rag_results = await rag.search(
+            query=question,
+            top_k=5,
+            filter_conditions=filter_conds
         )
-    elif "evidence" in question or "whatsapp" in question or "phone" in question:
+
+        # Context build
+        context_parts = []
+        for r in rag_results:
+            text = r.get("text", "")
+            page = r.get("metadata", {}).get("page_number") or (r.get("metadata") or {}).get("page")
+            source = r.get("metadata", {}).get("filename") or "Document"
+            context_parts.append(f"Source: {source} (Page {page}):\n{text}")
+
+        context_str = "\n\n---\n\n".join(context_parts)
+        
+        # Build prompt
+        prompt = f"""You are LexOrch-KG Legal Advisor. Answer the advocate's question regarding their uploaded case document(s).
+Use the provided document context to formulate your response. Ground your answers strictly in the context.
+If the information is not present in the context, explicitly state that you cannot find it in the uploaded document.
+
+Context:
+{context_str}
+
+Advocate's Question:
+{question}
+"""
+        provider = get_qwen_provider()
+        answer = provider.generate(prompt, system_prompt=QWEN_SYSTEM_PROMPT, max_tokens=1024)
+
+    except Exception as exc:
+        logger.error(f"Chat RAG failed: {exc}")
         answer = (
-            "The electronic evidence, specifically the call records (CDR) linking Vikram Dev to the co-accused, is currently "
-            "inadmissible under Section 63 of the Bharatiya Sakshya Adhiniyam (BSA), 2023. The prosecution has not submitted "
-            "the mandatory statutory verification certificate verifying device/log integrity. This procedural gap should be highlighted "
-            "in your immediate response briefs."
-        )
-    elif "similar" in question or "cases" in question:
-        answer = (
-            "I found 4 key similar judicial precedents. The most relevant is Sanjay Chandra v. CBI (2011), where the Supreme Court "
-            "ruled that indefinite pretrial detention acts as punitive punishment and bail should be granted once the investigation "
-            "is completed and there is no evidence of flight risk or tampering."
-        )
-    elif "summarize" in question or "summary" in question:
-        answer = (
-            "Here is the executive summary: Vikram Dev was arrested for alleged participation in an OTP phishing fraud "
-            "syndicate under Section 111 of BNS. The defense claims he is a subcontractor with no guilty mind (mens rea) "
-            "or direct financial ties. Custodial detention is no longer required, making bail highly justifiable under Section 482 BNSS."
+            f"I encountered an error querying the vector search index or generating a response: {exc}. "
+            "Please check the retrieval database health."
         )
 
     return {"answer": answer}

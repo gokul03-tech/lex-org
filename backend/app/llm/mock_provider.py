@@ -59,80 +59,146 @@ class MockProvider(LLMProvider):
         temperature: float = 0.1,
     ) -> dict[str, Any]:
         """Generate a mock structured response that complies with the requested schema."""
-        prompt_lower = prompt.lower()
+        # Extract the case document text from the prompt
         properties = output_schema.get("properties", {})
+        doc_text = ""
+        doc_match = re.search(r"Case Document\(s\):\n(.*?)(\n\nAdditional Query:|\Z)", prompt, re.DOTALL)
+        if doc_match:
+            doc_text = doc_match.group(1).strip()
+        else:
+            doc_text = prompt
+
+        doc_text_lower = doc_text.lower()
 
         # Extract petitioner and respondent dynamically
-        petitioner = "V. K. Srinivasa Setty"
-        respondent = "Premier Life And General Insurance Co"
-        decision_date = "09 October 1957"
-        court = "High Court of Judicature"
-
-        # Try finding common case verses/vs syntax
+        petitioner = "Not found in document"
+        respondent = "Not found in document"
         vs_match = re.search(
-            r'([A-Z][a-zA-Z0-9\s\.\,\-\'\&]+)\s+(?:versus|v\.\s*s\s*\.?|v\s*\.\s*|vs\s*\.?)\s+([A-Z][a-zA-Z0-9\s\.\,\-\'\&]+)',
-            prompt
+            r'([A-Z][a-zA-Z0-9\s\.\,\-\'\&]{2,60})\s+(?:versus|v\.\s*s\s*\.?|v\s*\.\s*|vs\s*\.?)\s+([A-Z][a-zA-Z0-9\s\.\,\-\'\&]{2,60})',
+            doc_text
         )
         if vs_match:
-            p_candidate = vs_match.group(1).strip().split('\n')[-1].strip()
-            r_candidate = vs_match.group(2).strip().split('\n')[0].strip()
-            if 3 < len(p_candidate) < 100:
-                petitioner = p_candidate
-            if 3 < len(r_candidate) < 100:
-                respondent = r_candidate
+            petitioner = vs_match.group(1).strip().split('\n')[-1].strip()
+            respondent = vs_match.group(2).strip().split('\n')[0].strip()
+        
+        # Court extraction
+        court = "Not found in document"
+        court_match = re.search(
+            r"(Supreme\s+Court|High\s+Court|District\s+Court|Sessions\s+Court|Magistrate[\s']*s?\s+Court)",
+            doc_text, re.IGNORECASE
+        )
+        if court_match:
+            court = court_match.group(1).strip()
 
-        # Try finding date in prompt
-        date_match = re.search(r'(?:on|dated)\s+(\d+\s+[A-Za-z]+\s+\d{4})', prompt)
+        # Date extraction
+        decision_date = "Not found in document"
+        date_match = re.search(r"(\d{1,2}(?:st|nd|rd|th)?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})", doc_text, re.IGNORECASE)
         if date_match:
             decision_date = date_match.group(1).strip()
+        else:
+            slash_match = re.search(r"(\d{1,2}/\d{1,2}/\d{2,4})", doc_text)
+            if slash_match:
+                decision_date = slash_match.group(1).strip()
 
-        # Try finding court
-        if "bombay" in prompt_lower:
-            court = "Bombay High Court"
-        elif "delhi" in prompt_lower:
-            court = "Delhi High Court"
-        elif "karnataka" in prompt_lower:
-            court = "High Court of Karnataka"
-        elif "madras" in prompt_lower:
-            court = "Madras High Court"
-        elif "calcutta" in prompt_lower:
-            court = "Calcutta High Court"
+        # Extract facts dynamically
+        facts = []
+        sentences = [s.strip() for s in re.split(r"[.!?\n]", doc_text) if len(s.strip()) > 30]
+        for s in sentences:
+            if not any(k in s.lower() for k in ["versus", "vs", "court", "judgment", "order", "page", "section"]):
+                facts.append(s.replace("  ", " ") + ".")
+                if len(facts) >= 4:
+                    break
+        if not facts:
+            facts = [
+                f"The case involves a dispute between {petitioner} and {respondent}.",
+                "The dispute arose out of statutory and/or contractual obligations.",
+                "The parties have submitted conflicting claims before this Honorable Court."
+            ]
+
+        # Extract legal issues dynamically
+        legal_issues = []
+        whether_matches = re.findall(r"([A-Z][^.!?]*?whether[^.!?]*?\?)", doc_text, re.IGNORECASE)
+        for m in whether_matches:
+            cleaned = m.strip().replace("\n", " ")
+            if len(cleaned) > 20 and len(cleaned) < 200:
+                legal_issues.append(cleaned)
+
+        # Look for sections mentioned
+        sections_found = re.findall(r"(?:Section|Sec\.)\s*(\d+[A-Za-z]*)", doc_text, re.IGNORECASE)
+        for s in sections_found[:2]:
+            legal_issues.append(f"Whether the requirements of Section {s} are satisfied under the facts of the case.")
+
+        if not legal_issues:
+            legal_issues = [
+                f"Whether the claims of {petitioner} are legally sustainable against {respondent}.",
+                "Whether statutory compliance was properly adhered to by the parties."
+            ]
+
+        # Label inferred issues
+        labeled_issues = []
+        for issue in legal_issues:
+            if "whether" in issue.lower() and "satisfied under the facts" not in issue.lower():
+                labeled_issues.append(issue)
+            else:
+                labeled_issues.append(f"AI-inferred legal issue: {issue}")
+
+        # Extract timeline dynamically
+        timeline = []
+        for match in re.finditer(r"(\d{1,2}(?:st|nd|rd|th)?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})", doc_text, re.IGNORECASE):
+            dt = match.group(1)
+            start = max(0, match.start() - 40)
+            end = min(len(doc_text), match.end() + 60)
+            event_desc = doc_text[start:end].strip().replace("\n", " ")
+            if len(event_desc) > 30:
+                timeline.append({"date": dt, "event": event_desc[:120] + "..."})
+                if len(timeline) >= 4:
+                    break
+        if not timeline:
+            timeline = [{"date": decision_date if decision_date != "Not found in document" else "Judgment Date", "event": "Judgment/Order delivered by the court"}]
 
         # 1. Case Understanding Agent Schema
         if "summary" in properties and "facts" in properties and "parties" in properties:
             return {
                 "summary": f"The case concerns a legal dispute between the petitioner, {petitioner}, and the respondent, {respondent}.",
-                "facts": [
-                    f"The dispute arose between {petitioner} and {respondent} regarding the performance of statutory or contractual obligations.",
-                    f"{petitioner} filed a suit/application claiming relief against {respondent}.",
-                    f"The matter was presented before the Court for final determination of the rights of the parties."
-                ],
+                "facts": facts,
                 "parties": {"plaintiff": petitioner, "defendant": respondent, "others": []},
-                "legal_issues": [
-                    f"Whether the claims of {petitioner} are legally sustainable against {respondent}.",
-                    "Whether statutory compliance was properly adhered to by the parties."
-                ],
-                "timeline": [{"date": decision_date, "event": "Judgment/Order delivered by the court"}],
+                "legal_issues": labeled_issues,
+                "timeline": timeline,
                 "entities": {"courts": [court], "judges": ["Honorable Justice"], "advocates": [], "witnesses": [], "organizations": []}
             }
 
         # 2. Evidence Reliability Agent Schema
         if "overall_score" in properties and "items" in properties and "summary" in properties:
-            return {
-                "overall_score": 0.85,
-                "items": [
-                    {
-                        "description": f"Documentary evidence regarding the claims of {petitioner} vs {respondent}.",
+            evidence_items = []
+            for term in ["agreement", "contract", "receipt", "FIR", "statement", "report", "policy"]:
+                if term in doc_text_lower:
+                    evidence_items.append({
+                        "description": f"Documentary evidence concerning {term}.",
                         "source_score": 0.9,
                         "corroboration": 0.8,
                         "chain_of_custody": 0.85,
                         "consistency": 0.9,
                         "relevance": 0.95,
                         "overall": 0.88,
-                        "notes": "Officially filed and sealed records."
+                        "notes": f"Explicitly cited in the judgment text."
+                    })
+            if not evidence_items:
+                evidence_items = [
+                    {
+                        "description": f"Documentary records submitted by {petitioner}.",
+                        "source_score": 0.8,
+                        "corroboration": 0.7,
+                        "chain_of_custody": 0.75,
+                        "consistency": 0.8,
+                        "relevance": 0.9,
+                        "overall": 0.79,
+                        "notes": "Filed in the proceedings."
                     }
-                ],
-                "summary": "The primary documentary evidence is highly reliable and corroborated."
+                ]
+            return {
+                "overall_score": sum(e["overall"] for e in evidence_items) / len(evidence_items),
+                "items": evidence_items,
+                "summary": f"Documentary evidence regarding the claims of {petitioner} vs {respondent} is analyzed."
             }
 
         # 3. Contradiction Detection Agent Schema
@@ -140,13 +206,13 @@ class MockProvider(LLMProvider):
             return {
                 "contradictions": [
                     {
-                        "type": "timeline_discrepancy",
-                        "statement_a": f"{petitioner} alleged date of event.",
-                        "statement_b": f"{respondent} records indicating alternative date.",
+                        "type": "claim_discrepancy",
+                        "statement_a": f"{petitioner} claims entitlement to full relief under the relevant provisions.",
+                        "statement_b": f"{respondent} denies liability and highlights procedural non-compliance.",
                         "severity": "medium",
-                        "confidence": 0.75,
+                        "confidence": 0.8,
                         "resolvable": True,
-                        "notes": "Can be reconciled via transaction timestamps."
+                        "notes": "Inherent conflict between the claims of the parties."
                     }
                 ],
                 "overall_contradiction_score": 0.25
@@ -158,7 +224,7 @@ class MockProvider(LLMProvider):
                 "compliance_score": 0.9,
                 "checks": [
                     {"aspect": "Filing Timeline", "status": "compliant", "score": 0.95, "notes": "Filing matches statutory timeline"},
-                    {"aspect": "Jurisdiction", "status": "compliant", "score": 1.0, "notes": "Proper court jurisdiction verified"}
+                    {"aspect": "Jurisdiction", "status": "compliant", "score": 1.0, "notes": f"Jurisdiction established at {court}"}
                 ],
                 "violations": [],
                 "summary": "Procedural compliance is high. All filings and timelines are within statutory limitation periods."
@@ -166,17 +232,17 @@ class MockProvider(LLMProvider):
 
         # 5. Legal Reasoning Agent Schema
         if "issues_identified" in properties and "rules" in properties and "application" in properties:
+            rules = []
+            for s in sections_found[:2]:
+                rules.append({"section": f"Section {s}", "provision": f"Governs statutory rules mentioned in case."})
+            if not rules:
+                rules = [{"section": "Applicable Law", "provision": "Governs the rights and liabilities under the facts."}]
             return {
-                "issues_identified": [
-                    f"Whether the claims of {petitioner} are legally sustainable against {respondent}.",
-                    "Whether statutory compliance was properly adhered to."
-                ],
-                "rules": [
-                    {"section": "Section 482 / Contract Law", "provision": "Defines the scope of liability and court discretion."}
-                ],
+                "issues_identified": labeled_issues,
+                "rules": rules,
                 "application": f"The facts show that {petitioner} has provided sufficient prima facie evidence of claim validity, whereas {respondent} has raised procedural objections.",
                 "conclusion": f"The case merits a favorable advisory for {petitioner} subject to verification of raw evidence records.",
-                "alternative_interpretations": ["The respondent may argue statutory limitation or lack of notice."],
+                "alternative_interpretations": [f"The respondent ({respondent}) may argue lack of notice or statutory limitation."],
                 "confidence": 0.85
             }
 
@@ -186,18 +252,18 @@ class MockProvider(LLMProvider):
                 "strategies": [
                     {
                         "name": "Amicable Settlement",
-                        "description": "Enter out-of-court mediation to resolve claims quickly.",
+                        "description": f"Enter out-of-court mediation with {respondent} to resolve claims quickly.",
                         "legal_basis": ["Section 89 CPC / BNSS guidelines"],
                         "success_probability": 0.75,
                         "pros": ["Low cost", "Guaranteed outcome", "Time saving"],
                         "cons": ["Potential compromise on claim value"],
-                        "recommended_actions": ["Submit a settlement proposal"],
+                        "recommended_actions": ["Submit a settlement proposal to respondent"],
                         "fallback": "Proceed with full litigation if mediation fails."
                     },
                     {
                         "name": "Aggressive Litigation",
-                        "description": "Proceed with full trial on merits.",
-                        "legal_basis": ["Statutory provisions cited"],
+                        "description": f"Proceed with full trial on merits against {respondent}.",
+                        "legal_basis": ["Statutory provisions cited in judgment"],
                         "success_probability": 0.65,
                         "pros": ["Potential full recovery"],
                         "cons": ["High cost", "Significant delay", "Unpredictable outcome"],
@@ -205,7 +271,7 @@ class MockProvider(LLMProvider):
                         "fallback": "Consider mediation if court observations are unfavorable."
                     }
                 ],
-                "recommended_strategy": "Amicable Settlement based on initial documentation strength.",
+                "recommended_strategy": f"Amicable Settlement based on initial documentation strength.",
                 "overall_confidence": 0.8
             }
 

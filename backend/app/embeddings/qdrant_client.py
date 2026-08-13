@@ -47,9 +47,9 @@ class QdrantManager:
             from qdrant_client.http import models as rest
 
             if self.api_key:
-                self._client = QdrantClient(url=self.url, api_key=self.api_key)
+                self._client = QdrantClient(url=self.url, api_key=self.api_key, check_compatibility=False)
             else:
-                self._client = QdrantClient(url=self.url)
+                self._client = QdrantClient(url=self.url, check_compatibility=False)
             self._initialized = True
             logger.info(f"Qdrant client initialized: {self.url}")
         except ImportError:

@@ -43,9 +43,13 @@ class CrossEncoderReranker:
     def _load_model(self) -> None:
         """Load the cross-encoder model."""
         self._loaded = True
-        # Use fast, local score-based reranking by default to avoid large model downloads
-        logger.info("Using local score-based reranking (bypassing CrossEncoder model download)")
-        self._model = None
+        try:
+            from sentence_transformers import CrossEncoder
+            logger.info(f"Loading CrossEncoder model: {self.model_name}")
+            self._model = CrossEncoder(self.model_name)
+        except Exception as exc:
+            logger.warning(f"Failed to load CrossEncoder model, falling back to score-based reranking: {exc}")
+            self._model = None
 
     def rerank(
         self,

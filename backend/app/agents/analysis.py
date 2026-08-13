@@ -44,9 +44,14 @@ async def case_understanding_agent(state: AgentState) -> AgentState:
 
     try:
         from app.llm.qwen import get_qwen_provider, QWEN_SYSTEM_PROMPT
+        from app.document_pipeline.chunker import LegalChunker
+        from app.document_pipeline.embedder import EmbeddingGenerator
+        from app.embeddings.qdrant_client import get_qdrant_manager
+        from app.core.config import settings
 
         documents = state.get("documents", [])
         query = state.get("query", "")
+        case_id = state.get("case_id")
 
         if not documents and not query:
             state["case_summary"] = "No documents provided for analysis."
@@ -55,9 +60,45 @@ async def case_understanding_agent(state: AgentState) -> AgentState:
             state["timeline"] = []
             return _record_completion(state, "case_understanding", 0.5, "case_summary", state["case_summary"])
 
-        # Build prompt from documents
+        # Dynamic Chunking and Embedding Generation at Startup
+        chunker = LegalChunker()
+        embedder = EmbeddingGenerator()
+        qdrant = get_qdrant_manager()
+
+        for doc in documents:
+            filename = doc.get("filename") or "case_document"
+            pages = doc.get("metadata", {}).get("pages") or doc.get("pages")
+            if not pages:
+                text = doc.get("text") or doc.get("parsed_text") or doc.get("raw_text") or ""
+                pages = [text] if text else []
+            
+            # Splitting and chunking with page retention
+            doc_chunks = chunker.chunk_pages(pages, {"filename": filename, "case_id": case_id})
+            doc["chunks"] = doc_chunks
+
+            # Generate embeddings and upsert to Qdrant
+            if doc_chunks and qdrant.is_available():
+                doc_chunks = embedder.embed_chunks(doc_chunks)
+                qdrant_chunks = []
+                for c in doc_chunks:
+                    qdrant_chunks.append({
+                        "text": c["text"],
+                        "embedding": c["embedding"],
+                        "metadata": {
+                            "case_id": case_id,
+                            "doc_type": "uploaded_document",
+                            "filename": filename,
+                            "page_number": c["metadata"]["page_number"],
+                            "chunk_id": c["metadata"]["chunk_id"],
+                            "source": filename,
+                        }
+                    })
+                qdrant.upsert_chunks(qdrant_chunks, collection_name=settings.QDRANT_COLLECTION_DOCS)
+                logger.info(f"Indexed {len(qdrant_chunks)} chunks for document '{filename}' (Case: {case_id})")
+
+        # Build prompt from documents (using larger context window limit of 25,000 characters)
         doc_texts = "\n\n---\n\n".join(
-            d.get("text", d.get("parsed_text", ""))[:2000] for d in documents[:5]
+            d.get("text", d.get("parsed_text", ""))[:25000] for d in documents[:5]
         ) if documents else query
 
         prompt = f"""Analyze the following legal case document(s) and extract:
@@ -107,7 +148,16 @@ Additional Query: {query}
         state["legal_issues"] = result.get("legal_issues", [])
         state["timeline"] = result.get("timeline", [])
 
-        confidence = 0.85
+        text_len = len(doc_texts.strip())
+        has_parties = bool(result.get("parties", {}).get("plaintiff") or result.get("parties", {}).get("petitioner"))
+        confidence = 0.40
+        if text_len > 1000:
+            confidence += 0.20
+        if text_len > 5000:
+            confidence += 0.15
+        if has_parties:
+            confidence += 0.15
+        confidence = min(0.95, confidence)
         duration_ms = (time.monotonic() - start_time) * 1000
         logger.info(f"[CaseUnderstanding] Complete: confidence={confidence:.2f}, {duration_ms:.0f}ms")
         return _record_completion(state, "case_understanding", confidence, "case_summary", state["case_summary"])
@@ -132,10 +182,40 @@ async def legal_research_agent(state: AgentState) -> AgentState:
         from app.rag.rag_pipeline import RAGPipeline
 
         issues = state.get("legal_issues", [])
-        query = state.get("query", "") or " ".join(issues) if issues else "legal case analysis"
+        # Build RAG query using the supervisor's extracted legal issues and facts
+        query_parts = []
+        if issues:
+            query_parts.extend(issues)
+        if state.get("case_summary"):
+            query_parts.append(state["case_summary"])
+        
+        query = " ".join(query_parts) if query_parts else (state.get("query", "") or "legal case analysis")
 
         # Use the RAG pipeline for multi-source retrieval
         rag = RAGPipeline()
+
+        # Index the active case documents into the in-memory BM25 lexical index on the fly
+        docs = state.get("documents", [])
+        if docs:
+            try:
+                formatted_docs = []
+                for doc in docs:
+                    text = doc.get("text") or doc.get("content") or ""
+                    if text:
+                        # Split text into sentence-like chunks for more granular keyword matches
+                        chunks = [c.strip() for c in text.split("\n") if len(c.strip()) > 30]
+                        if not chunks:
+                            chunks = [text]
+                        for c in chunks:
+                            formatted_docs.append({
+                                "text": c,
+                                "metadata": {"source": doc.get("filename") or "case_document"}
+                            })
+                if formatted_docs:
+                    rag.keyword_retriever.index(formatted_docs)
+            except Exception as e:
+                logger.warning(f"Failed to index case documents in KeywordRetriever: {e}")
+
         rag_results = await rag.search(query, top_k=20)
 
         # Extract section references from RAG results
@@ -904,6 +984,7 @@ async def report_generation_agent(state: AgentState) -> AgentState:
 
     try:
         from app.llm.qwen import get_qwen_provider, QWEN_SYSTEM_PROMPT
+        import re
 
         summary = state.get("case_summary", "")
         facts = state.get("case_facts", {})
@@ -921,13 +1002,154 @@ async def report_generation_agent(state: AgentState) -> AgentState:
         explanation = state.get("explanation_graph", {})
         kg = state.get("kg_data", {})
         reasoning = state.get("legal_reasoning", "")
+        documents = state.get("documents", [])
+
+        # ── Grounding / Source Validation Helper ──
+        def find_source_provenance(claim: str) -> dict[str, Any]:
+            best_match = {
+                "source_type": "AI_inferred_analysis",
+                "source_document": "None",
+                "page_number": None,
+                "chunk_id": "None",
+                "confidence": 0.50,
+                "evidence": "Grounded via LLM reasoning synthesis."
+            }
+            if not documents or not claim:
+                return best_match
+                
+            claim_words = set(claim.lower().split())
+            if len(claim_words) < 3:
+                return best_match
+                
+            best_ratio = 0.0
+            for doc in documents:
+                filename = doc.get("filename") or "case_document"
+                pages = doc.get("metadata", {}).get("pages") or doc.get("pages") or [doc.get("text", "")]
+                
+                for p_idx, page_text in enumerate(pages):
+                    page_num = p_idx + 1
+                    sentences = [s.strip() for s in re.split(r"[.!?\n]", page_text) if len(s.strip()) > 15]
+                    for s_idx, sentence in enumerate(sentences):
+                        sentence_words = set(sentence.lower().split())
+                        if not sentence_words:
+                            continue
+                        intersection = claim_words & sentence_words
+                        ratio = len(intersection) / max(len(claim_words), 1)
+                        
+                        if ratio > best_ratio and ratio > 0.25:
+                            best_ratio = ratio
+                            best_match = {
+                                "source_type": "uploaded_document",
+                                "source_document": filename,
+                                "page_number": page_num,
+                                "chunk_id": f"{filename}_p{page_num}_c{s_idx}",
+                                "confidence": round(0.70 + (ratio * 0.25), 2),
+                                "evidence": sentence
+                            }
+            return best_match
+
+        # ── Validate & Enforce Grounded Mappings ──
+        
+        # 1. Ground Legal Issues
+        grounded_issues = []
+        for issue in issues:
+            prov = find_source_provenance(issue)
+            if prov["source_type"] == "uploaded_document":
+                category = "DOCUMENT FACT"
+                q_text = issue
+            else:
+                category = "AI LEGAL ANALYSIS"
+                q_text = f"AI-inferred legal issue: {issue}" if not issue.startswith("AI-inferred") else issue
+            
+            grounded_issues.append({
+                "question": q_text,
+                "category": category,
+                **prov
+            })
+        
+        state["legal_issues"] = grounded_issues  # type: ignore[typeddict-item-key]
+
+        # 2. Ground & Filter Precedents
+        grounded_precedents = []
+        for prec in precedents:
+            score = prec.get("relevance_score") or prec.get("score") or 0.0
+            if score >= 0.40:
+                grounded_precedents.append({
+                    "case_name": prec.get("case_name") or "Precedent",
+                    "court": prec.get("court") or "Court of Law",
+                    "year": prec.get("year") or "2024",
+                    "citation": prec.get("citation") or "Unknown Citation",
+                    "relevance_score": score,
+                    "reason": prec.get("reason") or (prec.get("summary", "")[:150] + "..."),
+                    "matching_issue": issues[0] if issues else "General liability",
+                    "evidence": prec.get("summary", ""),
+                    "source_type": "precedent",
+                    "source_document": "legal_corpus"
+                })
+        
+        if not grounded_precedents:
+            grounded_precedents = [{
+                "case_name": "No sufficiently relevant precedent found",
+                "court": "None",
+                "year": "N/A",
+                "citation": "N/A",
+                "relevance_score": 0.0,
+                "reason": "None of the indexed precedents exceeded the relevance threshold for the current case details.",
+                "matching_issue": "None",
+                "evidence": "N/A",
+                "source_type": "precedent",
+                "source_document": "legal_corpus"
+            }]
+            
+        state["precedents"] = grounded_precedents  # type: ignore[typeddict-item-key]
+
+        # 3. Ground & Enforce Applicable Sections
+        grounded_sections = []
+        for sec in sections:
+            score = sec.get("relevance_score") or sec.get("score") or 0.0
+            sec_num = sec.get("section_number") or ""
+            is_explicit = False
+            if sec_num:
+                is_explicit = any(re.search(rf"\b(Section|Sec\.)\s*{sec_num}\b", d.get("text", "").lower()) for d in documents)
+            
+            grounded_sections.append({
+                "section_number": sec_num,
+                "act": sec.get("act") or "Unknown Act",
+                "title": sec.get("title") or f"Section {sec_num}",
+                "text": sec.get("text") or "",
+                "relevance_score": score,
+                "explicitly_mentioned": is_explicit,
+                "reason": f"Explicitly cited in document." if is_explicit else "AI-inferred applicability based on case facts."
+            })
+        state["applicable_sections"] = grounded_sections
+
+        # 4. Ground Case Facts
+        grounded_facts = []
+        if isinstance(facts, dict):
+            raw_facts_list = facts.get("facts", []) or []
+        elif isinstance(facts, list):
+            raw_facts_list = facts
+        else:
+            raw_facts_list = [str(facts)]
+            
+        for fact in raw_facts_list:
+            prov = find_source_provenance(fact)
+            if prov["source_type"] == "uploaded_document":
+                category = "DOCUMENT FACT"
+            else:
+                category = "AI LEGAL ANALYSIS"
+            grounded_facts.append({
+                "fact": fact,
+                "category": category,
+                **prov
+            })
 
         # Generate executive summary
         exec_prompt = f"""Write an executive summary for a legal advisory report. Be concise and professional.
 
 Case: {summary[:500]}
-Key Issues: {', '.join(issues[:5])}
-Key Sections: {', '.join(f"Sec {s.get('section_number')} {s.get('act', '')}" for s in sections[:5])}
+Key Issues: {', '.join(q.get('question', '')[:100] for q in grounded_issues[:3])}
+Key Sections: {', '.join(f"Sec {s.get('section_number')} {s.get('act', '')}" for s in grounded_sections[:5])}
 Trust Score: {trust:.2f}
 
 Write a 3-4 sentence executive summary in plain English suitable for an advocate."""
@@ -940,11 +1162,11 @@ Write a 3-4 sentence executive summary in plain English suitable for an advocate
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "sections": [
                 {"title": "Executive Summary", "content": exec_summary, "order": 1},
-                {"title": "Case Facts", "content": str(facts) if facts else summary, "order": 2},
-                {"title": "Legal Issues Identified", "content": issues, "order": 3},
+                {"title": "Case Facts", "content": grounded_facts, "order": 2},
+                {"title": "Legal Issues Identified", "content": [q["question"] for q in grounded_issues], "order": 3},
                 {"title": "Applicable Acts", "content": acts, "order": 4},
-                {"title": "Applicable Sections", "content": [{"section": s.get("section_number"), "act": s.get("act"), "title": s.get("title", ""), "text": s.get("text", "")} for s in sections], "order": 5},
-                {"title": "Supporting Judgments", "content": precedents, "order": 6},
+                {"title": "Applicable Sections", "content": [{"section": s.get("section_number"), "act": s.get("act"), "title": s.get("title", ""), "text": s.get("text", ""), "explicit": s.get("explicitly_mentioned")} for s in grounded_sections], "order": 5},
+                {"title": "Supporting Judgments", "content": grounded_precedents, "order": 6},
                 {"title": "Evidence Analysis", "content": evidence, "order": 7},
                 {"title": "Contradiction Analysis", "content": contradictions, "order": 8},
                 {"title": "Risk Assessment", "content": risk, "order": 9},

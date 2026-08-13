@@ -75,7 +75,18 @@ class DocumentParser:
             # If very little text extracted, flag for OCR
             if total_chars < 100 and len(text_pages) > 0:
                 needs_ocr = True
-                logger.info(f"Low text extraction ({total_chars} chars), OCR may be needed: {file_path.name}")
+                logger.info(f"Low text extraction ({total_chars} chars), OCR fallback triggered: {file_path.name}")
+                try:
+                    from app.document_pipeline.ocr import OCREngine
+                    ocr = OCREngine()
+                    if ocr.ocr is not None:
+                        ocr_text = ocr.extract_text_from_pdf(file_path)
+                        if ocr_text.strip():
+                            text_pages = ocr_text.split("\n\n")
+                            needs_ocr = False
+                            logger.info(f"OCR successfully extracted {len(ocr_text)} characters across {len(text_pages)} pages.")
+                except Exception as ocr_exc:
+                    logger.error(f"OCR fallback failed: {ocr_exc}")
 
         except ImportError:
             logger.warning("PyMuPDF not installed. Falling back to pdfplumber.")

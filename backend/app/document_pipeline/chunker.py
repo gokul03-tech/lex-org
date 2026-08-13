@@ -91,6 +91,39 @@ class LegalChunker:
 
         return chunks
 
+    def chunk_pages(self, pages: list[str], metadata: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """Split a list of page texts into semantic chunks, preserving page numbers.
+
+        Args:
+            pages: List of strings, where each string is the text of a page.
+            metadata: Base metadata to attach to all chunks.
+
+        Returns:
+            List of chunk dicts with page_number, filename, and chunk_id.
+        """
+        all_chunks = []
+        filename = (metadata or {}).get("filename", "unknown")
+        
+        for idx, page_text in enumerate(pages):
+            page_num = idx + 1
+            if not page_text or not page_text.strip():
+                continue
+                
+            page_meta = {
+                **(metadata or {}),
+                "page_number": page_num,
+            }
+            
+            page_chunks = self.chunk(page_text, page_meta)
+            
+            for c_idx, chunk in enumerate(page_chunks):
+                chunk["metadata"]["page_number"] = page_num
+                chunk["metadata"]["filename"] = filename
+                chunk["metadata"]["chunk_id"] = f"{filename}_p{page_num}_c{c_idx}"
+                all_chunks.append(chunk)
+                
+        return all_chunks
+
     def _split_at_sections(self, text: str) -> list[str]:
         """Split text at legal section boundaries."""
         boundaries = [m.start() for m in self.section_boundary.finditer(text)]

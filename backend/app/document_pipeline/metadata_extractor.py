@@ -69,15 +69,26 @@ class LegalMetadataExtractor:
         # Only use first portion for efficiency (metadata is typically at the top)
         head = text[:5000]
 
+        def to_meta_status(val: Any) -> dict[str, Any]:
+            if val is None or val == "" or val == "Unknown" or val == "Untitled Document" or val == "other":
+                return {"value": None, "status": "not_found"}
+            return {"value": val, "status": "extracted"}
+
+        raw_parties = self._extract_parties(head)
+        petitioner = raw_parties.get("petitioner")
+        respondent = raw_parties.get("respondent")
+
         metadata: dict[str, Any] = {
             "filename": filename,
-            "title": self._extract_title(head, filename),
-            "court": self._extract_court(head),
-            "case_number": self._extract_case_number(head),
-            "date": self._extract_date(head),
+            "title": to_meta_status(self._extract_title(head, filename)),
+            "court": to_meta_status(self._extract_court(head)),
+            "case_number": to_meta_status(self._extract_case_number(head)),
+            "date": to_meta_status(self._extract_date(head)),
             "acts_referenced": self._extract_acts(head),
-            "parties": self._extract_parties(head),
-            "document_type": self._detect_document_type(head, filename),
+            "petitioner": to_meta_status(petitioner),
+            "respondent": to_meta_status(respondent),
+            "document_type": to_meta_status(self._detect_document_type(head, filename)),
+            "parties": raw_parties
         }
 
         return metadata

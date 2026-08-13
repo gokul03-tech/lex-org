@@ -23,6 +23,13 @@ export default function AnalysisPage() {
   const { caseId } = useParams<{ caseId: string }>();
   const [activeTab, setActiveTab] = useState<'summary' | 'statutes' | 'arguments' | 'graph' | 'opinion'>('summary');
   
+  const getMetaVal = (field: any) => {
+    if (typeof field === 'object' && field !== null) {
+      return field.value || 'Not found in document';
+    }
+    return field || 'Not found in document';
+  };
+  
   // State variables for application flow
   const [caseDetail, setCaseDetail] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -407,18 +414,18 @@ export default function AnalysisPage() {
                       </div>
                       <CardContent className="p-6 grid gap-6 sm:grid-cols-2 md:grid-cols-3 text-sm">
                         {[
-                          { label: 'File Name', val: analysisData.document_info.file_name, icon: File },
-                          { label: 'Document Type', val: analysisData.document_info.document_type, icon: FileText },
-                          { label: 'Jurisdiction', val: analysisData.document_info.jurisdiction, icon: Scale },
-                          { label: 'Court Matter', val: analysisData.document_info.court, icon: Scale },
-                          { label: 'Filing Number', val: analysisData.document_info.case_number, icon: FileText },
-                          { label: 'Decision Date', val: analysisData.document_info.decision_date, icon: Calendar },
-                          { label: 'Presiding Judge(s)', val: analysisData.document_info.judges, icon: Users },
-                          { label: 'Petitioner / Applicant', val: analysisData.document_info.petitioner, icon: Users },
-                          { label: 'Respondent', val: analysisData.document_info.respondent, icon: Users },
-                          { label: 'Citation Number', val: analysisData.document_info.citation, icon: FileText },
-                          { label: 'Document Language', val: analysisData.document_info.language, icon: Info },
-                          { label: 'Page Count', val: `${analysisData.document_info.pages} Pages`, icon: Layers }
+                          { label: 'File Name', val: getMetaVal(analysisData.document_info.file_name), icon: File },
+                          { label: 'Document Type', val: getMetaVal(analysisData.document_info.document_type), icon: FileText },
+                          { label: 'Jurisdiction', val: getMetaVal(analysisData.document_info.jurisdiction), icon: Scale },
+                          { label: 'Court Matter', val: getMetaVal(analysisData.document_info.court), icon: Scale },
+                          { label: 'Filing Number', val: getMetaVal(analysisData.document_info.case_number), icon: FileText },
+                          { label: 'Decision Date', val: getMetaVal(analysisData.document_info.decision_date), icon: Calendar },
+                          { label: 'Presiding Judge(s)', val: getMetaVal(analysisData.document_info.judges), icon: Users },
+                          { label: 'Petitioner / Applicant', val: getMetaVal(analysisData.document_info.petitioner), icon: Users },
+                          { label: 'Respondent', val: getMetaVal(analysisData.document_info.respondent), icon: Users },
+                          { label: 'Citation Number', val: getMetaVal(analysisData.document_info.citation), icon: FileText },
+                          { label: 'Document Language', val: getMetaVal(analysisData.document_info.language), icon: Info },
+                          { label: 'Page Count', val: `${analysisData.document_info.pages || 1} Pages`, icon: Layers }
                         ].map((m) => {
                           const Icon = m.icon;
                           return (
@@ -486,14 +493,45 @@ export default function AnalysisPage() {
                         <FileQuestion className="h-5 w-5 text-white" /> Legal Questions Under Review
                       </h3>
                       <div className="grid gap-4">
-                        {analysisData.legal_issues.map((issue: string, idx: number) => (
-                          <div key={idx} className="flex gap-4 rounded-xl border border-white/10 bg-[#090e1a] p-5 text-sm text-slate-200 shadow-lg">
-                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/5 text-white border border-white/10 font-bold font-mono text-xs">
-                              {idx + 1}
-                            </span>
-                            <span className="font-semibold leading-relaxed mt-0.5">{issue}</span>
-                          </div>
-                        ))}
+                        {analysisData.legal_issues.map((issue: any, idx: number) => {
+                          const isObj = typeof issue === 'object' && issue !== null;
+                          const questionText = isObj ? issue.question : issue;
+                          const evidenceText = isObj ? issue.evidence : '';
+                          const pageInfo = isObj ? issue.page_number : null;
+                          const confidence = isObj ? issue.confidence : null;
+                          const category = isObj ? issue.category : 'AI LEGAL ANALYSIS';
+                          
+                          return (
+                            <div key={idx} className="flex flex-col gap-2 rounded-xl border border-white/10 bg-[#090e1a] p-5 text-sm text-slate-200 shadow-lg">
+                              <div className="flex gap-4 items-start">
+                                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/5 text-white border border-white/10 font-bold font-mono text-xs mt-0.5">
+                                  {idx + 1}
+                                </span>
+                                <div className="space-y-1.5 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="font-bold text-slate-200 leading-relaxed text-sm">{questionText}</span>
+                                    <span className={`text-[9px] font-bold font-mono uppercase px-2 py-0.5 rounded border ${
+                                      category === 'DOCUMENT FACT' 
+                                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                                        : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20'
+                                    }`}>
+                                      {category}
+                                    </span>
+                                  </div>
+                                  {isObj && (evidenceText || pageInfo) && (
+                                    <div className="p-3.5 rounded-lg bg-white/2 border border-white/5 space-y-1.5 text-xs text-slate-400">
+                                      {evidenceText && <p><span className="font-bold text-slate-300">Supporting Evidence:</span> "{evidenceText}"</p>}
+                                      <div className="flex gap-4 text-[10px] font-mono text-slate-500">
+                                        {pageInfo && <span>Page: {pageInfo}</span>}
+                                        {confidence && <span>Confidence: {(confidence * 100).toFixed(0)}%</span>}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
 
@@ -533,9 +571,21 @@ export default function AnalysisPage() {
                               </button>
                               
                               {isExpanded && (
-                                <div className="p-5 border-t border-white/10 bg-white/1 text-sm text-slate-200 leading-relaxed">
-                                  <p className="text-slate-300 font-bold mb-1">Scope & Definition:</p>
-                                  <p className="text-slate-200 mt-1 leading-6">{sec.desc}</p>
+                                <div className="p-5 border-t border-white/10 bg-white/1 text-sm text-slate-200 space-y-3.5 leading-relaxed">
+                                  <div>
+                                    <p className="text-slate-300 font-bold text-xs uppercase tracking-wider">Scope & Definition:</p>
+                                    <p className="text-slate-200 mt-1 leading-6">{sec.desc}</p>
+                                  </div>
+                                  {sec.reason && (
+                                    <div>
+                                      <p className="text-slate-300 font-bold text-xs uppercase tracking-wider">Application Relevance:</p>
+                                      <p className="text-slate-400 mt-1 leading-5 text-xs">{sec.reason}</p>
+                                    </div>
+                                  )}
+                                  <div className="flex gap-4 pt-2 border-t border-white/5 text-[10px] font-mono text-slate-500">
+                                    <span>Source: {sec.explicit ? "Explicitly Cited in PDF" : "AI-Inferred / Retrieved"}</span>
+                                    {sec.relevance_score !== undefined && <span>Relevance: {(sec.relevance_score * 100).toFixed(0)}%</span>}
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -585,7 +635,18 @@ export default function AnalysisPage() {
                                 <span className="text-muted-foreground font-mono">{prec.court} • {prec.year}</span>
                               </div>
                               <h4 className="text-sm font-bold text-white">{prec.case_name}</h4>
-                              <p className="text-xs text-slate-300 leading-relaxed leading-5">{prec.summary}</p>
+                              {prec.matching_issue && prec.matching_issue !== "None" && (
+                                <p className="text-[10px] text-amber-400 font-mono">Applicable Issue: {prec.matching_issue}</p>
+                              )}
+                              <p className="text-xs text-slate-300 leading-relaxed leading-5">
+                                {prec.summary || prec.reason}
+                              </p>
+                              {prec.evidence && prec.evidence !== "N/A" && (
+                                <div className="p-3 bg-white/2 border border-white/5 rounded-lg text-[11px] text-slate-400 space-y-1">
+                                  <span className="font-bold text-[9px] uppercase tracking-wider text-slate-300">Supporting Passage:</span>
+                                  <p className="italic">"{prec.evidence}"</p>
+                                </div>
+                              )}
                               <div className="flex flex-wrap gap-2 pt-1 text-[10px] font-mono">
                                 <span className="rounded border border-white/10 bg-white/5 px-2.5 py-0.5 font-semibold text-slate-400">Acts: {prec.acts}</span>
                                 <span className="rounded border border-white/10 bg-white/5 px-2.5 py-0.5 font-semibold text-slate-400">Section: {prec.sections}</span>
@@ -661,7 +722,7 @@ export default function AnalysisPage() {
                       
                       <div className="grid gap-4 sm:grid-cols-3">
                         {analysisData.evidence.map((ev: any, idx: number) => {
-                          const reliability = ev.reliability.toLowerCase();
+                          const reliability = (ev.reliability || '').toLowerCase();
                           const isHigh = reliability.includes('high');
                           const isMedium = reliability.includes('medium');
                           

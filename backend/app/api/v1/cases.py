@@ -83,7 +83,7 @@ async def create_case(
             parsed_text=parsed_data.get("text", ""),
             raw_text=parsed_data.get("text", ""),
             page_count=parsed_data.get("page_count", 1),
-            metadata_=parsed_data.get("metadata", {}),
+            metadata_={**(parsed_data.get("metadata") or {}), "pages": parsed_data.get("pages", [])},
             mime_type=file.content_type,
         )
         db.add(db_doc)
