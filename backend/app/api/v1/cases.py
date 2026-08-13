@@ -167,6 +167,15 @@ async def delete_case(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Case not found",
         )
+    
+    from app.db.models import Document, Analysis, Report
+    from sqlalchemy import delete
+    
+    # Cascade delete child records manually to satisfy foreign key constraints
+    await db.execute(delete(Document).where(Document.case_id == case_id))
+    await db.execute(delete(Analysis).where(Analysis.case_id == case_id))
+    await db.execute(delete(Report).where(Report.case_id == case_id))
+    
     await db.delete(case)
     await db.commit()
 
