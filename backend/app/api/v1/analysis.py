@@ -518,12 +518,12 @@ async def analyze_case(
     return {"status": "success", "analysis_id": analysis.id}
 
 
-@router.get("/case/{case_id}", response_model=dict[str, Any])
+@router.get("/case/{case_id}", response_model=dict[str, Any] | None)
 async def get_analysis(
     case_id: str,
     current_user_id: str = Depends(require_user),
     db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     """Get the latest analysis results for a case."""
     # Verify case ownership
     c_result = await db.execute(
@@ -541,10 +541,7 @@ async def get_analysis(
     )
     analysis = a_result.scalar_one_or_none()
     if not analysis:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Analysis not yet compiled for this case",
-        )
+        return None
         
     # Get active document
     d_result = await db.execute(
