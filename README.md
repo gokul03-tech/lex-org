@@ -74,6 +74,174 @@ flowchart TD
 
 ---
 
+## 🗄️ Detailed Database Schema & Model structures
+
+The relational storage layer uses SQLite with SQLAlchemy asynchronous models (`app/db/models/__init__.py`). Below is the data model design:
+
+### 1. User Model (`users` table)
+Represents registered advocates accessing the platform.
+* `id` (String, PK): UUID representing the user.
+* `email` (String, Unique, Indexed): User's registration email.
+* `hashed_password` (String): Securely hashed password.
+* `is_active` (Boolean): Active state flag.
+* `created_at` (DateTime): Record creation timestamp.
+
+### 2. Case Model (`cases` table)
+Represents a legal case brief directory folder.
+* `id` (String, PK): Case UUID.
+* `title` (String): Advocate-defined case folder title.
+* `description` (Text): Summary notes or client description.
+* `case_type` (String): Category matter (e.g. Criminal Defense, Property Claim).
+* `status` (String): pipeline processing state (e.g. `draft`, `analysis_complete`).
+* `user_id` (String, FK -> `users.id`): Folder owner.
+* `court_name` (String, Nullable): Targeted jurisdiction.
+* `case_number` (String, Nullable): Filing registration code.
+
+### 3. Document Model (`documents` table)
+Preserves raw and parsed text files uploaded to a Case Folder.
+* `id` (String, PK): Document UUID.
+* `case_id` (String, FK -> `cases.id`): Attached case folder.
+* `filename` (String): Uploaded document file name.
+* `filepath` (String): Absolute storage path.
+* `file_size` (Integer): Size in bytes.
+* `mime_type` (String): Mime type (e.g., `application/pdf`).
+* `page_count` (Integer): Total pages extracted.
+* `parsed_text` (Text): Extracted textual body.
+* `metadata_` (JSON): Structured JSON storing page boundaries and OCR statuses.
+
+### 4. Analysis Model (`analyses` table)
+Persists the raw structured outputs returned by the LangGraph multi-agent loop.
+* `id` (String, PK): Analysis record UUID.
+* `case_id` (String, FK -> `cases.id`): Context Case.
+* `summary` (Text): Core case executive brief.
+* `legal_issues` (JSON): List of extracted legal questions and their categories.
+* `applicable_acts` (JSON): Applicable legal codes.
+* `applicable_sections` (JSON): Linked statutory sections with relevance weights.
+* `precedents` (JSON): Filtered judicial precedents containing citation data.
+* `contradictions` (JSON): Inconsistent statements or procedural conflicts found.
+* `risk_assessment` (JSON): Strategic risks and likelihood metrics.
+* `procedural_status` (JSON): Administrative compliance details.
+* `strategy_options` (JSON): Strategic defense/prosecution tracks.
+* `agent_results` (JSON): Individual agent processing status logs.
+* `trust_score` (Float): Calibrated score based on evidence overlap.
+
+### 5. Report Model (`reports` table)
+Persists compiled, client-ready advisory documents structured for tab layouts.
+* `id` (String, PK): UUID.
+* `case_id` (String, FK -> `cases.id`): Parent case folder.
+* `title` (String): Report name.
+* `sections` (JSON): 16-section array storing `order`, `title`, and `content`.
+* `trust_score` (Float): Overall report calibration metric.
+* `explanation_graph` (JSON): Precomputed D3 explainability node-link model.
+* `knowledge_graph` (JSON): Precomputed FalkorDB graph snapshot payload.
+
+---
+
+## 🔍 Deep-Dive on Hybrid Retrieval Search
+
+The framework implements a hybrid RAG pipeline (`app/rag/rag_pipeline.py`) merging semantic and keyword search, followed by reranking to construct absolute agent contexts:
+
+```mermaid
+flowchart TD
+    Q[Advocate Query] --> Dense[Qdrant Dense Retriever]
+    Q --> Lexical[BM25 Keyword Retriever]
+    Dense -->|Top 25 Vector Chunks| RRF[Reciprocal Rank Fusion]
+    Lexical -->|Top 25 Term Matches| RRF
+    RRF -->|Combined Candidate List| Reranker[BAAI BGE-Reranker-Large]
+    Reranker -->|Top 5 Context Chunks| Context[Agent Reasoning Prompt]
+```
+
+### 1. Dense Semantic Retrieval (Qdrant)
+Uses local **BGE-M3 (BAAI/bge-m3)** embeddings to generate 1024-dimensional dense vectors. It queries Qdrant collections (`legal_documents` or `legal_sections`) using cosine similarity, catching synonyms and general legal concepts.
+
+### 2. Lexical Search (BM25 Keyword Index)
+Operates simultaneously to match exact terminology, statutory sections (e.g. "Section 111 BNS"), and specific act titles which might be diluted in pure vector space.
+
+### 3. Reciprocal Rank Fusion (RRF)
+Combines candidates from both retrieval tracks using the standard RRF formula:
+$$RRF\_Score(d) = \sum_{m \in M} \frac{1}{60 + r_m(d)}$$
+Where $r_m(d)$ is the rank of document $d$ in retriever $m$. This fuses vector relevance with exact statutory keyword preservation.
+
+### 4. CrossEncoder Reranking
+The fused candidates are passed to a local **BGE-Reranker-Large** CrossEncoder:
+* Unlike Bi-Encoders, it processes the Query and Chunk jointly, calculating attention scores directly between them.
+* Re-orders candidates to place chunks with high factual relevance at the very top, pruning irrelevant fragments.
+
+---
+
+## 🕸️ FalkorDB Knowledge Graph Schema
+
+Entities, citations, and precedents are linked in a graph database (`app/kg/falkordb_client.py`). Below is the graph model:
+
+### 1. Node Labels
+* **`Case`**: Context node for an active case folder.
+* **`Party`**: Extracted person or organization (Petitioner, Respondent, Accused).
+* **`Section`**: Specific statutory law citation (e.g., Section 111 BNS).
+* **`Article`**: Constitutional clauses (e.g., Article 14).
+* **`Citation`**: Landmark precedents (e.g., *Sanjay Chandra v. CBI*).
+
+### 2. Edge Relationships
+* **`(:Case)-[:INVOLVES]->(:Party)`**: Connects litigant names to cases.
+* **`(:Case)-[:VIOLATES]->(:Section)`**: Connects accused acts to specific statutory sections.
+* **`(:Section)-[:SUBJECT_TO]->(:Article)`**: Checks constitutionality of applied codes.
+* **`(:Case)-[:CITES]->(:Citation)`**: Connects relevant legal citations.
+* **`(:Citation)-[:INTERPRETS]->(:Section)`**: Tracks which judicial precedent applies to what statute section.
+
+---
+
+## 📋 Breakdown of the 16-Section Advisory Report
+
+The final advisory payload compiles into 16 structured, advocate-aligned sections:
+
+1. **Executive Summary**: 3-4 sentence high-level summary of findings.
+2. **Case Facts**: Grounded timeline facts annotated with source page provenance.
+3. **Legal Issues Identified**: Found issues categorized as `DOCUMENT FACT` or `AI LEGAL ANALYSIS`.
+4. **Applicable Acts**: List of governing acts relevant to the matter.
+5. **Applicable Sections**: Detailed statutory definitions, including whether they were explicitly cited in the PDF or dynamically inferred.
+6. **Supporting Judgments**: Reranked case laws that match the legal questions.
+7. **Evidence Analysis**: Assessments of device verify logs, electronic files (under BSA Section 63), or witness records.
+8. **Contradiction Analysis**: Inconsistencies found in statements or testimonies.
+9. **Risk Assessment**: Matrix of potential liabilities, strategies, and success probabilities.
+10. **Procedural Compliance**: Checks on mandatory procedural rules.
+11. **Strategy Recommendation**: Actionable options for defense or prosecution briefs.
+12. **Trust Score**: Quantitative percentage score reflecting factual grounding.
+13. **Confidence Scores**: Individual agent confidence ratings based on context.
+14. **Explainability Graph**: Active node-edge linkage representation of the reasoning model.
+15. **Knowledge Graph Snapshot**: Visual snapshot representation of the FalkorDB schema.
+16. **References and Disclaimer**: Standard legal disclaimer and bibliography list.
+
+---
+
+## 💻 Quantized LLM & GPU Developer Guide
+
+LexOrch-KG supports running fully local, quantized LLMs on consumer GPUs (NVIDIA RTX series) to keep legal data private.
+
+### 1. Swapping to Llama.cpp (GGUF Models)
+Llama.cpp provides CPU/GPU split inference, which is ideal for running large models on limited VRAM.
+
+1. **Download GGUF Weights**:
+   Download a model like `Qwen2.5-7B-Instruct-Q4_K_M.gguf` and save it to the `models/` folder.
+2. **Configure `.env`**:
+   ```env
+   LLM_PROVIDER=llamacpp
+   LLM_MODEL_PATH=/home/gokul/Downloads/final-year-project/models/Qwen2.5-7B-Instruct-Q4_K_M.gguf
+   ```
+3. **VRAM Offloading Parameter**:
+   Adjust `n_gpu_layers` inside the provider loader config (e.g. `n_gpu_layers=35`) to offload layers to CUDA.
+
+### 2. Swapping to HuggingFace Transformers (GPU Mode)
+For servers with dedicated GPU setups (e.g., V100/A100 or high VRAM RTX GPUs), load models using PyTorch's native transformer configurations.
+
+1. **Configure `.env`**:
+   ```env
+   LLM_PROVIDER=transformers
+   LLM_MODEL_NAME=Qwen/Qwen2.5-7B-Instruct
+   ```
+2. **GPU Optimization**:
+   The loader (`transformers_provider.py`) automatically initializes models in 16-bit floating point (`torch.float16`) and uses `device_map="auto"` to load parameters directly onto VRAM.
+
+---
+
 ## 📂 Repository Structure
 
 ```text
@@ -87,7 +255,7 @@ flowchart TD
 │   │   ├── embeddings/        # BGE-M3 model & Qdrant manager integration
 │   │   ├── kg/                # FalkorDB client, entity extractors, and query builders
 │   │   ├── llm/               # Provider bindings (Mock, Qwen, Transformers, LlamaCPP)
-│   │   ├── rag/               # Vector, keyword, citation retrievers and rerankers
+│   │   └── rag/               # Vector, keyword, citation retrievers and rerankers
 │   │   └── schemas/           # Pydantic serialization models
 │   ├── scripts/               # Ingestion and download scripts
 │   └── tests/                 # Unit & integration testing suites
@@ -124,13 +292,18 @@ cp configs/.env.example .env
 Ensure to also copy or maintain `.env` inside the `backend/` folder.
 
 #### 2. Start the Databases (Docker)
-Ensure Docker is running, then pull and start the Qdrant and FalkorDB containers:
+Ensure Docker is running, then start the Qdrant and FalkorDB containers:
 ```bash
 # Start Qdrant (v1.10.0) on port 6333
 docker run -d -p 6333:6333 -p 6334:6334 --name lexorch-qdrant qdrant/qdrant:v1.10.0
 
 # Start FalkorDB on port 6379 (connecting to port 6379 of Redis engine wrapper)
 docker run -d -p 6379:6379 --name falkordb falkordb/falkordb:latest
+```
+
+If the containers already exist, run:
+```bash
+docker start lexorch-qdrant falkordb
 ```
 
 #### 3. Setup Backend Environment
