@@ -358,35 +358,120 @@ export default function AnalysisPage() {
       {analysisData && !analyzing && (
         <div className="grid gap-6 lg:grid-cols-12 items-start">
           
-          {/* MAIN COLUMN */}
-          <div className="lg:col-span-9 space-y-6">
-            
-            {/* Dashboard Tabs Row */}
-            <div className="flex border-b border-white/5 overflow-x-auto whitespace-nowrap scrollbar-none">
-              {[
-                { id: 'summary', label: 'Advisory Summary', icon: LayoutGrid },
-                { id: 'statutes', label: 'Statutes & Precedents', icon: BookOpen },
-                { id: 'arguments', label: 'Evidence & Arguments', icon: Users },
-                { id: 'graph', label: 'Knowledge Graph', icon: Network },
-                { id: 'opinion', label: 'Risk & Strategy', icon: Brain }
-              ].map((tab) => {
-                const Icon = tab.icon;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id as any)}
-                    className={`flex items-center gap-2 px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 shrink-0 ${
-                      activeTab === tab.id
-                        ? 'border-primary text-primary'
-                        : 'border-transparent text-muted-foreground hover:text-white'
-                    }`}
-                  >
-                    <Icon className="h-4 w-4" />
-                    {tab.label}
-                  </button>
-                );
-              })}
-            </div>
+          {/* LEFT VERTICAL SECTION SIDEBAR */}
+          <div className="lg:col-span-3 space-y-4 text-left lg:sticky lg:top-4">
+            <Card className="border-white/10 bg-[#090e1a] overflow-hidden shadow-2xl">
+              <div className="border-b border-white/10 bg-white/2 px-4 py-3.5 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                  <LayoutGrid className="h-4 w-4 text-primary" /> Analysis Modules
+                </span>
+                <span className="rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-[9px] font-bold text-primary font-mono">
+                  5 Modules
+                </span>
+              </div>
+              
+              <div className="p-2.5 space-y-1.5">
+                {[
+                  {
+                    id: 'summary',
+                    label: 'Advisory Summary',
+                    icon: LayoutGrid,
+                    desc: 'Metadata, facts & legal issues',
+                    badge: `${analysisData.legal_issues?.length || 0} Issues`,
+                    color: 'from-blue-500/20 to-indigo-500/10'
+                  },
+                  {
+                    id: 'statutes',
+                    label: 'Statutes & Precedents',
+                    icon: BookOpen,
+                    desc: 'Acts, sections & citations',
+                    badge: `${analysisData.sections?.length || 0} Secs`,
+                    color: 'from-amber-500/20 to-orange-500/10'
+                  },
+                  {
+                    id: 'arguments',
+                    label: 'Evidence & Arguments',
+                    icon: Users,
+                    desc: 'Prosecution vs defense trial',
+                    badge: 'Brief',
+                    color: 'from-emerald-500/20 to-teal-500/10'
+                  },
+                  {
+                    id: 'graph',
+                    label: 'Knowledge Graph',
+                    icon: Network,
+                    desc: 'Interactive entity network',
+                    badge: `${analysisData.kg_data?.nodes?.length || 0} Nodes`,
+                    color: 'from-cyan-500/20 to-blue-500/10'
+                  },
+                  {
+                    id: 'opinion',
+                    label: 'Risk & Strategy',
+                    icon: Brain,
+                    desc: 'Action plan & risk matrix',
+                    badge: `${analysisData.confidence?.score || 0}% Trust`,
+                    color: 'from-purple-500/20 to-pink-500/10'
+                  }
+                ].map((tab) => {
+                  const Icon = tab.icon;
+                  const isActive = activeTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id as any)}
+                      className={`w-full flex items-start gap-3 p-3 rounded-xl transition-all text-left cursor-pointer border ${
+                        isActive
+                          ? 'bg-gradient-to-r ' + tab.color + ' border-primary/40 text-white shadow-lg shadow-primary/5'
+                          : 'bg-white/1 hover:bg-white/4 border-transparent text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <div className={`p-2.5 rounded-lg shrink-0 mt-0.5 ${
+                        isActive
+                          ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20'
+                          : 'bg-white/5 text-slate-400 border border-white/5'
+                      }`}>
+                        <Icon className="h-4 w-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className={`text-xs font-bold truncate ${isActive ? 'text-white font-extrabold' : 'text-slate-300'}`}>
+                            {tab.label}
+                          </span>
+                          <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0 ${
+                            isActive
+                              ? 'bg-primary/20 text-primary border-primary/30'
+                              : 'bg-white/5 text-slate-400 border-white/5'
+                          }`}>
+                            {tab.badge}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground truncate mt-1 leading-tight">
+                          {tab.desc}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </Card>
+
+            {/* Active Document Info Card */}
+            <Card className="border-white/10 bg-[#090e1a] p-4 text-left shadow-xl space-y-3">
+              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                <FileText className="h-3.5 w-3.5 text-primary" /> Active Document
+              </span>
+              <div className="p-2.5 rounded-lg bg-white/2 border border-white/5 space-y-1">
+                <p className="text-xs font-bold text-slate-200 truncate">{getMetaVal(analysisData.document_info?.file_name)}</p>
+                <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+                  <span>{getMetaVal(analysisData.document_info?.court)}</span>
+                  <span>{analysisData.document_info?.pages || 1} Pgs</span>
+                </div>
+              </div>
+            </Card>
+          </div>
+
+          {/* MAIN CONTENT AREA */}
+          <div className="lg:col-span-6 space-y-6">
 
             {/* TAB PANELS */}
             <AnimatePresence mode="wait">
