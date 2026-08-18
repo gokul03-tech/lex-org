@@ -74,17 +74,23 @@ class MockProvider(LLMProvider):
         petitioner = "Not found in document"
         respondent = "Not found in document"
         vs_match = re.search(
-            r'([A-Z][a-zA-Z0-9\s\.\,\-\'\&]{2,60})\s+(?:versus|v\.\s*s\s*\.?|v\s*\.\s*|vs\s*\.?)\s+([A-Z][a-zA-Z0-9\s\.\,\-\'\&]{2,60})',
+            r'([A-Z][a-zA-Z0-9\s\.\,\-\'\&]{2,60})\s+(?:versus|v\.\s*s\s*\.?|v\s*\.\s*|vs\s*\.?|\.\.\.\s*Appellant\s+Versus)\s+([A-Z][a-zA-Z0-9\s\.\,\-\'\&]{2,60})',
             doc_text
         )
         if vs_match:
-            petitioner = vs_match.group(1).strip().split('\n')[-1].strip()
-            respondent = vs_match.group(2).strip().split('\n')[0].strip()
+            p_cand = vs_match.group(1).strip().split('\n')[-1].strip()
+            r_cand = vs_match.group(2).strip().split('\n')[0].strip()
+            # Clean unwanted artifacts
+            for junk in ["Appellant", "Petitioner", "Accused", "Applicant", "Plaintiff", "Respondent", "Defendant"]:
+                p_cand = re.sub(rf'\b{junk}\b', '', p_cand, flags=re.IGNORECASE).strip()
+                r_cand = re.sub(rf'\b{junk}\b', '', r_cand, flags=re.IGNORECASE).strip()
+            petitioner = p_cand.strip(" .-") or "Not found in document"
+            respondent = r_cand.strip(" .-") or "Not found in document"
         
         # Court extraction
         court = "Not found in document"
         court_match = re.search(
-            r"(Supreme\s+Court|High\s+Court|District\s+Court|Sessions\s+Court|Magistrate[\s']*s?\s+Court)",
+            r"(Supreme\s+Court\s+of\s+India|Bombay\s+High\s+Court|Delhi\s+High\s+Court|Madras\s+High\s+Court|Karnataka\s+High\s+Court|Calcutta\s+High\s+Court|Allahabad\s+High\s+Court|[A-Z][a-zA-Z\s]{2,25}\s+High\s+Court|High\s+Court\s+of\s+[A-Za-z\s]+|Sessions\s+Court|District\s+Court|Magistrate[\s']*s?\s+Court)",
             doc_text, re.IGNORECASE
         )
         if court_match:
@@ -92,27 +98,56 @@ class MockProvider(LLMProvider):
 
         # Date extraction
         decision_date = "Not found in document"
-        date_match = re.search(r"(\d{1,2}(?:st|nd|rd|th)?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})", doc_text, re.IGNORECASE)
+        date_match = re.search(r"(\d{1,2}(?:st|nd|rd|th)?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December),?\s+\d{4})", doc_text, re.IGNORECASE)
         if date_match:
             decision_date = date_match.group(1).strip()
         else:
-            slash_match = re.search(r"(\d{1,2}/\d{1,2}/\d{2,4})", doc_text)
+            slash_match = re.search(r"(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})", doc_text)
             if slash_match:
                 decision_date = slash_match.group(1).strip()
 
+        # Extract judges dynamically
+        judges = []
+        bench_match = re.search(r"(?:Coram|Bench|Before)\s*:\s*([A-Z][a-zA-Z\s\.,&]+?)(?:\n|\r|\.\s)", doc_text)
+        if bench_match:
+            raw_b = bench_match.group(1)
+            for j in re.split(r",|\band\b|&", raw_b):
+                clean_j = j.strip()
+                if len(clean_j) > 3 and clean_j not in judges:
+                    judges.append(clean_j)
+        
+        judge_matches = re.finditer(r"(?:Hon['\u2019]?ble\s+(?:Mr\.|Mrs\.|Ms\.)?\s*Justice\s+([A-Z][a-zA-Z\s\.]+)|([A-Z][a-zA-Z\s\.]+),\s*J\b)", doc_text)
+        for jm in judge_matches:
+            jname = (jm.group(1) or jm.group(2) or "").strip()
+            if len(jname) > 3 and jname not in judges and not any(k in jname.lower() for k in ["court", "order", "state", "police"]):
+                judges.append(f"{jname}, J." if not jname.endswith(", J.") else jname)
+                if len(judges) >= 3:
+                    break
+        if not judges:
+            judges = ["Honorable Bench"]
+
+        # Extract witnesses and key entities dynamically
+        witnesses = []
+        for wm in re.finditer(r"\b(PW\s*\d+|P\.W\.\s*\d+|Panch\s+Witnesses?|P\.I\.\s+[A-Z][a-z]+|Chemical\s+Analyser)\b", doc_text, re.IGNORECASE):
+            w_str = wm.group(1).strip()
+            if w_str not in witnesses:
+                witnesses.append(w_str)
+                if len(witnesses) >= 6:
+                    break
+
         # Extract facts dynamically
         facts = []
-        sentences = [s.strip() for s in re.split(r"[.!?\n]", doc_text) if len(s.strip()) > 30]
+        sentences = [s.strip() for s in re.split(r"[.!?\n]", doc_text) if len(s.strip()) > 35]
         for s in sentences:
-            if not any(k in s.lower() for k in ["versus", "vs", "court", "judgment", "order", "page", "section"]):
+            if not any(k in s.lower() for k in ["versus", "vs.", "coram:", "bench:", "judgment", "order", "page", "section 111"]):
                 facts.append(s.replace("  ", " ") + ".")
                 if len(facts) >= 4:
                     break
         if not facts:
             facts = [
-                f"The case involves a dispute between {petitioner} and {respondent}.",
-                "The dispute arose out of statutory and/or contractual obligations.",
-                "The parties have submitted conflicting claims before this Honorable Court."
+                f"The matter arises before the {court} involving {petitioner} and {respondent}.",
+                "The trial record encompasses witness testimonies, official panchnama, and documentary records.",
+                "The legal submissions contest the procedural and statutory grounds established during the proceedings."
             ]
 
         # Extract legal issues dynamically
@@ -120,18 +155,18 @@ class MockProvider(LLMProvider):
         whether_matches = re.findall(r"([A-Z][^.!?]*?whether[^.!?]*?\?)", doc_text, re.IGNORECASE)
         for m in whether_matches:
             cleaned = m.strip().replace("\n", " ")
-            if len(cleaned) > 20 and len(cleaned) < 200:
+            if 20 < len(cleaned) < 220:
                 legal_issues.append(cleaned)
 
         # Look for sections mentioned
-        sections_found = re.findall(r"(?:Section|Sec\.)\s*(\d+[A-Za-z]*)", doc_text, re.IGNORECASE)
-        for s in sections_found[:2]:
+        sections_found = re.findall(r"(?:Section|Sec\.)\s*(\d+[A-Za-z]*(?:\([a-z0-9]+\))?)", doc_text, re.IGNORECASE)
+        for s in list(dict.fromkeys(sections_found))[:3]:
             legal_issues.append(f"Whether the requirements of Section {s} are satisfied under the facts of the case.")
 
         if not legal_issues:
             legal_issues = [
                 f"Whether the claims of {petitioner} are legally sustainable against {respondent}.",
-                "Whether statutory compliance was properly adhered to by the parties."
+                "Whether statutory and procedural compliance was properly adhered to by the investigating authorities."
             ]
 
         # Label inferred issues
@@ -144,7 +179,7 @@ class MockProvider(LLMProvider):
 
         # Extract timeline dynamically
         timeline = []
-        for match in re.finditer(r"(\d{1,2}(?:st|nd|rd|th)?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})", doc_text, re.IGNORECASE):
+        for match in re.finditer(r"(\d{1,2}(?:st|nd|rd|th)?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December),?\s+\d{4})", doc_text, re.IGNORECASE):
             dt = match.group(1)
             start = max(0, match.start() - 40)
             end = min(len(doc_text), match.end() + 60)
@@ -159,12 +194,12 @@ class MockProvider(LLMProvider):
         # 1. Case Understanding Agent Schema
         if "summary" in properties and "facts" in properties and "parties" in properties:
             return {
-                "summary": f"The case concerns a legal dispute between the petitioner, {petitioner}, and the respondent, {respondent}.",
+                "summary": f"This matter before the {court} concerns {petitioner} versus {respondent}, addressing questions of statutory compliance, factual reliability of evidence, and procedural legality.",
                 "facts": facts,
                 "parties": {"plaintiff": petitioner, "defendant": respondent, "others": []},
                 "legal_issues": labeled_issues,
                 "timeline": timeline,
-                "entities": {"courts": [court], "judges": ["Honorable Justice"], "advocates": [], "witnesses": [], "organizations": []}
+                "entities": {"courts": [court], "judges": judges, "advocates": [], "witnesses": witnesses, "organizations": []}
             }
 
         # 2. Evidence Reliability Agent Schema

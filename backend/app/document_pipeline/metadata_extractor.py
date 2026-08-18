@@ -31,9 +31,17 @@ class LegalMetadataExtractor:
     ]
 
     ACT_PATTERNS = [
-        r"(?:the\s+)?([\w\s]+(?:Act|Code|Sanhita|Adhiniyam)),\s+(\d{4})",
-        r"(?:Bharatiya)\s+(Nyaya|Nagarik Suraksha|Sakshya)\s+(Sanhita|Adhiniyam),?\s+(\d{4})",
-        r"(?:Indian)\s+(Penal Code|Evidence Act|Criminal Procedure Code),?\s+(\d{4})",
+        r"(?:the\s+)?(?:N\.?D\.?P\.?S\.?\s+Act|Narcotic\s+Drugs\s+and\s+Psychotropic\s+Substances\s+Act(?:\s*,\s*\d{4})?)",
+        r"(?:the\s+)?(?:I\.?P\.?C\.?|Indian\s+Penal\s+Code(?:\s*,\s*\d{4})?)",
+        r"(?:the\s+)?(?:Cr\.?P\.?C\.?|Code\s+of\s+Criminal\s+Procedure(?:\s*,\s*\d{4})?)",
+        r"(?:the\s+)?(?:BNS|Bharatiya\s+Nyaya\s+Sanhita(?:\s*,\s*\d{4})?)",
+        r"(?:the\s+)?(?:BNSS|Bharatiya\s+Nagarik\s+Suraksha\s+Sanhita(?:\s*,\s*\d{4})?)",
+        r"(?:the\s+)?(?:BSA|Bharatiya\s+Sakshya\s+Adhiniyam(?:\s*,\s*\d{4})?)",
+        r"(?:the\s+)?(?:Evidence\s+Act|Indian\s+Evidence\s+Act(?:\s*,\s*\d{4})?)",
+        r"(?:the\s+)?(?:Information\s+Technology\s+Act|IT\s+Act(?:\s*,\s*\d{4})?)",
+        r"(?:the\s+)?(?:Prevention\s+of\s+Corruption\s+Act|PC\s+Act(?:\s*,\s*\d{4})?)",
+        r"(?:the\s+)?(?:Motor\s+Vehicles\s+Act|MV\s+Act(?:\s*,\s*\d{4})?)",
+        r"(?:the\s+)?([A-Z][a-zA-Z\s]{2,45}\s+(?:Act|Code|Sanhita|Adhiniyam)(?:\s*,\s*\d{4})?)",
     ]
 
     PARTY_PATTERNS = [
@@ -60,14 +68,14 @@ class LegalMetadataExtractor:
         """Extract all metadata from legal text.
 
         Args:
-            text: The document text (first 5000 chars used for efficiency).
+            text: The document text.
             filename: Original filename for fallback extraction.
 
         Returns:
             Dict of extracted metadata fields.
         """
-        # Only use first portion for efficiency (metadata is typically at the top)
-        head = text[:5000]
+        head = text[:6000]
+        full_sample = text[:30000]
 
         def to_meta_status(val: Any) -> dict[str, Any]:
             if val is None or val == "" or val == "Unknown" or val == "Untitled Document" or val == "other":
@@ -77,6 +85,7 @@ class LegalMetadataExtractor:
         raw_parties = self._extract_parties(head)
         petitioner = raw_parties.get("petitioner")
         respondent = raw_parties.get("respondent")
+        word_count = len(text.split()) if text else 0
 
         metadata: dict[str, Any] = {
             "filename": filename,
@@ -84,11 +93,12 @@ class LegalMetadataExtractor:
             "court": to_meta_status(self._extract_court(head)),
             "case_number": to_meta_status(self._extract_case_number(head)),
             "date": to_meta_status(self._extract_date(head)),
-            "acts_referenced": self._extract_acts(head),
+            "acts_referenced": self._extract_acts(full_sample),
             "petitioner": to_meta_status(petitioner),
             "respondent": to_meta_status(respondent),
             "document_type": to_meta_status(self._detect_document_type(head, filename)),
-            "parties": raw_parties
+            "parties": raw_parties,
+            "word_count": word_count
         }
 
         return metadata

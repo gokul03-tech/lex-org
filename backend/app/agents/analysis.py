@@ -276,6 +276,72 @@ async def legal_research_agent(state: AgentState) -> AgentState:
                     if act_name and act_name != "Unknown Act":
                         acts.append(act_name)
 
+        # Also extract sections and acts directly cited in the uploaded case document(s)
+        doc_text_full = " ".join((d.get("text") or d.get("content") or "") for d in docs)
+        if doc_text_full:
+            # 1. Detect governing Acts from text
+            act_patterns = [
+                r"\b(?:N\.?D\.?P\.?S\.?\s+Act|Narcotic\s+Drugs\s+and\s+Psychotropic\s+Substances\s+Act(?:\s*,\s*\d{4})?)\b",
+                r"\b(?:I\.?P\.?C\.?|Indian\s+Penal\s+Code(?:\s*,\s*\d{4})?)\b",
+                r"\b(?:Cr\.?P\.?C\.?|Code\s+of\s+Criminal\s+Procedure(?:\s*,\s*\d{4})?)\b",
+                r"\b(?:BNS|Bharatiya\s+Nyaya\s+Sanhita(?:\s*,\s*\d{4})?)\b",
+                r"\b(?:BNSS|Bharatiya\s+Nagarik\s+Suraksha\s+Sanhita(?:\s*,\s*\d{4})?)\b",
+                r"\b(?:BSA|Bharatiya\s+Sakshya\s+Adhiniyam(?:\s*,\s*\d{4})?)\b",
+                r"\b(?:Evidence\s+Act|Indian\s+Evidence\s+Act(?:\s*,\s*\d{4})?)\b",
+                r"\b(?:Information\s+Technology\s+Act|IT\s+Act(?:\s*,\s*\d{4})?)\b",
+                r"\b(?:Prevention\s+of\s+Corruption\s+Act|PC\s+Act(?:\s*,\s*\d{4})?)\b",
+                r"\b(?:Motor\s+Vehicles\s+Act|MV\s+Act(?:\s*,\s*\d{4})?)\b",
+            ]
+            primary_act = "Indian Penal Code, 1860"
+            for pat in act_patterns:
+                m = re.search(pat, doc_text_full, re.IGNORECASE)
+                if m:
+                    act_clean = m.group(0).strip()
+                    if "ndps" in act_clean.lower() or "narcotic" in act_clean.lower():
+                        act_clean = "Narcotic Drugs and Psychotropic Substances (NDPS) Act, 1985"
+                    elif "ipc" in act_clean.lower() or "penal" in act_clean.lower():
+                        act_clean = "Indian Penal Code, 1860"
+                    elif "crpc" in act_clean.lower() or "criminal procedure" in act_clean.lower():
+                        act_clean = "Code of Criminal Procedure, 1973"
+                    elif "bns" in act_clean.lower() or "nyaya" in act_clean.lower():
+                        act_clean = "Bharatiya Nyaya Sanhita (BNS), 2023"
+                    elif "bnss" in act_clean.lower() or "suraksha" in act_clean.lower():
+                        act_clean = "Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023"
+                    elif "bsa" in act_clean.lower() or "sakshya" in act_clean.lower():
+                        act_clean = "Bharatiya Sakshya Adhiniyam (BSA), 2023"
+                    
+                    if act_clean not in acts:
+                        acts.append(act_clean)
+                    primary_act = act_clean
+
+            # 2. Extract sections explicitly mentioned in document text
+            sec_matches = re.finditer(
+                r"(?:Section|Sec\.|u/s|under\s+section)\s*(\d+[A-Za-z]*(?:\([a-z0-9]+\))?)",
+                doc_text_full,
+                re.IGNORECASE
+            )
+            for sm in sec_matches:
+                sec_num = sm.group(1)
+                start_pos = max(0, sm.start() - 40)
+                end_pos = min(len(doc_text_full), sm.end() + 140)
+                snippet = doc_text_full[start_pos:end_pos].replace("\n", " ").strip()
+                
+                sec_act = primary_act
+                sec_context = doc_text_full[sm.start():min(len(doc_text_full), sm.end() + 60)].lower()
+                for a in acts:
+                    if a.split()[0].lower() in sec_context:
+                        sec_act = a
+                        break
+
+                sections.insert(0, {
+                    "section_number": str(sec_num),
+                    "act": sec_act,
+                    "title": f"Section {sec_num} ({sec_act})",
+                    "text": snippet,
+                    "relevance_score": 0.95,
+                    "explicitly_mentioned": True
+                })
+
         # Deduplicate
         seen = set()
         unique_sections = []

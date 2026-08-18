@@ -293,6 +293,7 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
         "citation": citation_val,
         "language": "English",
         "pages": doc.page_count or 1,
+        "word_count": meta.get("word_count") or len(doc_text.split()),
         "upload_date": doc.created_at.strftime("%d %B %Y") if doc.created_at else "Unknown",
         "status": "Complete",
         "articles": articles_list,
