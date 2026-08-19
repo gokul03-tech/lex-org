@@ -64,6 +64,10 @@ async def upload_document(
         logger.warning(f"Parsing failed for {file.filename}, proceeding with default text representation. Error: {exc}")
         parsed_data["text"] = f"[Error parsing text content: {exc}]"
 
+    # Run Layer 1 Deterministic Legal Metadata Extraction on parsed text
+    from app.agents.metadata_extractor import extract_metadata
+    legal_meta = extract_metadata(parsed_data.get("text", ""))
+
     # Create document db entry
     db_doc = Document(
         case_id=case_id,
@@ -75,7 +79,11 @@ async def upload_document(
         parsed_text=parsed_data.get("text", ""),
         raw_text=parsed_data.get("text", ""),
         page_count=parsed_data.get("page_count", 1),
-        metadata_={**(parsed_data.get("metadata") or {}), "pages": parsed_data.get("pages", [])},
+        metadata_={
+            **(parsed_data.get("metadata") or {}),
+            **legal_meta,
+            "pages": parsed_data.get("pages", [])
+        },
         mime_type=file.content_type,
     )
     

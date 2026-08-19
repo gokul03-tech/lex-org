@@ -501,14 +501,14 @@ export default function AnalysisPage() {
                         {[
                           { label: 'File Name', val: getMetaVal(analysisData.document_info.file_name), icon: File },
                           { label: 'Document Type', val: getMetaVal(analysisData.document_info.document_type), icon: FileText },
-                          { label: 'Jurisdiction', val: getMetaVal(analysisData.document_info.jurisdiction), icon: Scale },
-                          { label: 'Court Matter', val: getMetaVal(analysisData.document_info.court), icon: Scale },
-                          { label: 'Filing Number', val: getMetaVal(analysisData.document_info.case_number), icon: FileText },
+                          { label: 'Court', val: getMetaVal(analysisData.document_info.court), icon: Scale },
+                          { label: 'Court Matter / Case No.', val: getMetaVal(analysisData.document_info.case_number), icon: FileText },
                           { label: 'Decision Date', val: getMetaVal(analysisData.document_info.decision_date), icon: Calendar },
                           { label: 'Presiding Judge(s)', val: getMetaVal(analysisData.document_info.judges), icon: Users },
-                          { label: 'Petitioner / Applicant', val: getMetaVal(analysisData.document_info.petitioner), icon: Users },
+                          { label: 'Petitioner / Appellant', val: getMetaVal(analysisData.document_info.petitioner), icon: Users },
                           { label: 'Respondent', val: getMetaVal(analysisData.document_info.respondent), icon: Users },
                           { label: 'Citation Number', val: getMetaVal(analysisData.document_info.citation), icon: FileText },
+                          { label: 'Jurisdiction', val: getMetaVal(analysisData.document_info.jurisdiction), icon: Scale },
                           { label: 'Document Language', val: getMetaVal(analysisData.document_info.language), icon: Info },
                           { label: 'Page Count', val: `${analysisData.document_info.pages || 1} Pages`, icon: Layers }
                         ].map((m) => {

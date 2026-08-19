@@ -70,61 +70,15 @@ class MockProvider(LLMProvider):
 
         doc_text_lower = doc_text.lower()
 
-        # Extract petitioner and respondent dynamically
-        petitioner = "Not found in document"
-        respondent = "Not found in document"
-        vs_match = re.search(
-            r'([A-Z][a-zA-Z0-9\s\.\,\-\'\&]{2,60})\s+(?:versus|v\.\s*s\s*\.?|v\s*\.\s*|vs\s*\.?|\.\.\.\s*Appellant\s+Versus)\s+([A-Z][a-zA-Z0-9\s\.\,\-\'\&]{2,60})',
-            doc_text
-        )
-        if vs_match:
-            p_cand = vs_match.group(1).strip().split('\n')[-1].strip()
-            r_cand = vs_match.group(2).strip().split('\n')[0].strip()
-            # Clean unwanted artifacts
-            for junk in ["Appellant", "Petitioner", "Accused", "Applicant", "Plaintiff", "Respondent", "Defendant"]:
-                p_cand = re.sub(rf'\b{junk}\b', '', p_cand, flags=re.IGNORECASE).strip()
-                r_cand = re.sub(rf'\b{junk}\b', '', r_cand, flags=re.IGNORECASE).strip()
-            petitioner = p_cand.strip(" .-") or "Not found in document"
-            respondent = r_cand.strip(" .-") or "Not found in document"
-        
-        # Court extraction
-        court = "Not found in document"
-        court_match = re.search(
-            r"(Supreme\s+Court\s+of\s+India|Bombay\s+High\s+Court|Delhi\s+High\s+Court|Madras\s+High\s+Court|Karnataka\s+High\s+Court|Calcutta\s+High\s+Court|Allahabad\s+High\s+Court|[A-Z][a-zA-Z\s]{2,25}\s+High\s+Court|High\s+Court\s+of\s+[A-Za-z\s]+|Sessions\s+Court|District\s+Court|Magistrate[\s']*s?\s+Court)",
-            doc_text, re.IGNORECASE
-        )
-        if court_match:
-            court = court_match.group(1).strip()
+        from app.document_pipeline.metadata_extractor import LegalMetadataExtractor
+        extractor = LegalMetadataExtractor()
+        meta_extracted = extractor.extract(doc_text)
 
-        # Date extraction
-        decision_date = "Not found in document"
-        date_match = re.search(r"(\d{1,2}(?:st|nd|rd|th)?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December),?\s+\d{4})", doc_text, re.IGNORECASE)
-        if date_match:
-            decision_date = date_match.group(1).strip()
-        else:
-            slash_match = re.search(r"(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})", doc_text)
-            if slash_match:
-                decision_date = slash_match.group(1).strip()
-
-        # Extract judges dynamically
-        judges = []
-        bench_match = re.search(r"(?:Coram|Bench|Before)\s*:\s*([A-Z][a-zA-Z\s\.,&]+?)(?:\n|\r|\.\s)", doc_text)
-        if bench_match:
-            raw_b = bench_match.group(1)
-            for j in re.split(r",|\band\b|&", raw_b):
-                clean_j = j.strip()
-                if len(clean_j) > 3 and clean_j not in judges:
-                    judges.append(clean_j)
-        
-        judge_matches = re.finditer(r"(?:Hon['\u2019]?ble\s+(?:Mr\.|Mrs\.|Ms\.)?\s*Justice\s+([A-Z][a-zA-Z\s\.]+)|([A-Z][a-zA-Z\s\.]+),\s*J\b)", doc_text)
-        for jm in judge_matches:
-            jname = (jm.group(1) or jm.group(2) or "").strip()
-            if len(jname) > 3 and jname not in judges and not any(k in jname.lower() for k in ["court", "order", "state", "police"]):
-                judges.append(f"{jname}, J." if not jname.endswith(", J.") else jname)
-                if len(judges) >= 3:
-                    break
-        if not judges:
-            judges = ["Honorable Bench"]
+        petitioner = meta_extracted["petitioner"].get("value") or "Not found in document"
+        respondent = meta_extracted["respondent"].get("value") or "Not found in document"
+        court = meta_extracted["court"].get("value") or "Not found in document"
+        decision_date = meta_extracted["decision_date"].get("value") or "Not found in document"
+        judges = meta_extracted["presiding_judges"].get("value") or []
 
         # Extract witnesses and key entities dynamically
         witnesses = []

@@ -101,6 +101,13 @@ async def case_understanding_agent(state: AgentState) -> AgentState:
             d.get("text", d.get("parsed_text", ""))[:25000] for d in documents[:5]
         ) if documents else query
 
+        # Layer 1: Deterministic Metadata Extraction
+        from app.agents.metadata_extractor import extract_metadata
+        deterministic_meta = extract_metadata(doc_texts)
+        state["metadata"] = deterministic_meta
+        if deterministic_meta.get("case_category"):
+            state["case_category"] = deterministic_meta["case_category"]
+
         prompt = f"""Analyze the following legal case document(s) and extract:
 
 1. CASE FACTS: Summarize the key facts in 3-5 bullet points.
@@ -277,44 +284,22 @@ async def legal_research_agent(state: AgentState) -> AgentState:
                         acts.append(act_name)
 
         # Also extract sections and acts directly cited in the uploaded case document(s)
-        doc_text_full = " ".join((d.get("text") or d.get("content") or "") for d in docs)
-        if doc_text_full:
-            # 1. Detect governing Acts from text
-            act_patterns = [
-                r"\b(?:N\.?D\.?P\.?S\.?\s+Act|Narcotic\s+Drugs\s+and\s+Psychotropic\s+Substances\s+Act(?:\s*,\s*\d{4})?)\b",
-                r"\b(?:I\.?P\.?C\.?|Indian\s+Penal\s+Code(?:\s*,\s*\d{4})?)\b",
-                r"\b(?:Cr\.?P\.?C\.?|Code\s+of\s+Criminal\s+Procedure(?:\s*,\s*\d{4})?)\b",
-                r"\b(?:BNS|Bharatiya\s+Nyaya\s+Sanhita(?:\s*,\s*\d{4})?)\b",
-                r"\b(?:BNSS|Bharatiya\s+Nagarik\s+Suraksha\s+Sanhita(?:\s*,\s*\d{4})?)\b",
-                r"\b(?:BSA|Bharatiya\s+Sakshya\s+Adhiniyam(?:\s*,\s*\d{4})?)\b",
-                r"\b(?:Evidence\s+Act|Indian\s+Evidence\s+Act(?:\s*,\s*\d{4})?)\b",
-                r"\b(?:Information\s+Technology\s+Act|IT\s+Act(?:\s*,\s*\d{4})?)\b",
-                r"\b(?:Prevention\s+of\s+Corruption\s+Act|PC\s+Act(?:\s*,\s*\d{4})?)\b",
-                r"\b(?:Motor\s+Vehicles\s+Act|MV\s+Act(?:\s*,\s*\d{4})?)\b",
-            ]
-            primary_act = "Indian Penal Code, 1860"
-            for pat in act_patterns:
-                m = re.search(pat, doc_text_full, re.IGNORECASE)
-                if m:
-                    act_clean = m.group(0).strip()
-                    if "ndps" in act_clean.lower() or "narcotic" in act_clean.lower():
-                        act_clean = "Narcotic Drugs and Psychotropic Substances (NDPS) Act, 1985"
-                    elif "ipc" in act_clean.lower() or "penal" in act_clean.lower():
-                        act_clean = "Indian Penal Code, 1860"
-                    elif "crpc" in act_clean.lower() or "criminal procedure" in act_clean.lower():
-                        act_clean = "Code of Criminal Procedure, 1973"
-                    elif "bns" in act_clean.lower() or "nyaya" in act_clean.lower():
-                        act_clean = "Bharatiya Nyaya Sanhita (BNS), 2023"
-                    elif "bnss" in act_clean.lower() or "suraksha" in act_clean.lower():
-                        act_clean = "Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023"
-                    elif "bsa" in act_clean.lower() or "sakshya" in act_clean.lower():
-                        act_clean = "Bharatiya Sakshya Adhiniyam (BSA), 2023"
-                    
-                    if act_clean not in acts:
-                        acts.append(act_clean)
-                    primary_act = act_clean
+        from app.agents.analysis_fixes import (
+            extract_section_act_bindings,
+            map_section_to_act,
+            extract_cited_precedents,
+            extract_articles,
+            similarity_pct,
+        )
 
-            # 2. Extract sections explicitly mentioned in document text
+        doc_text_full = " ".join((d.get("text") or d.get("content") or "") for d in docs)
+        category = state.get("case_category", "criminal")
+        
+        # 1. Extract and bind sections to their accurate Acts
+        binds = extract_section_act_bindings(doc_text_full) if doc_text_full else {}
+        
+        if doc_text_full:
+            # Extract sections explicitly mentioned in document text
             sec_matches = re.finditer(
                 r"(?:Section|Sec\.|u/s|under\s+section)\s*(\d+[A-Za-z]*(?:\([a-z0-9]+\))?)",
                 doc_text_full,
@@ -322,16 +307,10 @@ async def legal_research_agent(state: AgentState) -> AgentState:
             )
             for sm in sec_matches:
                 sec_num = sm.group(1)
+                sec_act = map_section_to_act(sec_num, binds, category=category)
                 start_pos = max(0, sm.start() - 40)
                 end_pos = min(len(doc_text_full), sm.end() + 140)
                 snippet = doc_text_full[start_pos:end_pos].replace("\n", " ").strip()
-                
-                sec_act = primary_act
-                sec_context = doc_text_full[sm.start():min(len(doc_text_full), sm.end() + 60)].lower()
-                for a in acts:
-                    if a.split()[0].lower() in sec_context:
-                        sec_act = a
-                        break
 
                 sections.insert(0, {
                     "section_number": str(sec_num),
@@ -341,23 +320,39 @@ async def legal_research_agent(state: AgentState) -> AgentState:
                     "relevance_score": 0.95,
                     "explicitly_mentioned": True
                 })
+                if sec_act not in acts and sec_act != "Statute (verify)":
+                    acts.append(sec_act)
+
+        # 2. Extract Real In-Text Cited Precedents
+        in_text_precedents = extract_cited_precedents(doc_text_full) if doc_text_full else []
+        all_precedents = in_text_precedents + precedents
+
+        # Normalize Precedent similarity scores
+        for p in all_precedents:
+            raw_s = p.get("relevance_score") or p.get("score") or 0.88
+            p["relevance_score"] = similarity_pct(raw_s) / 100.0
+
+        # 3. Extract Literal Constitutional Articles (no hallucinated defaults)
+        state["articles"] = extract_articles(doc_text_full) if doc_text_full else []
 
         # Deduplicate
         seen = set()
         unique_sections = []
         for s in sections:
-            key = f"{s['section_number']}_{s['act']}"
+            clean_act = map_section_to_act(s['section_number'], binds, category=category)
+            s['act'] = clean_act
+            key = f"{s['section_number']}_{clean_act}"
             if key not in seen:
                 seen.add(key)
                 unique_sections.append(s)
 
-        state["applicable_sections"] = unique_sections[:10]
+        state["applicable_sections"] = unique_sections[:12]
         state["applicable_acts"] = list(set(acts))[:10]
-        state["precedents"] = precedents[:5]
+        state["precedents"] = all_precedents[:6]
 
-        confidence = 0.98 if (unique_sections and precedents) else (0.975 if precedents else (0.85 if unique_sections else 0.40))
+        confidence = 0.98 if (unique_sections and all_precedents) else (0.975 if all_precedents else (0.85 if unique_sections else 0.40))
         duration_ms = (time.monotonic() - start_time) * 1000
-        logger.info(f"[LegalResearch] Found {len(unique_sections)} sections, {len(precedents)} precedents ({duration_ms:.0f}ms)")
+        logger.info(f"[LegalResearch] Found {len(unique_sections)} sections, {len(all_precedents)} precedents ({duration_ms:.0f}ms)")
         return _record_completion(state, "legal_research", confidence, "applicable_sections", state["applicable_sections"])
 
     except Exception as exc:
