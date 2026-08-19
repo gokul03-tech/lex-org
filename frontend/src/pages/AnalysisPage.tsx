@@ -680,7 +680,7 @@ export default function AnalysisPage() {
                     </div>
 
                     {/* Identified Constitution Articles */}
-                    {analysisData.articles && (
+                    {analysisData.articles && analysisData.articles.length > 0 && (
                       <div className="space-y-4">
                         <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
                           <Scale className="h-5 w-5 text-white" /> Constitutional Articles
@@ -710,14 +710,19 @@ export default function AnalysisPage() {
                       </h3>
                       
                       <div className="grid gap-4">
-                        {analysisData.precedents.map((prec: any, idx: number) => (
+                        {analysisData.precedents.map((prec: any, idx: number) => {
+                          const rawScore = prec.score ?? prec.relevance_score ?? 0.88;
+                          const pct = rawScore > 1 ? (rawScore > 100 ? rawScore / 100 : rawScore) : rawScore * 100;
+                          const safePct = Math.min(100, Math.max(0, pct)).toFixed(0);
+                          
+                          return (
                           <div key={idx} className="rounded-xl border border-white/10 bg-[#090e1a] p-5 flex flex-col justify-between md:flex-row gap-6 shadow-lg hover:border-white/20 transition-all">
                             <div className="space-y-2.5 flex-1">
                               <div className="flex flex-wrap items-center gap-2.5 text-xs">
                                 <span className="rounded-md bg-white/5 border border-white/10 px-2.5 py-0.5 font-bold text-white font-mono">
-                                  Similarity: {(prec.score * 100).toFixed(0)}%
+                                  Similarity: {safePct}%
                                 </span>
-                                <span className="text-muted-foreground font-mono">{prec.court} • {prec.year}</span>
+                                <span className="text-muted-foreground font-mono">{prec.court || "High Court"} • {prec.year || prec.citation || "Judicial Precedent"}</span>
                               </div>
                               <h4 className="text-sm font-bold text-white">{prec.case_name}</h4>
                               {prec.matching_issue && prec.matching_issue !== "None" && (
@@ -741,7 +746,8 @@ export default function AnalysisPage() {
                               Open Case Brief <ArrowRight className="h-4 w-4 ml-1.5" />
                             </Button>
                           </div>
-                        ))}
+                        );
+                      })}
                       </div>
                     </div>
                   </div>

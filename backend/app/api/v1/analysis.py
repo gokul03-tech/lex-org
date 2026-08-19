@@ -238,69 +238,62 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
         **(state.get("metadata") or {}),
         **live_meta
     }
+
+    def _val(k: str, default: Any = None) -> Any:
+        v = meta.get(k)
+        if v is None and k in state:
+            v = state.get(k)
+        if isinstance(v, dict):
+            return v.get("value", default)
+        return v if v is not None else default
     
-    p_meta = meta.get("petitioner", {})
-    p_name = p_meta.get("value") if isinstance(p_meta, dict) else p_meta
-    if not p_name:
+    p_name = _val("petitioner")
+    if not p_name or p_name == "Not found in document":
         parties = state.get("entities", {}).get("parties", {})
-        if isinstance(parties, list):
-            p_name = parties[0] if len(parties) > 0 else "Not found in document"
+        if isinstance(parties, list) and len(parties) > 0:
+            p_name = str(parties[0])
         elif isinstance(parties, dict):
             p_name = parties.get("plaintiff") or parties.get("petitioner") or "Not found in document"
         else:
             p_name = "Not found in document"
 
-    r_meta = meta.get("respondent", {})
-    r_name = r_meta.get("value") if isinstance(r_meta, dict) else r_meta
-    if not r_name:
+    r_name = _val("respondent")
+    if not r_name or r_name == "Not found in document":
         parties = state.get("entities", {}).get("parties", {})
-        if isinstance(parties, list):
-            r_name = parties[1] if len(parties) > 1 else "Not found in document"
+        if isinstance(parties, list) and len(parties) > 1:
+            r_name = str(parties[1])
         elif isinstance(parties, dict):
             r_name = parties.get("defendant") or parties.get("respondent") or "Not found in document"
         else:
             r_name = "Not found in document"
 
-    court_meta = meta.get("court", {})
-    court_name = court_meta.get("value") if isinstance(court_meta, dict) else court_meta
-    if not court_name:
+    court_name = _val("court")
+    if not court_name or court_name == "Not found in document":
         courts = state.get("entities", {}).get("courts", [])
-        court_name = courts[0] if courts and isinstance(courts, list) else case.court_name or "Not found in document"
+        court_name = str(courts[0]) if (courts and isinstance(courts, list)) else case.court_name or "Not found in document"
 
-    dec_date_meta = meta.get("date", {})
-    dec_date = dec_date_meta.get("value") if isinstance(dec_date_meta, dict) else dec_date_meta
-    if not dec_date:
-        dec_date = "Not found in document"
+    dec_date = _val("decision_date") or _val("date") or "Not found in document"
+    case_num = _val("court_matter") or _val("case_number") or case.case_number or "Not found in document"
 
-    matter_val = (meta.get("court_matter", {}) if isinstance(meta.get("court_matter"), dict) else {}).get("value")
-    if matter_val:
-        case_num = matter_val
+    cit_raw = _val("citation_numbers") or _val("citation")
+    if isinstance(cit_raw, list) and cit_raw:
+        citation_val = ", ".join(str(c) for c in cit_raw if c)
+    elif cit_raw and cit_raw != "Not found in document":
+        citation_val = str(cit_raw)
     else:
-        case_num_meta = meta.get("case_number", {})
-        case_num = case_num_meta.get("value") if isinstance(case_num_meta, dict) else case_num_meta
-        if not case_num:
-            case_num = case.case_number or "Not found in document"
+        citation_val = "Not found in document"
 
-    cit_numbers = (meta.get("citation_numbers", {}) if isinstance(meta.get("citation_numbers"), dict) else {}).get("value")
-    if cit_numbers and isinstance(cit_numbers, list):
-        citation_val = ", ".join(cit_numbers)
-    else:
-        citation_meta = meta.get("citation", {})
-        citation_val = citation_meta.get("value") if isinstance(citation_meta, dict) else citation_meta
-        if not citation_val:
-            citation_val = "Not found in document"
-
-    judges_val = (meta.get("presiding_judges", {}) if isinstance(meta.get("presiding_judges"), dict) else {}).get("value") or state.get("entities", {}).get("judges", [])
-    if isinstance(judges_val, list) and judges_val:
-        judges_str = ", ".join(str(j) for j in judges_val if j)
-    elif isinstance(judges_val, str) and judges_val:
-        judges_str = judges_val
+    judges_raw = _val("presiding_judges") or state.get("entities", {}).get("judges", [])
+    if isinstance(judges_raw, list) and judges_raw:
+        judges_str = ", ".join(str(j) for j in judges_raw if j)
+    elif judges_raw and judges_raw != "Not found in document":
+        judges_str = str(judges_raw)
     else:
         judges_str = "Not found in document"
 
     doc_info = {
         "file_name": doc.filename,
-        "document_type": meta.get("document_type", {}).get("value") or doc.document_type or "Legal Document",
+        "document_type": _val("document_type") or doc.document_type or "Legal Document",
         "court": court_name,
         "case_number": case_num,
         "decision_date": dec_date,
@@ -379,12 +372,14 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
     }
 
     # Category-aware Evidence & Arguments Brief (zero status leakage)
-    category = state.get("case_category") or meta.get("case_category", {}).get("value") or "criminal"
-    arguments_data = build_evidence_brief(meta, category)
-        "defense": irac.get("alternative_interpretations", []) or ["Alternate interpretations of liability guidelines."],
-        "supporting": irac.get("application", "The rule of law applies to these facts."),
-        "weaknesses": risk_analysis["weaknesses"],
-        "counter_arguments": irac.get("conclusion", "Claim is sustainable.")
+    category = str(_val("case_category") or "criminal")
+    raw_brief = build_evidence_brief(meta, category)
+    arguments_data = {
+        "prosecution": raw_brief.get("prosecution") or raw_brief.get("plaintiff") or ["Admissible documentary evidence."],
+        "defense": raw_brief.get("defense") or raw_brief.get("defendant") or ["Alternate interpretations of liability guidelines."],
+        "supporting": "The settled principles of legal precedent and statutory procedures govern these facts.",
+        "weaknesses": raw_brief.get("weakness_defense") or risk_analysis["weaknesses"],
+        "counter_arguments": raw_brief.get("counter_prosecution") or "Judicial scrutiny applied to evidentiary credibility."
     }
 
     # Timeline / Strategy mapping
@@ -444,6 +439,14 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
                 {"source": "case_node", "target": "respondent_node", "type": "respondent"}
             ]
         }
+
+    evidence_items = state.get("evidence_assessment", {})
+    if isinstance(evidence_items, dict):
+        items_list = evidence_items.get("items", [])
+    elif isinstance(evidence_items, list):
+        items_list = evidence_items
+    else:
+        items_list = []
 
     analysis = Analysis(
         case_id=case.id,
@@ -599,21 +602,41 @@ async def get_analysis(
         from app.agents.metadata_extractor import extract_metadata
         live_meta = extract_metadata(doc.parsed_text or doc.raw_text or "")
         
+        def _get_live(k: str) -> Any:
+            v = live_meta.get(k)
+            if isinstance(v, dict):
+                return v.get("value")
+            return v
+
         # Ensure parties, court, dates, citations, judges are populated
-        if doc_info.get("petitioner") in [None, "", "Not found in document"] and live_meta.get("petitioner", {}).get("value"):
-            doc_info["petitioner"] = live_meta["petitioner"]["value"]
-        if doc_info.get("respondent") in [None, "", "Not found in document"] and live_meta.get("respondent", {}).get("value"):
-            doc_info["respondent"] = live_meta["respondent"]["value"]
-        if doc_info.get("court") in [None, "", "Not found in document"] and live_meta.get("court", {}).get("value"):
-            doc_info["court"] = live_meta["court"]["value"]
-        if doc_info.get("decision_date") in [None, "", "Not found in document"] and live_meta.get("decision_date", {}).get("value"):
-            doc_info["decision_date"] = live_meta["decision_date"]["value"]
-        if doc_info.get("judges") in [None, "", "Not found in document"] and live_meta.get("presiding_judges", {}).get("value"):
-            doc_info["judges"] = ", ".join(live_meta["presiding_judges"]["value"])
-        if doc_info.get("citation") in [None, "", "Not found in document"] and live_meta.get("citation_numbers", {}).get("value"):
-            doc_info["citation"] = ", ".join(live_meta["citation_numbers"]["value"])
-        if doc_info.get("case_number") in [None, "", "Not found in document"] and live_meta.get("court_matter", {}).get("value"):
-            doc_info["case_number"] = live_meta["court_matter"]["value"]
+        p_live = _get_live("petitioner")
+        if doc_info.get("petitioner") in [None, "", "Not found in document"] and p_live:
+            doc_info["petitioner"] = str(p_live)
+
+        r_live = _get_live("respondent")
+        if doc_info.get("respondent") in [None, "", "Not found in document"] and r_live:
+            doc_info["respondent"] = str(r_live)
+
+        c_live = _get_live("court")
+        if doc_info.get("court") in [None, "", "Not found in document"] and c_live:
+            doc_info["court"] = str(c_live)
+
+        d_live = _get_live("decision_date")
+        if doc_info.get("decision_date") in [None, "", "Not found in document"] and d_live:
+            doc_info["decision_date"] = str(d_live)
+
+        j_live = _get_live("presiding_judges")
+        if doc_info.get("judges") in [None, "", "Not found in document"] and j_live:
+            doc_info["judges"] = ", ".join(str(j) for j in j_live) if isinstance(j_live, list) else str(j_live)
+
+        cit_live = _get_live("citation_numbers")
+        if doc_info.get("citation") in [None, "", "Not found in document"] and cit_live:
+            doc_info["citation"] = ", ".join(str(c) for c in cit_live) if isinstance(cit_live, list) else str(cit_live)
+
+        cm_live = _get_live("court_matter")
+        if doc_info.get("case_number") in [None, "", "Not found in document"] and cm_live:
+            doc_info["case_number"] = str(cm_live)
+
         if not doc_info.get("word_count") or doc_info.get("word_count") == 4882:
             doc_info["word_count"] = live_meta.get("word_count", len((doc.parsed_text or "").split()))
 
