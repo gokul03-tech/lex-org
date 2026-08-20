@@ -48,18 +48,20 @@ def extract_metadata(text: str) -> dict[str, Any]:
     else:
         m['decision_date'] = _f(None, 'not_found')
 
-    # 3) Citations — compressed + spaced forms
+    # 3) Citations — only before "JUDGMENT" to avoid body precedent contamination
+    head_pre_judgment = text.split("JUDGMENT")[0] if "JUDGMENT" in text else text[:2000]
     cites: list[str] = []
     for pat in (
+        r'\(\d{4}\)\s?\d+\s?[A-Z]+\s?CR\s?\d+',
+        r'\d{4}\s?Cri\s?LJ\s?\d+',
         r'AIR\s?\d{4}\s?[A-Z]{2,10}\s?\d+',
         r'\(\d{4}\)\s?\d+\s?[A-Z]+\s?\d+',
-        r'\d{4}\s?CRILJ\s?\d+',
         r'\[\d{4}\]\s?\d+\s?SCR\s?\d+',
         r'\d{4}\s?SCC\s?\(\w+\)\s?\d+',
         r'ILR\s?\d{4}\s?[A-Z]+\s?\d+'
     ):
-        cites += re.findall(pat, head, re.I)
-    cites = list(dict.fromkeys(c.strip().replace(" ", "") for c in cites))
+        cites += re.findall(pat, head_pre_judgment, re.I)
+    cites = list(dict.fromkeys(c.strip() for c in cites))
     m['citation_numbers'] = _f(cites or None, 'extracted' if cites else 'not_found')
 
     # 4) Judges — line-start "NAME, J." over WHOLE text (catches concurring judge at end)
@@ -74,34 +76,47 @@ def extract_metadata(text: str) -> dict[str, Any]:
         am = re.search(tag + r':\s*([^\n]+)', head, re.I)
         if am:
             for b_seg in re.split(r',|\band\b|&', am.group(1)):
-                b_clean = fix_name(re.sub(r'\b(Hon[\'’]?ble|Justice|Mr\.|Mrs\.|Ms\.|J\.)\b', '', b_seg, flags=re.I))
+                b_clean = fix_name(re.sub(r'\b(Hon[\'’]?ble|Justice|Mr\.|Mrs\.|Ms\.|J\.|CJI)\b', '', b_seg, flags=re.I))
                 if b_clean and b_clean not in judges and not any(k in b_clean.lower() for k in ['judgment', 'court', 'order', 'state']):
                     judges.append(b_clean)
 
-    judges = list(dict.fromkeys(j.strip() for j in judges if j.strip()))
+    judges = list(dict.fromkeys(j.strip() for j in judges if len(j.strip()) > 2 and j.strip().lower() not in ['j.', 'cji', 'justice', 'honble', 'hon\'ble', 'bench', 'author', 'coram']))
     m['presiding_judges'] = _f(judges or None, 'extracted' if judges else 'not_found')
 
-    # 5) COURT MATTER = case number ONLY (never the court name!)
-    cm = re.search(r'((?:Special\s+Case|Criminal\s+Appeal|Civil\s+Appeal|Appeal|Writ\s+Petition|Suit)\s+No\.?\s*\d+\s+of\s+\d{4})', head, re.I) or \
-         re.search(r'((?:Special\s+Case|Criminal\s+Appeal|Civil\s+Appeal|Appeal|Writ\s+Petition|Suit)\s+No\.?\s*\d+\s+of\s+\d{4})', text, re.I)
+    # 5) COURT MATTER = case / CR / FIR / Appeal number ONLY (never the court name!)
+    cm = re.search(r'((?:C\.?R\.?|FIR|Special\s+Case|Criminal\s+Appeal|Civil\s+Appeal|Appeal|Writ\s+Petition|Suit)\s+No\.?\s*[\d/]+(?:\s+of\s+\d{4})?)', text, re.I)
     m['court_matter'] = _f(cm.group(1) if cm else None, 'extracted' if cm else 'not_found')
 
-    # 6) COURT = name (inferred from reporter when absent)
-    explicit_court = re.search(r'(Supreme\s+Court\s+of\s+India|Bombay\s+High\s+Court|High\s+Court\s+of\s+Bombay|Delhi\s+High\s+Court|High\s+Court\s+of\s+Karnataka|Karnataka\s+High\s+Court|High\s+Court\s+of\s+Mysore|Madras\s+High\s+Court|Calcutta\s+High\s+Court|Allahabad\s+High\s+Court)', head, re.I)
-    if explicit_court:
-        court, stat = explicit_court.group(1).strip(), 'extracted'
-    elif any(re.search(r'BOMLR|BomCR|Bom\s?CR', c, re.I) for c in cites):
-        court, stat = 'Bombay High Court', 'inferred'
-    elif any(re.search(r'KANT|MYS', c, re.I) for c in cites):
-        court, stat = 'High Court of Mysore (Karnataka)', 'inferred'
-    elif any(re.search(r'SCR|SCC|SCALE', c, re.I) for c in cites):
-        court, stat = 'Supreme Court of India', 'inferred'
-    elif any(re.search(r'DLT|DEL', c, re.I) for c in cites):
-        court, stat = 'Delhi High Court', 'inferred'
-    elif any(re.search(r'MLJ|MAD', c, re.I) for c in cites):
-        court, stat = 'Madras High Court', 'inferred'
-    else:
-        court, stat = None, 'not_found'
+    # 6) COURT = explicit header beats inference
+    court, stat = None, 'not_found'
+    header_court = re.search(r'IN THE ([A-Z ,]*HIGH COURT[A-Z ,]*|SUPREME COURT OF INDIA)', head[:800], re.I)
+    if header_court:
+        c_raw = header_court.group(1).strip()
+        if 'BOMBAY' in c_raw.upper():
+            court, stat = 'Bombay High Court', 'extracted'
+        elif 'DELHI' in c_raw.upper():
+            court, stat = 'Delhi High Court', 'extracted'
+        elif 'SUPREME COURT' in c_raw.upper():
+            court, stat = 'Supreme Court of India', 'extracted'
+        elif 'KARNATAKA' in c_raw.upper() or 'MYSORE' in c_raw.upper():
+            court, stat = 'High Court of Karnataka', 'extracted'
+        else:
+            court, stat = c_raw.title(), 'extracted'
+
+    if not court:
+        explicit_court = re.search(r'(Supreme\s+Court\s+of\s+India|Bombay\s+High\s+Court|High\s+Court\s+of\s+Bombay|Delhi\s+High\s+Court|High\s+Court\s+of\s+Karnataka|Karnataka\s+High\s+Court|High\s+Court\s+of\s+Mysore|Madras\s+High\s+Court|Calcutta\s+High\s+Court|Allahabad\s+High\s+Court)', head, re.I)
+        if explicit_court:
+            court, stat = explicit_court.group(1).strip(), 'extracted'
+        elif any(re.search(r'BOMLR|BomCR|Bom\s?CR', c, re.I) for c in cites):
+            court, stat = 'Bombay High Court', 'inferred'
+        elif any(re.search(r'KANT|MYS', c) for c in cites):
+            court, stat = 'High Court of Mysore (Karnataka)', 'inferred'
+        elif any(re.search(r'SCR|SCC|SCALE', c) for c in cites):
+            court, stat = 'Supreme Court of India', 'inferred'
+        elif any(re.search(r'DLT|DEL', c, re.I) for c in cites):
+            court, stat = 'Delhi High Court', 'inferred'
+        elif any(re.search(r'MLJ|MAD', c, re.I) for c in cites):
+            court, stat = 'Madras High Court', 'inferred'
     m['court'] = _f(court, stat)
 
     # 7) Filing number — only explicit labels
