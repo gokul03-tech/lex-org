@@ -372,44 +372,68 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
 
     # Category-aware Evidence & Arguments Brief (zero status leakage, extracted directly from text)
     pros_subs, def_subs = extract_submissions(doc_text)
+    counter_arg = (
+        "State (APP) asserts statutory compliance and seeks rigorous evidentiary scrutiny."
+        if category == "criminal" else
+        "Respondent contends claims are barred by contractual limitation and lack evidentiary proof of loss."
+    )
     arguments_data = {
         "prosecution": pros_subs,
         "defense": def_subs,
         "supporting": "The settled principles of legal precedent and statutory procedures govern these facts.",
         "weaknesses": ", ".join(risk_analysis.get("weaknesses", [])) if isinstance(risk_analysis.get("weaknesses"), list) else str(risk_analysis.get("weaknesses", "Procedural scrutiny.")),
-        "counter_arguments": "Judicial scrutiny applied to evidentiary credibility and statutory compliance."
+        "counter_arguments": counter_arg
     }
 
-    # Timeline / Strategy mapping (Real dated events & true outcome tail)
+    # Timeline / Strategy mapping (Real dated events & true outcome tail with decision date)
     raw_timeline = state.get("timeline") or build_fact_timeline(doc_text, dec_date)
     timeline_data = []
     for t in raw_timeline:
         if isinstance(t, dict):
+            d_val = t.get("date") or dec_date or "Event Date"
+            ev_val = t.get("event") or t.get("fact") or "Legal event"
+            # Ensure stale 1993 date fallback is never used if document date is 2024/etc.
+            if d_val == "12-08-1993" and dec_date and dec_date not in ("12-08-1993", "12 August 1993"):
+                d_val = dec_date
             timeline_data.append({
-                "date": t.get("date") or "Event Date",
-                "event": t.get("event") or t.get("fact") or "Legal event"
+                "date": d_val,
+                "event": ev_val
             })
         else:
             timeline_data.append({
-                "date": "Event",
+                "date": dec_date or "Event",
                 "event": str(t)
             })
 
     trust_score = float(state.get("trust_score", 0.85)) * 100.0
 
-    # Precedents mapping (Clean names, true years, correct courts)
+    # Precedents mapping (Clean names, true years, correct courts, clean act/section chips)
+    primary_act = state.get("applicable_acts", ["Applicable Law"])[0] if state.get("applicable_acts") else "Applicable Law"
+    primary_secs = ", ".join([s.get("section_number") for s in state.get("applicable_sections", [])[:2] if isinstance(s, dict)]) or "Sections"
+
     precedents_list = []
     for p in state.get("precedents", []):
         if isinstance(p, dict):
-            precedents_list.append({
-                "case_name": p.get("case_name") or "Precedent Citation",
-                "score": p.get("relevance_score") or p.get("score") or 0.85,
-                "court": p.get("court") or "Supreme Court of India",
-                "year": p.get("year") or "2014",
-                "acts": p.get("acts") or "Applicable Statutes",
-                "sections": p.get("sections") or "Sections",
-                "summary": p.get("summary") or "Relevant precedent ruling."
-            })
+            p_name = p.get("case_name") or "Precedent Citation"
+            if p.get("doc_id") != getattr(case, "id", None) and p_name.lower() not in ("keyword", "precedent citation"):
+                raw_s = p.get("relevance_score") or p.get("score") or 0.85
+                clamped_s = round(min(1.0, max(0.0, raw_s if raw_s <= 1.0 else raw_s / 100.0)), 3)
+                p_acts = p.get("acts")
+                if not p_acts or p_acts == "Applicable Statutes":
+                    p_acts = primary_act
+                p_secs = p.get("sections")
+                if not p_secs or p_secs == "Sections":
+                    p_secs = primary_secs
+
+                precedents_list.append({
+                    "case_name": p_name,
+                    "score": clamped_s,
+                    "court": p.get("court") or "Supreme Court of India",
+                    "year": p.get("year") or "Precedent",
+                    "acts": p_acts,
+                    "sections": p_secs,
+                    "summary": p.get("summary") or "Relevant precedent ruling."
+                })
 
     # Sections mapping
     sections_list = []
@@ -422,22 +446,57 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
                 "importance": "High" if s.get("relevance_score", 0.0) > 0.7 else "Medium"
             })
 
-    # KG data mapping
-    kg_data = state.get("kg_data", {})
-    if not isinstance(kg_data, dict) or not kg_data.get("nodes"):
-        kg_data = {
-            "nodes": [
-                {"id": "case_node", "type": "Case", "label": f"Case {case.title[:15]}"},
-                {"id": "petitioner_node", "type": "Petitioner", "label": p_name},
-                {"id": "respondent_node", "type": "Respondent", "label": r_name}
-            ],
-            "edges": [
-                {"source": "case_node", "target": "petitioner_node", "type": "petitioner"},
-                {"source": "case_node", "target": "respondent_node", "type": "respondent"}
-            ]
-        }
+    from app.agents.presentation_universal import (
+        safe,
+        render_issues,
+        render_conclusion,
+        render_chips,
+        build_kg,
+        lint
+    )
+
+    # Dynamic Universal Knowledge Graph
+    r_ctx = {
+        'metadata': meta,
+        'sections': [s.get('section_number') for s in state.get('applicable_sections', []) if isinstance(s, dict) and s.get('section_number')],
+        'section_acts': {s.get('section_number'): s.get('act') for s in state.get('applicable_sections', []) if isinstance(s, dict) and s.get('section_number')},
+        'articles': state.get('articles', []),
+        'precedents': state.get('precedents', []),
+        'category': category
+    }
+
+    kg_data = build_kg(r_ctx)
+    risk_analysis['conclusion'] = render_conclusion(r_ctx, doc_text)
+
+    # Precedents filtering (self-exclusion, keyword rejection, score clamping)
+    precedents_list = []
+    for p in state.get("precedents", []):
+        if isinstance(p, dict):
+            p_name = p.get("case_name") or "Precedent Citation"
+            if p.get("doc_id") != getattr(case, "id", None) and p_name.lower() != "keyword":
+                raw_s = p.get("relevance_score") or p.get("score") or 0.85
+                clamped_s = round(min(1.0, max(0.0, raw_s if raw_s <= 1.0 else raw_s / 100.0)), 3)
+                precedents_list.append({
+                    "case_name": p_name,
+                    "score": clamped_s,
+                    "court": p.get("court") or "Supreme Court of India",
+                    "year": p.get("year") or "Precedent",
+                    "acts": p.get("acts") or "Applicable Statutes",
+                    "sections": p.get("sections") or "Sections",
+                    "summary": p.get("summary") or "Relevant precedent ruling."
+                })
 
     items_list = extract_evidence_items(doc_text)
+
+    # Clean header title
+    raw_case_title = _val("case_title") or case.title
+    clean_title = re.sub(r'\s+on\s+\d{1,2}.*$', '', raw_case_title).strip()
+
+    # Safety Lint check
+    try:
+        lint(clean_title, p_name, r_name, risk_analysis, arguments_data)
+    except Exception as exc:
+        logger.warning(f"[PresentationLint] {exc}")
 
     analysis = Analysis(
         case_id=case.id,
@@ -461,7 +520,7 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
     report = Report(
         case_id=case.id,
         analysis_id=analysis.id,
-        title=f"Legal Brief & Multi-Agent Advisory: {case.title}",
+        title=f"Legal Brief & Multi-Agent Advisory: {clean_title}",
         sections=[
             {"title": "Summary", "content": state.get("case_summary", "No summary generated."), "order": 1},
             {"title": "Opinion", "content": state.get("legal_reasoning", "No opinion compiled."), "order": 2},
@@ -766,13 +825,38 @@ async def stream_analysis(
             a_result = await db.execute(select(Analysis).where(Analysis.case_id == case_id))
             analysis = a_result.scalar_one_or_none()
             
+            new_analysis, new_report = map_pipeline_result_to_analysis(state, case, doc)
             if not analysis:
-                analysis, report = map_pipeline_result_to_analysis(state, case, doc)
-                db.add(analysis)
-                db.add(report)
+                db.add(new_analysis)
+                db.add(new_report)
+            else:
+                analysis.trust_score = new_analysis.trust_score
+                analysis.agent_results = new_analysis.agent_results
+                analysis.confidence_scores = new_analysis.confidence_scores
+                analysis.entities = new_analysis.entities
+                analysis.legal_issues = new_analysis.legal_issues
+                analysis.applicable_acts = new_analysis.applicable_acts
+                analysis.applicable_sections = new_analysis.applicable_sections
+                analysis.precedents = new_analysis.precedents
+                analysis.contradictions = new_analysis.contradictions
+                analysis.procedural_status = new_analysis.procedural_status
+                analysis.risk_assessment = new_analysis.risk_assessment
+                analysis.strategy_options = new_analysis.strategy_options
+                analysis.explanation_graph = new_analysis.explanation_graph
+                analysis.status = "complete"
+
+                r_result = await db.execute(select(Report).where(Report.analysis_id == analysis.id))
+                rep = r_result.scalar_one_or_none()
+                if rep:
+                    rep.title = new_report.title
+                    rep.sections = new_report.sections
+                    rep.trust_score = new_report.trust_score
+                else:
+                    new_report.analysis_id = analysis.id
+                    db.add(new_report)
                 
-                case.status = "analysis_complete"
-                await db.commit()
+            case.status = "analysis_complete"
+            await db.commit()
         except Exception as exc:
             logger.error(f"Error compiling analysis in SSE stream finalizer: {exc}")
             

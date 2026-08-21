@@ -1123,11 +1123,27 @@ async def report_generation_agent(state: AgentState) -> AgentState:
                             }
             return best_match
 
-        # ── 1. Ground Legal Issues (Distinct snippets & true pages) ──
+        # ── 1. Ground Legal Issues with presentation_universal ──
+        from app.agents.presentation_universal import (
+            render_issues,
+            render_conclusion,
+            build_kg,
+            safe,
+            lint
+        )
+
+        r_ctx = {
+            'metadata': meta_dict,
+            'sections': [s.get('section_number') for s in sections if isinstance(s, dict) and s.get('section_number')],
+            'section_acts': {s.get('section_number'): s.get('act') for s in sections if isinstance(s, dict) and s.get('section_number')},
+            'articles': state.get('articles', []),
+            'precedents': precedents,
+            'category': case_category
+        }
+
+        rendered_iss_list = render_issues(r_ctx)
         grounded_issues = []
-        for issue in issues:
-            q_str = str(issue.get("question") if isinstance(issue, dict) else issue)
-            # Check if this question refers to a specific section (e.g. 8(c), 114(e), 2(16), 50, 42)
+        for q_str in rendered_iss_list:
             sec_m = re.search(r'(?:Section|Sec\.)\s*(\d+(?:\([a-z0-9]+\))*)', q_str, re.I)
             if sec_m:
                 sec_target = sec_m.group(1)
@@ -1145,35 +1161,52 @@ async def report_generation_agent(state: AgentState) -> AgentState:
                         "evidence": snip
                     })
                     continue
-            
+
             prov = find_source_provenance(q_str)
             grounded_issues.append({
                 "question": q_str,
-                "category": prov.get("category", "DOCUMENT FACT") if prov.get("source_type") == "uploaded_document" else "AI LEGAL ANALYSIS",
+                "category": "DOCUMENT FACT" if prov.get("source_type") == "uploaded_document" else "AI LEGAL ANALYSIS",
                 **prov
             })
-        
+
         state["legal_issues"] = grounded_issues  # type: ignore[typeddict-item-key]
 
-        # ── 2. Fact Timeline (Real dates: 6-1-1991, 8-1-1991, 12-8-1993) ──
-        dec_date_val = (meta_dict.get("decision_date", {}) if isinstance(meta_dict.get("decision_date"), dict) else {}).get("value") or "12-08-1993"
+        # ── 2. Fact Timeline (Real dates & accurate outcome tail) ──
+        dec_date_val = (
+            meta_dict.get("decision_date", {}).get("value")
+            if isinstance(meta_dict.get("decision_date"), dict)
+            and meta_dict["decision_date"].get("status") in ("extracted", "inferred")
+            else "Decision Date"
+        )
         state["timeline"] = build_fact_timeline(doc_text_full, dec_date_val)
 
         # ── 3. Grounded Evidence Assessment & Risk Strategy ──
         state["evidence_assessment"] = {"items": build_evidence_items(meta_dict, case_category)}
-        state["risk_assessment"] = build_risk_strategy(meta_dict, case_category)
+        state["risk_assessment"] = build_risk_strategy(doc_text_full, meta_dict)
+        state["kg_data"] = build_kg(r_ctx)
 
         # 2. Ground & Filter Precedents
+        primary_act = acts[0] if acts else "Applicable Law"
+        primary_secs = ", ".join([s.get("section_number", "") for s in sections[:2] if isinstance(s, dict)]) or "Sections"
         grounded_precedents = []
         for prec in precedents:
             score = prec.get("relevance_score") or prec.get("score") or 0.0
-            if score >= 0.40:
+            if score >= 0.40 and prec.get("case_name", "").lower() not in ("keyword", "precedent"):
+                p_acts = prec.get("acts")
+                if not p_acts or p_acts == "Applicable Statutes":
+                    p_acts = primary_act
+                p_secs = prec.get("sections")
+                if not p_secs or p_secs == "Sections":
+                    p_secs = primary_secs
                 grounded_precedents.append({
                     "case_name": prec.get("case_name") or "Precedent",
                     "court": prec.get("court") or "Court of Law",
                     "year": prec.get("year") or "2024",
                     "citation": prec.get("citation") or "Unknown Citation",
                     "relevance_score": score,
+                    "score": score,
+                    "acts": p_acts,
+                    "sections": p_secs,
                     "reason": prec.get("reason") or (prec.get("summary", "")[:150] + "..."),
                     "matching_issue": issues[0] if issues else "General liability",
                     "evidence": prec.get("summary", ""),
@@ -1188,6 +1221,9 @@ async def report_generation_agent(state: AgentState) -> AgentState:
                 "year": "N/A",
                 "citation": "N/A",
                 "relevance_score": 0.0,
+                "score": 0.0,
+                "acts": primary_act,
+                "sections": primary_secs,
                 "reason": "None of the indexed precedents exceeded the relevance threshold for the current case details.",
                 "matching_issue": "None",
                 "evidence": "N/A",

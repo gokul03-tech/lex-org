@@ -74,10 +74,10 @@ class MockProvider(LLMProvider):
         extractor = LegalMetadataExtractor()
         meta_extracted = extractor.extract(doc_text)
 
-        petitioner = meta_extracted["petitioner"].get("value") or "Not found in document"
-        respondent = meta_extracted["respondent"].get("value") or "Not found in document"
-        court = meta_extracted["court"].get("value") or "Not found in document"
-        decision_date = meta_extracted["decision_date"].get("value") or "Not found in document"
+        petitioner = meta_extracted["petitioner"].get("value") if meta_extracted["petitioner"].get("status") == "extracted" else "the petitioner"
+        respondent = meta_extracted["respondent"].get("value") if meta_extracted["respondent"].get("status") == "extracted" else "the respondent"
+        court = meta_extracted["court"].get("value") if meta_extracted["court"].get("status") in ("extracted", "inferred") else "the court"
+        decision_date = meta_extracted["decision_date"].get("value") if meta_extracted["decision_date"].get("status") == "extracted" else "Relevant Date"
         judges = meta_extracted["presiding_judges"].get("value") or []
 
         # Extract witnesses and key entities dynamically

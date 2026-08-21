@@ -4,49 +4,49 @@
 
 @layer base {
   :root {
-    /* Dark mode by default - Harvey AI & Cursor inspired Obsidian Slate Theme */
-    --background: 224 71% 4%;           /* #020617 (Deep obsidian navy) */
-    --foreground: 210 40% 98%;          /* #f8fafc (Sleek light silver text) */
-    --card: 224 71% 6%;                 /* #030a21 (Slightly elevated dark card background) */
-    --card-foreground: 210 40% 98%;
-    --popover: 224 71% 5%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 199 89% 48%;             /* #0ea5e9 (Cyan/Sky Accent) */
-    --primary-foreground: 224 71% 4%;
-    --secondary: 215 25% 12%;           /* #111827 (Obsidian slate secondary) */
-    --secondary-foreground: 210 40% 98%;
-    --muted: 215 25% 10%;
-    --muted-foreground: 215 16% 65%;    /* Muted gray text */
-    --accent: 215 25% 12%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
+    /* Daylight Chambers - Warm Ivory & Sophisticated Legal Workspace */
+    --background: 40 20% 98%;          /* #FAF9F6 Warm Ivory */
+    --foreground: 222 47% 11%;         /* #0F172A Deep Slate */
+    --card: 0 0% 100%;                 /* #FFFFFF Pure White */
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 221 83% 53%;            /* #2563EB Royal Blue / Sky-Indigo */
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;          /* #F1F5F9 Slate 100 */
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 94%;
+    --muted-foreground: 215 16% 47%;   /* #64748B Slate 500 */
+    --accent: 214 32% 91%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 84% 60%;          /* #EF4444 */
     --destructive-foreground: 210 40% 98%;
-    --border: 215 25% 12%;              /* Thin glass-like border lines */
-    --input: 215 25% 10%;
-    --ring: 199 89% 48%;
-    --radius: 0.75rem;                  /* Modern curved SaaS corners */
+    --border: 214 32% 91%;             /* #E2E8F0 Slate 200 */
+    --input: 214 32% 91%;
+    --ring: 221 83% 53%;
+    --radius: 1rem;                    /* Modern 16px curved corners */
   }
 
   .dark {
-    /* Keep identical values as root to ensure dark mode remains consistent */
-    --background: 224 71% 4%;
+    /* Daylight Chambers Dark Mode Accent */
+    --background: 222 47% 7%;          /* #0B1220 Courtroom Noir */
     --foreground: 210 40% 98%;
-    --card: 224 71% 6%;
+    --card: 222 47% 9%;
     --card-foreground: 210 40% 98%;
-    --popover: 224 71% 5%;
+    --popover: 222 47% 9%;
     --popover-foreground: 210 40% 98%;
-    --primary: 199 89% 48%;
-    --primary-foreground: 224 71% 4%;
-    --secondary: 215 25% 12%;
+    --primary: 199 89% 48%;            /* #0EA5E9 Sky Blue */
+    --primary-foreground: 222 47% 7%;
+    --secondary: 217 33% 17%;
     --secondary-foreground: 210 40% 98%;
-    --muted: 215 25% 10%;
-    --muted-foreground: 215 16% 65%;
-    --accent: 215 25% 12%;
+    --muted: 217 33% 15%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 217 33% 17%;
     --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
+    --destructive: 0 84% 60%;
     --destructive-foreground: 210 40% 98%;
-    --border: 215 25% 12%;
-    --input: 215 25% 10%;
+    --border: 217 33% 18%;
+    --input: 217 33% 18%;
     --ring: 199 89% 48%;
   }
 }
@@ -56,53 +56,56 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply bg-background text-foreground antialiased selection:bg-sky-500/20 selection:text-sky-900;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
+  h1, h2, h3, .font-serif {
+    font-family: 'Fraunces', Georgia, serif;
+  }
+  code, pre, .font-mono {
+    font-family: 'IBM Plex Mono', Menlo, Monaco, Consolas, monospace;
+  }
 }
 
-/* Premium SaaS UI Glassmorphism Utilities */
+/* Daylight Chambers UI Glass & Card Utilities */
 @layer utilities {
-  .glass-panel {
-    @apply bg-card/50 backdrop-blur-lg border border-white/5 shadow-xl;
-  }
-  
   .glass-card {
-    @apply bg-card/30 backdrop-blur-md border border-white/5 hover:border-primary/20 hover:bg-card/55 transition-all duration-300;
+    @apply bg-white/80 backdrop-blur-md border border-slate-200/80 shadow-sm hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300;
   }
 
-  .text-gradient-cyan {
-    @apply bg-gradient-to-r from-blue-400 via-sky-400 to-cyan-300 bg-clip-text text-transparent;
+  .glass-panel {
+    @apply bg-white/90 backdrop-blur-xl border border-slate-200 shadow-md;
   }
 
-  .text-gradient-gold {
-    @apply bg-gradient-to-r from-yellow-500 via-amber-400 to-yellow-300 bg-clip-text text-transparent;
+  .daylight-gradient {
+    @apply bg-gradient-to-r from-sky-600 via-indigo-600 to-violet-600 bg-clip-text text-transparent;
   }
-  
-  .glow-border {
-    @apply relative overflow-hidden;
+
+  .daylight-btn-primary {
+    @apply bg-gradient-to-r from-sky-600 via-indigo-600 to-violet-600 text-white font-semibold shadow-md shadow-indigo-500/20 hover:shadow-lg hover:shadow-indigo-500/30 hover:opacity-95 transition-all;
   }
-  .glow-border::after {
-    content: '';
-    @apply absolute inset-0 rounded-[inherit] border border-primary/25 pointer-events-none opacity-0 hover:opacity-100 transition-opacity duration-300;
+
+  /* Aurora Background Glows */
+  .aurora-bg {
+    @apply pointer-events-none fixed inset-0 overflow-hidden -z-10;
   }
 }
 
-/* Custom modern scrollbars */
+/* Custom Clean Scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: hsl(var(--background));
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--secondary));
+  background: #CBD5E1;
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--primary) / 0.5);
+  background: #94A3B8;
 }

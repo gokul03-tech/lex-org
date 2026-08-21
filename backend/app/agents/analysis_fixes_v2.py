@@ -121,9 +121,9 @@ def snippet_for_section(text: str, sec: str, chunks: list[tuple[int, str]]) -> t
 def extract_cited_precedents(text: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     seen = set()
-    pat = (r'(?:reported in\s+((?:\(\d{4}\)\s?\d+\s?[A-Z]+\s?\d+|\d{4}\s?Cri\s?LJ\s?\d+|'
+    pat = (r'(?:reported in\s+((?:\(\d{4}\)\s?\d+\s?[A-Za-z0-9\s]+\s?\d+|\d{4}\s?Cri\s?LJ\s?\d+|'
            r'\d{4}\s?\(\d+\)\s?Bom\s?CR\s?\d+|AIR\s?\d{4}\s?[A-Z]+\s?\d+|\[\d{4}\]\s?\d+\s?SCR\s?\d+))?\s*(?:in the case of\s+)?)?'
-           r'([A-Z][A-Za-z.\s]+?\s+v\.?\s+[A-Z][A-Za-z.\s]+?)(?:\.|\,|\n|\;|\(|\:)')
+           r'([A-Z][A-Za-z0-9.&\-,\s]{2,70}?\s+v\.?\s+[A-Z][A-Za-z0-9.&\-,\s]{2,70}?(?:\s[A-Z]\.[A-Za-z]+)?)(?:\.|\,|\n|\;|\(|\:)')
     
     # Exclude title line from precedent scanning
     body = text.split("JUDGMENT", 1)[-1] if "JUDGMENT" in text else text
@@ -169,20 +169,36 @@ CUES = [
     (r'policy \(Ex\. [^)]+\)|proposal \(Ex\. [^)]+\)|correspondence Exs?\.', 'Contractual & policy exhibits')
 ]
 
-def extract_evidence_items(text: str) -> list[dict[str, str]]:
+def extract_evidence_items(doc_or_meta: Any = None, category: str = 'criminal') -> list[dict[str, str]]:
+    text = ""
+    if isinstance(doc_or_meta, str):
+        text = doc_or_meta
+    elif isinstance(doc_or_meta, dict):
+        text = str(doc_or_meta.get("parsed_text") or doc_or_meta.get("text") or doc_or_meta.get("case_summary") or "")
+        
     items: list[dict[str, str]] = []
     seen_labels = set()
     for pat, label in CUES:
-        m = re.search(pat, text, re.IGNORECASE)
+        m = re.search(pat, text, re.IGNORECASE) if text else None
         if not m or label in seen_labels:
             continue
         seen_labels.add(label)
-        win = re.sub(r'\s+', ' ', text[max(0, m.start() - 140): min(len(text), m.end() + 140)]).strip()
-        disputed = bool(re.search(r'without compliance|not certified|lack(?:s|ing)|disputed|contends|no direct', win, re.IGNORECASE))
+        
+        # Word-align window boundaries so text never starts mid-word
+        raw_start = max(0, m.start() - 110)
+        raw_end = min(len(text), m.end() + 110)
+        s_pos = text.rfind(' ', 0, raw_start + 1) if raw_start > 0 else 0
+        e_pos = text.find(' ', raw_end - 1) if raw_end < len(text) else len(text)
+        start_idx = s_pos + 1 if s_pos != -1 else raw_start
+        end_idx = e_pos if e_pos != -1 else raw_end
+        win = re.sub(r'\s+', ' ', text[start_idx:end_idx]).strip()
+
+        is_elec = any(k in label.lower() for k in ('cdr', 'cell-site', 'electronic'))
+        disputed = is_elec and bool(re.search(r'without compliance|not certified|lack', text, re.IGNORECASE))
         items.append({
             'type': label,
             'description': win,
-            'reliability': 'DISPUTED — certification u/s 63 BSA / corroboration not shown' if disputed else 'HIGH — contemporaneous official record'
+            'reliability': 'DISPUTED — certification u/s 63 BSA not shown' if disputed else 'HIGH — contemporaneous official record'
         })
     if not items:
         items.append({
@@ -191,6 +207,8 @@ def extract_evidence_items(text: str) -> list[dict[str, str]]:
             'reliability': 'High — contemporaneous court record'
         })
     return items
+
+build_evidence_items = extract_evidence_items
 
 
 # ================= 5) ARGUMENTS: EXTRACT REAL SUBMISSIONS =================
@@ -203,22 +221,44 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
         r'(?:Mr\. [A-Za-z]+, learned (?:Senior )?Counsel for the (?:applicant|petitioner|appellant)|counsel for the (?:applicant|petitioner)|He contends that|submitted that)\s*([^.]*\.)',
         r'(?:petitioner has filed this petition|contended that the majority award|placed strong reliance)\s*([^.]*\.)'
     ]
-    pros, defense = [], []
+    pros_raw, def_raw = [], []
     for pat in pros_pats:
         for m in re.finditer(pat, text, re.IGNORECASE):
             s = re.sub(r'\s+', ' ', m.group(0)).strip()
-            if s and s not in pros and len(s) > 25:
-                pros.append(s)
+            if s:
+                pros_raw.append(s)
     for pat in def_pats:
         for m in re.finditer(pat, text, re.IGNORECASE):
             s = re.sub(r'\s+', ' ', m.group(0)).strip()
-            if s and s not in defense and len(s) > 25:
-                defense.append(s)
-    if not pros:
-        pros = ["Prosecution / Respondent contends allegations and statutory provisions warrant strict judicial enforcement."]
-    if not defense:
-        defense = ["Applicant / Petitioner submits lack of mens rea and non-compliance with mandatory procedural safeguards."]
-    return pros[:4], defense[:4]
+            if s:
+                def_raw.append(s)
+
+    # Deduplicate and filter out fragmented lines
+    valid_pros = []
+    seen_p = set()
+    for p in pros_raw:
+        clean_p = p.strip()
+        if len(clean_p) > 35 and not clean_p.endswith(('Ms.', 'Mr.', 'APP')):
+            norm_key = re.sub(r'[^a-z]', '', clean_p.lower())[:32]
+            if norm_key not in seen_p:
+                seen_p.add(norm_key)
+                valid_pros.append(clean_p)
+
+    valid_def = []
+    seen_d = set()
+    for d in def_raw:
+        clean_d = d.strip()
+        if len(clean_d) > 35:
+            norm_key = re.sub(r'[^a-z]', '', clean_d.lower())[:32]
+            if norm_key not in seen_d:
+                seen_d.add(norm_key)
+                valid_def.append(clean_d)
+
+    if not valid_pros:
+        valid_pros = ["Prosecution / Respondent contends allegations and statutory provisions warrant strict judicial enforcement."]
+    if not valid_def:
+        valid_def = ["Applicant / Petitioner submits lack of mens rea and non-compliance with mandatory procedural safeguards."]
+    return valid_pros[:4], valid_def[:4]
 
 
 # ================= 6) RISK & STRATEGY: 100% GROUNDED =================

@@ -13,11 +13,10 @@ import {
   Cpu,
   User,
   PanelLeftClose,
-  PanelRightClose,
   PanelRight,
   Activity,
-  CheckCircle2,
-  ChevronRight
+  Search,
+  Sparkles
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -26,8 +25,8 @@ import { useAuthStore } from '@/stores/authStore';
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/cases', label: 'Cases', icon: Briefcase },
-  { href: '/admin', label: 'Admin', icon: SettingsIcon },
+  { href: '/cases', label: 'Case Dossiers', icon: Briefcase },
+  { href: '/admin', label: 'System Admin', icon: SettingsIcon },
 ];
 
 export default function Layout() {
@@ -55,25 +54,32 @@ export default function Layout() {
       case 'analyzing': return 'Querying Knowledge Graph...';
       case 'verifying': return 'Verifying Evidence...';
       case 'complete': return 'Analysis Complete';
-      default: return 'System Idle';
+      default: return 'Engine Idle';
     }
   };
 
   const getStatusColorClass = () => {
     switch (agentStatus) {
-      case 'thinking': return 'bg-amber-500 shadow-amber-500/50';
-      case 'analyzing': return 'bg-blue-500 shadow-blue-500/50';
-      case 'verifying': return 'bg-purple-500 shadow-purple-500/50';
-      case 'complete': return 'bg-emerald-500 shadow-emerald-500/50';
-      default: return 'bg-slate-500 shadow-slate-500/20';
+      case 'thinking': return 'bg-amber-500';
+      case 'analyzing': return 'bg-sky-500';
+      case 'verifying': return 'bg-purple-500';
+      case 'complete': return 'bg-emerald-500';
+      default: return 'bg-slate-400';
     }
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
+    <div className="flex h-screen w-screen overflow-hidden bg-[#FAF9F6] text-slate-900 font-sans relative">
+      {/* Daylight Chambers Aurora Background Ambient Blobs */}
+      <div className="aurora-bg">
+        <div className="absolute -top-32 -left-32 h-[450px] w-[450px] rounded-full bg-sky-200/40 blur-3xl" />
+        <div className="absolute top-1/3 -right-32 h-[400px] w-[400px] rounded-full bg-amber-200/35 blur-3xl" />
+        <div className="absolute -bottom-32 left-1/3 h-[450px] w-[450px] rounded-full bg-emerald-200/30 blur-3xl" />
+      </div>
+
       {/* Mobile Menu Button */}
       <button
-        className="fixed left-4 top-4 z-50 rounded-md border border-white/10 bg-card p-2 text-foreground lg:hidden"
+        className="fixed left-4 top-4 z-50 rounded-xl border border-slate-200 bg-white/90 p-2 text-slate-700 shadow-sm lg:hidden"
         onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
       >
         {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -81,33 +87,40 @@ export default function Layout() {
 
       {/* LEFT PANEL: Sidebar */}
       <motion.aside
-        animate={{ width: sidebarCollapsed ? 72 : 256 }}
+        animate={{ width: sidebarCollapsed ? 76 : 260 }}
         transition={{ duration: 0.2 }}
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex flex-col border-r border-white/5 bg-card/60 backdrop-blur-xl transition-transform lg:relative lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-40 flex flex-col border-r border-slate-200/80 bg-white/80 backdrop-blur-xl shadow-xs transition-transform lg:relative lg:translate-x-0",
           mobileMenuOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
       >
-        {/* Brand/Logo */}
-        <div className="flex h-16 items-center justify-between border-b border-white/5 px-6">
+        {/* Brand / Logo */}
+        <div className="flex h-16 items-center justify-between border-b border-slate-100 px-6">
           <div className="flex items-center gap-3 overflow-hidden">
-            <Scale className="h-6 w-6 shrink-0 text-primary" />
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 text-white shadow-sm">
+              <Scale className="h-5 w-5 shrink-0" />
+            </div>
             {!sidebarCollapsed && (
-              <span className="bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-lg font-bold text-transparent">
-                LexOrch-KG
-              </span>
+              <div className="flex flex-col">
+                <span className="font-serif text-lg font-bold tracking-tight text-slate-900">
+                  LexOrch-KG
+                </span>
+                <span className="font-mono text-[9px] font-semibold text-sky-600 uppercase tracking-wider">
+                  Daylight Chambers
+                </span>
+              </div>
             )}
           </div>
           <button
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            className="hidden text-muted-foreground hover:text-foreground lg:block"
+            className="hidden text-slate-400 hover:text-slate-700 lg:block cursor-pointer transition"
           >
             <PanelLeftClose className={cn("h-4 w-4 transition-transform", sidebarCollapsed && "rotate-180")} />
           </button>
         </div>
 
         {/* Navigation items */}
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+        <nav className="flex-1 space-y-1.5 overflow-y-auto px-3 py-5">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.href || location.pathname.startsWith(item.href + '/');
@@ -117,36 +130,38 @@ export default function Layout() {
                 to={item.href}
                 onClick={() => setMobileMenuOpen(false)}
                 className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200",
+                  "flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-all duration-200",
                   isActive
-                    ? "bg-primary/10 text-primary border-l-2 border-primary"
-                    : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
+                    ? "bg-sky-50 text-sky-700 font-semibold border border-sky-200 shadow-2xs"
+                    : "text-slate-600 hover:bg-slate-100/70 hover:text-slate-900"
                 )}
               >
-                <Icon className="h-5 w-5 shrink-0" />
+                <Icon className={cn("h-4.5 w-4.5 shrink-0", isActive ? "text-sky-600" : "text-slate-500")} />
                 {!sidebarCollapsed && <span>{item.label}</span>}
               </Link>
             );
           })}
         </nav>
 
-        {/* User profile / Logout */}
-        <div className="border-t border-white/5 p-4 space-y-2">
-          <div className="flex items-center gap-3 rounded-lg p-2 text-sm text-muted-foreground hover:bg-white/5 hover:text-foreground">
-            <User className="h-5 w-5 shrink-0" />
+        {/* User profile / Logout card */}
+        <div className="border-t border-slate-100 p-4 space-y-2">
+          <div className="flex items-center gap-3 rounded-xl p-2 text-sm bg-slate-50/70 border border-slate-100">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-700 font-bold text-xs">
+              <User className="h-4 w-4" />
+            </div>
             {!sidebarCollapsed && (
               <div className="flex flex-col overflow-hidden text-left">
-                <span className="truncate font-semibold text-foreground">{user?.full_name || 'Legal Advocate'}</span>
-                <span className="truncate text-xs text-muted-foreground">{user?.role || 'Researcher'}</span>
+                <span className="truncate font-semibold text-slate-800 text-xs">{user?.full_name || 'Legal Advocate'}</span>
+                <span className="truncate text-[10px] font-mono text-slate-500">{user?.role || 'Senior Counsel'}</span>
               </div>
             )}
           </div>
           <Button
             variant="ghost"
             onClick={() => { logout(); navigate('/login'); }}
-            className="w-full justify-start gap-3 text-red-400 hover:bg-red-500/10 hover:text-red-400"
+            className="w-full justify-start gap-2.5 text-rose-600 hover:bg-rose-50 hover:text-rose-700 text-xs font-medium rounded-xl h-9"
           >
-            <LogOut className="h-5 w-5 shrink-0" />
+            <LogOut className="h-4 w-4 shrink-0" />
             {!sidebarCollapsed && <span>Sign Out</span>}
           </Button>
         </div>
@@ -155,25 +170,25 @@ export default function Layout() {
       {/* Mobile Overlay */}
       {mobileMenuOpen && (
         <div
-          className="fixed inset-0 z-30 bg-black/60 lg:hidden"
+          className="fixed inset-0 z-30 bg-black/30 backdrop-blur-xs lg:hidden"
           onClick={() => setMobileMenuOpen(false)}
         />
       )}
 
-      {/* CENTER & RIGHT WORKSPACE */}
+      {/* CENTER WORKSPACE & HEADER */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* HEADER */}
-        <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-white/5 bg-background/40 backdrop-blur-md px-6">
+        <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-slate-200/80 bg-[#FAF9F6]/80 backdrop-blur-md px-6">
           {/* Active Model Selector */}
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-1.5 rounded-lg border border-white/5 bg-secondary/30 p-1">
+            <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white/90 p-1 shadow-2xs text-xs font-mono">
               <button
                 onClick={() => setActiveModel('qwen')}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-semibold transition-all",
+                  "flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-semibold transition-all cursor-pointer",
                   activeModel === 'qwen'
-                    ? "bg-primary text-primary-foreground shadow"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "bg-sky-50 text-sky-700 border border-sky-200 shadow-xs"
+                    : "text-slate-500 hover:text-slate-800"
                 )}
               >
                 <Cpu className="h-3.5 w-3.5" />
@@ -182,10 +197,10 @@ export default function Layout() {
               <button
                 onClick={() => setActiveModel('deepseek')}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-semibold transition-all",
+                  "flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-semibold transition-all cursor-pointer",
                   activeModel === 'deepseek'
-                    ? "bg-primary text-primary-foreground shadow"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "bg-purple-50 text-purple-700 border border-purple-200 shadow-xs"
+                    : "text-slate-500 hover:text-slate-800"
                 )}
               >
                 <Activity className="h-3.5 w-3.5" />
@@ -193,27 +208,40 @@ export default function Layout() {
               </button>
             </div>
 
-            {/* Agent Live Status */}
-            <div className="hidden items-center gap-2 rounded-full border border-white/5 bg-card/40 px-3 py-1 lg:flex">
+            {/* Agent Live Status Badge */}
+            <div className="hidden items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs lg:flex shadow-2xs">
               <span className={cn("relative flex h-2 w-2 rounded-full", getStatusColorClass())}>
                 <span className={cn("absolute inline-flex h-full w-full animate-ping rounded-full opacity-75", getStatusColorClass())}></span>
               </span>
-              <span className="text-xs font-medium text-muted-foreground">{getAgentStatusText()}</span>
+              <span className="font-mono text-[11px] text-slate-600 font-medium">{getAgentStatusText()}</span>
             </div>
           </div>
 
           {/* Right Header actions */}
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            {/* Quick ⌘K Search Trigger */}
+            <button
+              onClick={() => {
+                const event = new KeyboardEvent('keydown', { key: 'k', metaKey: true });
+                document.dispatchEvent(event);
+              }}
+              className="hidden md:flex items-center gap-2 rounded-xl border border-slate-200 bg-white/90 px-3.5 py-1.5 font-mono text-xs text-slate-600 hover:border-slate-300 hover:bg-white shadow-2xs transition cursor-pointer"
+            >
+              <Search className="h-3.5 w-3.5 text-slate-400" />
+              <span>Search cases & statutes...</span>
+              <kbd className="rounded-md border border-slate-200 bg-slate-100 px-1.5 py-0.2 text-[10px] text-slate-500 font-semibold">⌘K</kbd>
+            </button>
+
             {/* Notifications */}
             <div className="relative">
               <Button
                 variant="ghost"
                 size="icon"
-                className="relative"
+                className="relative rounded-xl hover:bg-slate-100 text-slate-600"
                 onClick={() => setNotificationsOpen(!notificationsOpen)}
               >
-                <Bell className="h-5 w-5" />
-                <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-primary shadow-sm shadow-primary/50"></span>
+                <Bell className="h-4.5 w-4.5" />
+                <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-sky-500"></span>
               </Button>
 
               <AnimatePresence>
@@ -222,120 +250,29 @@ export default function Layout() {
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: 10 }}
-                    className="absolute right-0 mt-2 w-80 rounded-lg border border-white/5 bg-card p-4 shadow-xl"
+                    className="absolute right-0 mt-2 w-80 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl z-50 text-left"
                   >
-                    <h3 className="mb-2 font-semibold">Notifications</h3>
-                    <div className="space-y-2.5">
-                      <div className="rounded-md bg-white/5 p-2 text-xs">
-                        <p className="font-semibold text-primary">Ingestion Success</p>
-                        <p className="text-muted-foreground mt-0.5">Constitution of India parsed and embedded successfully.</p>
+                    <h3 className="mb-2 font-serif font-bold text-slate-900 text-sm">System Notifications</h3>
+                    <div className="space-y-2 text-xs">
+                      <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-2.5">
+                        <p className="font-semibold text-emerald-800">Grounding Engine Online</p>
+                        <p className="text-emerald-600 mt-0.5 text-[11px]">FalkorDB and Qdrant multi-stage RAG indexed.</p>
                       </div>
-                      <div className="rounded-md bg-white/5 p-2 text-xs">
-                        <p className="font-semibold text-primary">Database Online</p>
-                        <p className="text-muted-foreground mt-0.5">Qdrant connection verified. 522k vectors loaded.</p>
+                      <div className="rounded-xl bg-sky-50 border border-sky-100 p-2.5">
+                        <p className="font-semibold text-sky-800">Statute Corpus Active</p>
+                        <p className="text-sky-600 mt-0.5 text-[11px]">BNS, BNSS, BSA, and IT Act loaded into vector memory.</p>
                       </div>
                     </div>
                   </motion.div>
                 )}
               </AnimatePresence>
             </div>
-
-            {/* Toggle Insight Panel */}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setInsightPanelOpen(!insightPanelOpen)}
-              className={cn(insightPanelOpen && "text-primary bg-primary/10")}
-            >
-              <PanelRight className="h-5 w-5" />
-            </Button>
           </div>
         </header>
 
-        {/* WORKSPACE & INSIGHT LAYOUT */}
-        <div className="flex flex-1 overflow-hidden">
-          {/* Main workspace */}
-          <div className="flex-1 overflow-y-auto">
-            <Outlet />
-          </div>
-
-          {/* RIGHT PANEL: Agent Insight Panel */}
-          <AnimatePresence>
-            {insightPanelOpen && (
-              <motion.aside
-                initial={{ width: 0, opacity: 0 }}
-                animate={{ width: 320, opacity: 1 }}
-                exit={{ width: 0, opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="hidden border-l border-white/5 bg-card/40 backdrop-blur-xl p-5 overflow-y-auto lg:flex flex-col gap-6"
-              >
-                <div className="flex items-center justify-between border-b border-white/5 pb-3">
-                  <h3 className="font-semibold text-gradient-cyan">Agent Insights</h3>
-                  <button onClick={() => setInsightPanelOpen(false)} className="text-muted-foreground hover:text-foreground">
-                    <PanelRightClose className="h-4 w-4" />
-                  </button>
-                </div>
-
-                {/* System Confidence Widget */}
-                <div className="rounded-lg border border-white/5 bg-white/5 p-4">
-                  <span className="text-xs font-semibold text-muted-foreground">Retrieval Confidence Score</span>
-                  <div className="mt-2 flex items-baseline gap-2">
-                    <span className="text-3xl font-extrabold text-primary">94.8%</span>
-                    <span className="text-xs text-emerald-400 font-medium">▲ Very High</span>
-                  </div>
-                  <div className="mt-2 h-1.5 w-full rounded-full bg-secondary">
-                    <div className="h-1.5 rounded-full bg-gradient-to-r from-blue-500 to-cyan-400" style={{ width: '94.8%' }}></div>
-                  </div>
-                </div>
-
-                {/* Agent Activity Steps */}
-                <div className="flex-1 flex flex-col gap-4">
-                  <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Active Reasoning Steps</span>
-                  <div className="space-y-4">
-                    <div className="flex gap-3">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
-                      <div className="text-xs">
-                        <p className="font-semibold">Query reformulation</p>
-                        <p className="text-muted-foreground mt-0.5">Reformulated user input into search vector keywords.</p>
-                      </div>
-                    </div>
-                    <div className="flex gap-3">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
-                      <div className="text-xs">
-                        <p className="font-semibold">Hybrid Search execution</p>
-                        <p className="text-muted-foreground mt-0.5">Retrieved 12 vector points and 8 relational graph links.</p>
-                      </div>
-                    </div>
-                    <div className="flex gap-3">
-                      <div className="relative flex h-4 w-4 shrink-0 mt-0.5 items-center justify-center">
-                        <span className="animate-ping absolute inline-flex h-2.5 w-2.5 rounded-full bg-primary opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-                      </div>
-                      <div className="text-xs">
-                        <p className="font-semibold text-primary">Cross-referencing precedents</p>
-                        <p className="text-muted-foreground mt-0.5">Verifying case judgments for statutory conflicts.</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Citations Panel */}
-                <div className="rounded-lg border border-white/5 bg-secondary/20 p-4">
-                  <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Live References</h4>
-                  <div className="space-y-2 text-xs">
-                    <div className="flex justify-between text-muted-foreground">
-                      <span>Constitution:</span>
-                      <span className="font-semibold text-foreground">Article 21</span>
-                    </div>
-                    <div className="flex justify-between text-muted-foreground">
-                      <span>BNS Code:</span>
-                      <span className="font-semibold text-foreground">Section 302</span>
-                    </div>
-                  </div>
-                </div>
-              </motion.aside>
-            )}
-          </AnimatePresence>
+        {/* Main workspace view */}
+        <div className="flex-1 overflow-y-auto">
+          <Outlet />
         </div>
       </div>
     </div>

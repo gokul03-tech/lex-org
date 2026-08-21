@@ -13,6 +13,12 @@ export default {
       },
     },
     extend: {
+      fontFamily: {
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+        serif: ['Fraunces', 'Georgia', 'serif'],
+        display: ['Fraunces', 'Georgia', 'serif'],
+        mono: ['IBM Plex Mono', 'Menlo', 'Monaco', 'monospace'],
+      },
       colors: {
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
@@ -48,9 +54,13 @@ export default {
           foreground: 'hsl(var(--card-foreground))',
         },
         legal: {
-          navy: '#1B2A4A',
-          blue: '#2563EB',
-          gold: '#C9A84C',
+          navy: '#0B1220',
+          blue: '#38BDF8',
+          violet: '#A78BFA',
+          gold: '#EAB308',
+          emerald: '#10B981',
+          amber: '#F59E0B',
+          rose: '#F43F5E',
           slate: '#334155',
         },
       },
@@ -68,10 +78,20 @@ export default {
           from: { height: 'var(--radix-accordion-content-height)' },
           to: { height: '0' },
         },
+        marquee: {
+          from: { transform: 'translateX(0)' },
+          to: { transform: 'translateX(calc(-100% - var(--gap, 1rem)))' },
+        },
+        'marquee-vertical': {
+          from: { transform: 'translateY(0)' },
+          to: { transform: 'translateY(calc(-100% - var(--gap, 1rem)))' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
+        marquee: 'marquee var(--duration, 40s) linear infinite',
+        'marquee-vertical': 'marquee-vertical var(--duration, 40s) linear infinite',
       },
     },
   },
