@@ -115,12 +115,6 @@ export default function DashboardPage() {
     }
   };
 
-  const stats = [
-    { label: 'Active Case Files', val: cases.length.toString(), desc: 'Case directories in progress', icon: Briefcase, color: 'text-sky-600', bg: 'bg-sky-50 border-sky-100' },
-    { label: 'Ingestion Engine', val: 'Online', desc: 'Qdrant & FalkorDB connected', icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-100' },
-    { label: 'AI Reasoning Core', val: 'Active', desc: 'DeepSeek-R1 & Qwen3 verified', icon: Cpu, color: 'text-indigo-600', bg: 'bg-indigo-50 border-indigo-100' },
-  ];
-
   return (
     <div className="container mx-auto p-6 lg:p-10 space-y-8 text-left relative max-w-7xl">
       <CommandMenu />
@@ -163,33 +157,6 @@ export default function DashboardPage() {
           </Button>
         </div>
       </motion.div>
-
-      {/* Metric Cards Row */}
-      <div className="grid gap-5 sm:grid-cols-3">
-        {stats.map((stat, idx) => {
-          const Icon = stat.icon;
-          return (
-            <motion.div
-              key={stat.label}
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: idx * 0.05 }}
-              className="rounded-2xl border border-slate-200 bg-white/90 p-6 shadow-xs flex flex-col justify-between"
-            >
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-xs font-semibold text-slate-500 uppercase tracking-wider">{stat.label}</span>
-                <div className={`flex h-10 w-10 items-center justify-center rounded-xl border ${stat.bg} ${stat.color}`}>
-                  <Icon className="h-5 w-5" />
-                </div>
-              </div>
-              <div className="mt-4">
-                <span className="font-serif text-3xl font-bold text-slate-900 tracking-tight">{stat.val}</span>
-                <p className="text-xs text-slate-500 mt-1 font-medium">{stat.desc}</p>
-              </div>
-            </motion.div>
-          );
-        })}
-      </div>
 
       {/* Active Case Folders Section */}
       <div className="space-y-4">

@@ -252,49 +252,33 @@ export default function CasesPage() {
         onStartCase={() => setCreateOpen(true)}
       />
 
-      {/* HERO SECTION: Understandable in 10 seconds */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-b from-white via-slate-50/50 to-white p-8 md:p-10 shadow-sm"
-      >
-        {/* Soft aurora accents behind hero */}
-        <div className="pointer-events-none absolute -top-24 right-10 h-72 w-96 rounded-full bg-sky-200/40 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-24 left-10 h-72 w-96 rounded-full bg-amber-200/35 blur-3xl" />
-
-        <div className="relative z-10 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
-          <div className="max-w-2xl space-y-3">
-            <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3.5 py-1 text-xs font-semibold text-sky-700 shadow-2xs">
-              <Sparkles className="h-3.5 w-3.5 text-sky-600" />
-              AI-Powered Legal Intelligence for Indian Law
-            </div>
-            <h1 className="font-serif text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-slate-900 leading-tight">
-              Your Legal Cases,{' '}
-              <span className="daylight-gradient">Grounded in Truth.</span>
-            </h1>
-            <p className="text-sm md:text-base text-slate-600 leading-relaxed max-w-xl">
-              Extract deterministic facts, cross-reference statutory codes (BNS, BNSS, BSA), and generate explainable IRAC advisory briefs with zero hallucinations.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3 shrink-0">
-            <Button
-              variant="outline"
-              onClick={() => setTourOpen(true)}
-              className="rounded-2xl border-slate-200 bg-white hover:bg-slate-50 text-slate-700 px-4 py-5 text-xs font-semibold gap-2 shadow-2xs cursor-pointer"
-            >
-              <HelpCircle className="h-4 w-4 text-sky-600" />
-              How it Works (3 Steps)
-            </Button>
-            <Button
-              onClick={() => setCreateOpen(true)}
-              className="daylight-btn-primary rounded-2xl px-6 py-5 text-xs font-bold gap-2 shadow-md cursor-pointer"
-            >
-              <PlusCircle className="h-4.5 w-4.5" /> Start New Case File
-            </Button>
-          </div>
+      {/* PAGE HEADER BAR */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="font-serif text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">
+            Case Dossiers
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-500 font-sans mt-0.5">
+            Manage, search, and analyze statutory legal case files.
+          </p>
         </div>
-      </motion.div>
+        <div className="flex items-center gap-3 shrink-0">
+          <Button
+            variant="outline"
+            onClick={() => setTourOpen(true)}
+            className="rounded-2xl border-slate-200 bg-white hover:bg-slate-50 text-slate-700 px-4 py-2.5 text-xs font-semibold gap-2 shadow-2xs cursor-pointer"
+          >
+            <HelpCircle className="h-4 w-4 text-sky-600" />
+            How it Works
+          </Button>
+          <Button
+            onClick={() => setCreateOpen(true)}
+            className="daylight-btn-primary rounded-2xl px-5 py-2.5 text-xs font-bold gap-2 shadow-md cursor-pointer"
+          >
+            <PlusCircle className="h-4.5 w-4.5" /> Start New Case File
+          </Button>
+        </div>
+      </div>
 
       {/* VISUAL CATEGORY SELECTOR (6 Interactive Cards) */}
       <div className="space-y-3">
