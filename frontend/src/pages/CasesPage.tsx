@@ -294,35 +294,6 @@ export default function CasesPage() {
             </Button>
           </div>
         </div>
-
-        {/* 4 Live Stats Orbs */}
-        <div className="relative z-10 mt-8 pt-6 border-t border-slate-200/80 grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="space-y-1">
-            <span className="font-mono text-[10px] font-semibold text-slate-500 uppercase tracking-wider block">Total Dossiers</span>
-            <div className="font-serif text-2xl md:text-3xl font-bold text-slate-900">{stats.total}</div>
-            <span className="text-[11px] text-slate-500 font-medium">In active repository</span>
-          </div>
-
-          <div className="space-y-1">
-            <span className="font-mono text-[10px] font-semibold text-slate-500 uppercase tracking-wider block">Analyzed Matters</span>
-            <div className="font-serif text-2xl md:text-3xl font-bold text-emerald-700">{stats.analyzed}</div>
-            <span className="text-[11px] text-emerald-600 font-medium">Full IRAC synthesized</span>
-          </div>
-
-          <div className="space-y-1">
-            <span className="font-mono text-[10px] font-semibold text-slate-500 uppercase tracking-wider block">Avg Trust Index</span>
-            <div className="font-serif text-2xl md:text-3xl font-bold text-indigo-700">
-              {stats.avgTrust > 0 ? `${stats.avgTrust}%` : 'N/A'}
-            </div>
-            <span className="text-[11px] text-indigo-600 font-medium">Grounded & Verified</span>
-          </div>
-
-          <div className="space-y-1">
-            <span className="font-mono text-[10px] font-semibold text-slate-500 uppercase tracking-wider block">RAG Engine</span>
-            <div className="font-serif text-2xl md:text-3xl font-bold text-sky-700">Online</div>
-            <span className="text-[11px] text-sky-600 font-medium">FalkorDB + Qdrant</span>
-          </div>
-        </div>
       </motion.div>
 
       {/* VISUAL CATEGORY SELECTOR (6 Interactive Cards) */}
@@ -421,33 +392,6 @@ export default function CasesPage() {
             <TableIcon className="h-3.5 w-3.5" />
             Docket Table
           </button>
-        </div>
-      </div>
-
-      {/* VISIBLE COLOR & STATUS LEGEND */}
-      <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3.5 flex flex-wrap items-center justify-between gap-3 text-[11px] font-sans text-slate-600">
-        <div className="flex items-center gap-2 font-mono text-[10px] uppercase font-bold text-slate-500">
-          <Info className="h-3.5 w-3.5 text-sky-600" />
-          Color Legend:
-        </div>
-        <div className="flex flex-wrap items-center gap-4">
-          <span className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-emerald-500" />
-            <strong>Extracted</strong> (Document Proof)
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-amber-500" />
-            <strong>Inferred</strong> (AI Statutory Match)
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-rose-500" />
-            <strong>Unstated</strong> (Review Required)
-          </span>
-          <div className="h-3 w-[1px] bg-slate-200 hidden sm:block" />
-          <span className="flex items-center gap-1.5">
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-            <strong>≥80% Trust</strong> (Courtroom-Ready)
-          </span>
         </div>
       </div>
 

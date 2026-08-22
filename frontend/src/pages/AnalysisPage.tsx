@@ -12,7 +12,6 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { RadialGauge } from '@/components/ui/radial-gauge';
 import { VerticalTimeline } from '@/components/ui/timeline';
-import { AgentStepper, type StepItem } from '@/components/ui/stepper';
 import { ChatDrawer } from '@/components/ui/chat-drawer';
 import { Dock, type DockItem } from '@/components/ui/dock';
 import CaseGraph from '@/components/graph/CaseGraph';
@@ -173,17 +172,65 @@ export default function AnalysisPage() {
     }
   };
 
-  // Helper for metadata safe value + status
-  const getMeta = (fieldKey: string, fallbackLabel = 'Unspecified') => {
-    const raw = analysisData?.metadata?.[fieldKey];
-    if (typeof raw === 'object' && raw !== null) {
-      const val = raw.value && raw.value !== 'Not found in document' ? raw.value : fallbackLabel;
-      const status = raw.status || (val !== fallbackLabel ? 'extracted' : 'not_found');
-      return { value: val, status };
+  // Dynamic metadata extractor supporting direct metadata map, document_info, and case detail
+  const getMeta = (fieldKey: string, fallbackLabel = 'Unstated in record') => {
+    // 1. Direct metadata dictionary check
+    const metaRaw = analysisData?.metadata?.[fieldKey];
+    if (typeof metaRaw === 'object' && metaRaw !== null && metaRaw.value && metaRaw.value !== 'Not found in document') {
+      return { value: String(metaRaw.value), status: metaRaw.status || 'extracted' };
     }
-    const val = raw && raw !== 'Not found in document' ? raw : fallbackLabel;
-    const status = val !== fallbackLabel ? 'extracted' : 'not_found';
-    return { value: val, status };
+    if (typeof metaRaw === 'string' && metaRaw && metaRaw !== 'Not found in document') {
+      return { value: metaRaw, status: 'extracted' };
+    }
+
+    // 2. document_info / analysisData fallback resolution
+    const docInfo = analysisData?.document_info || {};
+    let val: any = null;
+
+    if (fieldKey === 'court') {
+      val = docInfo.court || docInfo.court_name;
+    } else if (fieldKey === 'judges') {
+      val = docInfo.judges || docInfo.presiding_judges;
+    } else if (fieldKey === 'decision_date') {
+      val = docInfo.decision_date || docInfo.date;
+    } else if (fieldKey === 'petitioner') {
+      val = docInfo.petitioner || docInfo.applicant || (Array.isArray(docInfo.parties) ? docInfo.parties[0] : null);
+    } else if (fieldKey === 'respondent') {
+      val = docInfo.respondent || docInfo.accused || (Array.isArray(docInfo.parties) && docInfo.parties.length > 1 ? docInfo.parties[1] : null);
+    } else if (fieldKey === 'case_number') {
+      val = docInfo.case_number || docInfo.fir_number || docInfo.court_matter;
+    } else if (fieldKey === 'acts') {
+      if (Array.isArray(analysisData?.acts) && analysisData.acts.length > 0) {
+        val = analysisData.acts.map((a: any) => typeof a === 'string' ? a : a.act).filter(Boolean).join(', ');
+      } else {
+        val = docInfo.acts;
+      }
+    } else if (fieldKey === 'sections') {
+      if (Array.isArray(analysisData?.sections) && analysisData.sections.length > 0) {
+        val = analysisData.sections.map((s: any) => typeof s === 'string' ? s : s.section).filter(Boolean).join(', ');
+      } else {
+        val = docInfo.sections;
+      }
+    } else if (fieldKey === 'citations') {
+      val = docInfo.citation || docInfo.citations || (Array.isArray(analysisData?.precedents) && analysisData.precedents[0]?.citation);
+    } else if (fieldKey === 'word_count') {
+      val = docInfo.word_count ? `${docInfo.word_count} Words` : null;
+    } else if (fieldKey === 'procedural_stage') {
+      val = caseDetail?.case_type || docInfo.case_type || 'Regular Bail Petition';
+    } else if (fieldKey === 'ingestion_engine') {
+      val = 'FalkorDB + Qdrant (BGE-M3)';
+      return { value: val, status: 'extracted' };
+    }
+
+    if (Array.isArray(val)) {
+      val = val.filter(Boolean).join(', ');
+    }
+
+    if (val && val !== 'Not found in document' && val !== 'Unspecified') {
+      return { value: String(val), status: 'extracted' };
+    }
+
+    return { value: fallbackLabel, status: 'not_found' };
   };
 
   const cleanTitle = (raw: string) => {
@@ -234,28 +281,6 @@ export default function AnalysisPage() {
       </div>
     );
   }
-
-  // 12-Agent Stepper Items mapping
-  const agentSteps: StepItem[] = (analysisData?.agents || [
-    { name: 'Document Ingestion Agent', ms: 120 },
-    { name: 'Metadata & Entity Extractor', ms: 340 },
-    { name: 'BGE-M3 Dense Vector Retriever', ms: 450 },
-    { name: 'BM25 Keyword Cross-Referencer', ms: 210 },
-    { name: 'FalkorDB Cypher Graph Reasoner', ms: 520 },
-    { name: 'S.63 BSA Evidence Reliability Agent', ms: 310 },
-    { name: 'Supreme Court Precedent Aligning Agent', ms: 640 },
-    { name: 'IRAC Advisory Synthesis Agent', ms: 890 },
-    { name: 'Procedural Risk Matrix Agent', ms: 410 },
-    { name: 'Confidence Fusion & Trust Calculator', ms: 180 },
-    { name: 'Citation Grounding Verifier', ms: 290 },
-    { name: 'Universal Presentation Compiler', ms: 150 },
-  ]).map((a: any, idx: number) => ({
-    id: `agent-${idx}`,
-    name: a.name || `Legal Agent ${idx + 1}`,
-    status: 'completed',
-    durationMs: a.ms || 320,
-    confidence: 0.94,
-  }));
 
   // Formatted facts timeline items
   const timelineItems = (analysisData?.timeline || []).map((t: any) => ({
@@ -534,29 +559,21 @@ export default function AnalysisPage() {
             </div>
           </div>
 
-          {/* CHRONOLOGICAL FACTS TIMELINE & AGENT PIPELINE STEPPER */}
-          <div className="grid gap-6 lg:grid-cols-12 items-start">
-            {/* FACTS TIMELINE (7 Columns) */}
-            <div className="lg:col-span-7 rounded-3xl border border-slate-200 bg-white p-6 shadow-xs space-y-4 text-left">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <div className="flex items-center gap-2">
-                  <Clock className="h-4.5 w-4.5 text-sky-600" />
-                  <h3 className="font-serif text-sm font-bold text-slate-900">
-                    Chronological Case-Facts Timeline
-                  </h3>
-                </div>
-                <span className="font-mono text-[10px] text-slate-500 font-semibold">
-                  {timelineItems.length} Key Events
-                </span>
+          {/* CHRONOLOGICAL FACTS TIMELINE */}
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs space-y-4 text-left">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <Clock className="h-4.5 w-4.5 text-sky-600" />
+                <h3 className="font-serif text-sm font-bold text-slate-900">
+                  Chronological Case-Facts Timeline
+                </h3>
               </div>
-
-              <VerticalTimeline items={timelineItems} />
+              <span className="font-mono text-[10px] text-slate-500 font-semibold">
+                {timelineItems.length} Key Events Recorded
+              </span>
             </div>
 
-            {/* AGENT PIPELINE STEPPER (5 Columns) */}
-            <div className="lg:col-span-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-xs space-y-4 text-left">
-              <AgentStepper steps={agentSteps} />
-            </div>
+            <VerticalTimeline items={timelineItems} />
           </div>
 
           {/* 5 MODULE TABS NAVIGATION */}

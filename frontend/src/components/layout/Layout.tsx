@@ -179,42 +179,8 @@ export default function Layout() {
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* HEADER */}
         <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-slate-200/80 bg-[#FAF9F6]/80 backdrop-blur-md px-6">
-          {/* Active Model Selector */}
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white/90 p-1 shadow-2xs text-xs font-mono">
-              <button
-                onClick={() => setActiveModel('qwen')}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-semibold transition-all cursor-pointer",
-                  activeModel === 'qwen'
-                    ? "bg-sky-50 text-sky-700 border border-sky-200 shadow-xs"
-                    : "text-slate-500 hover:text-slate-800"
-                )}
-              >
-                <Cpu className="h-3.5 w-3.5" />
-                Qwen3
-              </button>
-              <button
-                onClick={() => setActiveModel('deepseek')}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-semibold transition-all cursor-pointer",
-                  activeModel === 'deepseek'
-                    ? "bg-purple-50 text-purple-700 border border-purple-200 shadow-xs"
-                    : "text-slate-500 hover:text-slate-800"
-                )}
-              >
-                <Activity className="h-3.5 w-3.5" />
-                DeepSeek-R1
-              </button>
-            </div>
-
-            {/* Agent Live Status Badge */}
-            <div className="hidden items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs lg:flex shadow-2xs">
-              <span className={cn("relative flex h-2 w-2 rounded-full", getStatusColorClass())}>
-                <span className={cn("absolute inline-flex h-full w-full animate-ping rounded-full opacity-75", getStatusColorClass())}></span>
-              </span>
-              <span className="font-mono text-[11px] text-slate-600 font-medium">{getAgentStatusText()}</span>
-            </div>
+          <div className="flex items-center gap-2">
+            {/* Clean Header Left Section */}
           </div>
 
           {/* Right Header actions */}
