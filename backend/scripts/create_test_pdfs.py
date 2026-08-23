@@ -116,8 +116,56 @@ D.Y. Chandrachud, CJI
 
 P.S. Narasimha, J. - I agree."""
 
+# ── 4. Civil Dispute / Specific Performance Judgment ──
+DOC_4_TEXT = """Mehta Realty Projects vs Shanti Devi & Ors. ... on 11 November, 2023
+(2023) 5 ALD 210, AIR 2024 SC 189
+Bench: B.R. Gavai, J. and Vikram Nath, J.
+
+JUDGMENT
+B.R. Gavai, J.
+
+1. This appeal arises out of a civil suit for Specific Performance of an Agreement to Sell registered under the Indian Registration Act, 1908. The plaintiff/appellant seeks execution of sale deed and permanent injunction under Order 39 Rule 1 and 2 of the Code of Civil Procedure, 1908 (CPC) in respect of commercial property situated in Bengaluru.
+
+2. The respondent/vendor contended that time was of the essence of the contract and the appellant failed to tender the balance consideration of Rs. 2.4 Crores within the stipulated 90 days. The vendor accordingly invoked the forfeiture clause under Section 74 of the Indian Contract Act, 1872.
+
+3. Mr. Rohatgi, learned Senior Counsel for the appellant, argued that in contracts relating to immovable property, time is ordinarily not of the essence unless expressly provided. He demonstrated that the appellant was continuously ready and willing to perform his obligations in terms of Section 16(c) of the Specific Relief Act, 1963.
+
+4. Counsel relied upon the landmark Constitution Bench judgment reported in (1993) 1 SCC 519 in the case of Chand Rani v. Kamal Rani, and the recent ruling in (2020) 13 SCC 285 in the case of Sughar Singh v. Hari Singh holding that readiness and willingness must be gathered from contemporaneous conduct.
+
+5. Having examined the bank statements and balance deposits tendered in escrow, we hold that the appellant established readiness and willingness under Section 16(c) of the Specific Relief Act, 1963. The trial court erred in declining specific relief.
+
+6. The appeal is allowed. The respondents are directed to execute the conveyance deed upon receipt of the remaining consideration within eight weeks.
+
+Vikram Nath, J. - I agree."""
+
+# ── 5. Criminal / NDPS Contraband Bail Judgment ──
+DOC_5_TEXT = """Mohd. Rashid vs State of NCT of Delhi ... on 9 February, 2024
+2024 Cri LJ 912, (2024) 1 DLT (Crl) 450
+Bench: Anoop Kumar Mendiratta, J.
+
+JUDGMENT
+Anoop Kumar Mendiratta, J.
+
+1. The petitioner seeks regular bail under Section 483 of the Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023 in FIR No. 89/2023 registered under Sections 21, 29, and 61 of the Narcotic Drugs and Psychotropic Substances Act (NDPS Act), 1985 at Special Cell Police Station.
+
+2. The prosecution case is that 450 grams of contraband was recovered from a co-accused. The petitioner was implicated solely on the basis of disclosure statements and alleged telephonic contact under Section 29 NDPS Act.
+
+3. Learned counsel for the petitioner submitted that no recovery was effected from the conscious possession of the petitioner. He argued that disclosure statements made in police custody are inadmissible in view of the Supreme Court judgment in Tofan Singh v. State of Tamil Nadu (2021) 4 SCC 1.
+
+4. It was further submitted that search procedures violated the mandatory requirements of Section 50 of the NDPS Act, and since the recovered quantity is intermediate, the stringent embargo under Section 37 NDPS Act is not attracted.
+
+5. Learned APP for the State opposed the application stating that Call Detail Records show multiple calls between the co-accused and the petitioner.
+
+6. Considering that investigation is complete, charge sheet filed, and no contraband was recovered from the petitioner's conscious possession, the petitioner has satisfied the parameters for bail under Section 483 BNSS.
+
+7. Application is allowed. Petitioner admitted to bail on furnishing a personal bond of Rs. 1,00,000/- with two sureties.
+
+Anoop Kumar Mendiratta, J."""
+
 if __name__ == "__main__":
     create_pdf("01_Cybercrime_Bail_Vikram_Dev.pdf", "IN THE HIGH COURT OF JUDICATURE AT BOMBAY", DOC_1_TEXT)
     create_pdf("02_Commercial_Arbitration_Apex_Infra.pdf", "IN THE HIGH COURT OF DELHI AT NEW DELHI", DOC_2_TEXT)
     create_pdf("03_Constitutional_Writ_Ananya_Sharma.pdf", "IN THE SUPREME COURT OF INDIA", DOC_3_TEXT)
+    create_pdf("04_Civil_Property_Specific_Performance.pdf", "IN THE SUPREME COURT OF INDIA", DOC_4_TEXT)
+    create_pdf("05_Criminal_Narcotics_Bail_NDPS.pdf", "IN THE HIGH COURT OF DELHI AT NEW DELHI", DOC_5_TEXT)
     print("All test PDF files generated in", TEST_DIR)

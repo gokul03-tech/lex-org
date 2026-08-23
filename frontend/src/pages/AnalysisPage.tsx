@@ -291,7 +291,7 @@ export default function AnalysisPage() {
   }));
 
   return (
-    <div className="container mx-auto p-6 lg:p-10 space-y-8 text-left max-w-7xl pb-48">
+    <div className="container mx-auto p-6 lg:p-10 space-y-8 text-left max-w-7xl pb-16">
       {/* Claude-Style Chat Drawer */}
       <ChatDrawer
         isOpen={chatOpen}
@@ -576,292 +576,322 @@ export default function AnalysisPage() {
             <VerticalTimeline items={timelineItems} />
           </div>
 
-          {/* 5 MODULE TABS NAVIGATION */}
-          <div className="space-y-6">
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-slate-200/80">
-              {dockItems.map((tab) => {
-                const Icon = tab.icon;
-                const isActive = activeTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id as any)}
-                    className={`flex items-center gap-2.5 rounded-2xl px-4 py-2.5 text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                      isActive
-                        ? 'bg-slate-900 text-white shadow-xs'
-                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Icon className="h-4 w-4" />
-                    <span>{tab.label}</span>
-                    {tab.count !== undefined && tab.count > 0 && (
-                      <span className={`rounded-full px-1.5 py-0.2 font-mono text-[10px] ${
-                        isActive ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600'
-                      }`}>
-                        {tab.count}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* TAB 1: ADVISORY SUMMARY & LEGAL ISSUES */}
-            {activeTab === 'summary' && (
-              <div className="space-y-6 text-left">
-                {/* Executive Summary Card */}
-                <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="h-4.5 w-4.5 text-sky-600" />
-                    <h3 className="font-serif text-base font-bold text-slate-900">
-                      Grounded Executive Advisory Summary
-                    </h3>
-                  </div>
-                  <p className="text-xs text-slate-700 leading-relaxed font-sans">
-                    {analysisData.summary ||
-                      'The applicant is seeking regular bail under Section 482 BNSS in connection with financial cyber transactions. Analysis confirms charge-sheet has been submitted, investigation is concluded, and electronic CDR logs lack Section 63 BSA statutory certification.'}
-                  </p>
-                </div>
-
-                {/* Legal Issues Cards */}
-                <div className="space-y-3">
-                  <h4 className="font-serif text-sm font-bold text-slate-900 flex items-center gap-2">
-                    <Scale className="h-4 w-4 text-sky-600" />
-                    Formulated Legal Issues & Determinations
-                  </h4>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {(analysisData.legal_issues || []).map((issue: any, idx: number) => (
-                      <div
-                        key={idx}
-                        className="rounded-3xl border border-slate-200 bg-white p-5 shadow-xs space-y-2.5 hover:shadow-md transition"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-mono text-[10px] font-bold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-md border border-sky-100">
-                            ISSUE #{idx + 1}
-                          </span>
-                          <span className="font-mono text-[9px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
-                            DOCUMENT FACT
-                          </span>
-                        </div>
-                        <p className="font-serif text-xs font-bold text-slate-900 leading-snug">
-                          {typeof issue === 'string' ? issue : issue.text || issue.issue}
-                        </p>
-                        {issue.evidence && (
-                          <p className="font-mono text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                            Evidence: {issue.evidence}
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 2: STATUTES, ARTICLES & PRECEDENTS */}
-            {activeTab === 'statutes' && (
-              <div className="space-y-6 text-left">
-                {/* Acts & Sections Grid */}
-                <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
-                  <h3 className="font-serif text-base font-bold text-slate-900 flex items-center gap-2">
-                    <BookOpen className="h-4.5 w-4.5 text-sky-600" />
-                    Applicable Statutory Provisions (BNS / BNSS / BSA)
-                  </h3>
-
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {(analysisData.sections || []).map((sec: any, idx: number) => (
-                      <div
-                        key={idx}
-                        className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 space-y-1.5 hover:bg-white hover:shadow-xs transition"
-                      >
-                        <div className="flex items-center justify-between">
-                          <Badge variant="statute" size="sm">
-                            {typeof sec === 'string' ? sec : sec.section || sec.act}
-                          </Badge>
-                          <span className="font-mono text-[10px] text-emerald-700 font-bold">Operative</span>
-                        </div>
-                        <p className="text-[11px] text-slate-600 font-sans">
-                          {sec.relevance || 'Statutory power invoked in active petition proceedings.'}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Precedents Network */}
-                <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
-                  <h3 className="font-serif text-base font-bold text-slate-900 flex items-center gap-2">
-                    <Sparkles className="h-4.5 w-4.5 text-purple-600" />
-                    Supreme Court Precedent Citations
-                  </h3>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {(analysisData.precedents || []).map((prec: any, idx: number) => (
-                      <div
-                        key={idx}
-                        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-2 hover:shadow-md transition"
-                      >
-                        <div className="flex items-center justify-between">
-                          <Badge variant="precedent" size="sm">
-                            {prec.case_name || 'Supreme Court of India'}
-                          </Badge>
-                          <span className="font-mono text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
-                            {prec.similarity ? `${Math.round(prec.similarity * 100)}% Match` : '95% Match'}
-                          </span>
-                        </div>
-                        <p className="font-mono text-[11px] text-slate-500 font-semibold">
-                          {prec.citation || '(2011) 1 SCC 694'}
-                        </p>
-                        <p className="text-xs text-slate-600 leading-relaxed font-sans">
-                          {prec.summary || prec.rule || 'Established that pre-trial detention cannot be punitive when trial is likely to be prolonged.'}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 3: EVIDENCE & SUBMISSIONS MATRIX */}
-            {activeTab === 'arguments' && (
-              <div className="space-y-6 text-left">
-                {/* Evidence Reliability Matrix */}
-                <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
-                  <h3 className="font-serif text-base font-bold text-slate-900 flex items-center gap-2">
-                    <ShieldCheck className="h-4.5 w-4.5 text-emerald-600" />
-                    Evidence Integrity & S.63 BSA Compliance Matrix
-                  </h3>
-
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {(analysisData.evidence || []).map((ev: any, idx: number) => (
-                      <div
-                        key={idx}
-                        className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 space-y-2"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-serif text-xs font-bold text-slate-900">
-                            {ev.label || `Evidentiary Record #${idx + 1}`}
-                          </span>
-                          <span
-                            className={`font-mono text-[10px] font-bold px-2 py-0.5 rounded-md border ${
-                              ev.reliability === 'HIGH'
-                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                : 'bg-amber-50 text-amber-800 border-amber-200'
-                            }`}
-                          >
-                            {ev.reliability || 'HIGH RELIABILITY'}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-600 leading-relaxed font-sans">
-                          {ev.detail || ev.description || 'Record verified against charge sheet exhibits.'}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Prosecution vs Defense Submissions */}
-                <div className="grid gap-6 md:grid-cols-2">
-                  <div className="rounded-3xl border border-rose-200 bg-rose-50/30 p-6 shadow-xs space-y-3">
-                    <h4 className="font-serif text-sm font-bold text-rose-900 flex items-center gap-2">
-                      <Gavel className="h-4 w-4 text-rose-600" />
-                      State / Prosecution Case
-                    </h4>
-                    <p className="text-xs text-slate-700 leading-relaxed font-sans">
-                      {analysisData.arguments?.prosecution ||
-                        'Alleges fraudulent transaction transfers into bank accounts with potential flight risk and organized syndicate operations.'}
-                    </p>
-                  </div>
-
-                  <div className="rounded-3xl border border-emerald-200 bg-emerald-50/30 p-6 shadow-xs space-y-3">
-                    <h4 className="font-serif text-sm font-bold text-emerald-900 flex items-center gap-2">
-                      <Shield className="h-4 w-4 text-emerald-600" />
-                      Applicant / Defense Submissions
-                    </h4>
-                    <p className="text-xs text-slate-700 leading-relaxed font-sans">
-                      {analysisData.arguments?.defense ||
-                        'Investigation is complete, charge sheet filed on 05-03-2024, no custodial interrogation required, and lack of Section 63 BSA certificate for electronic call data.'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 4: INTERACTIVE KNOWLEDGE GRAPH */}
-            {activeTab === 'graph' && (
-              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs space-y-4 text-left">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                  <div className="flex items-center gap-2">
-                    <Network className="h-4.5 w-4.5 text-sky-600" />
-                    <h3 className="font-serif text-base font-bold text-slate-900">
-                      Interactive FalkorDB Knowledge Graph Explorer
-                    </h3>
-                  </div>
-                  <span className="font-mono text-xs text-slate-500">
-                    Cypher Traversal Active
+          {/* 5 MODULES WORKSPACE WITH VERTICAL NAVIGATION SIDEBAR */}
+          <div className="grid gap-6 lg:grid-cols-12 items-start pt-2">
+            {/* LEFT: VERTICAL NAVIGATION RAIL (3 cols) */}
+            <div className="lg:col-span-3 sticky top-20 space-y-4">
+              <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm space-y-2 text-left">
+                <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between">
+                  <span className="font-mono text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                    Workspace Modules
+                  </span>
+                  <span className="font-mono text-[10px] text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full font-semibold border border-sky-100">
+                    5 Views
                   </span>
                 </div>
 
-                <div className="h-[550px] w-full rounded-2xl overflow-hidden border border-slate-200 bg-slate-50/50">
-                  <CaseGraph data={analysisData.kg_data} />
+                <div className="space-y-1.5 pt-1">
+                  {dockItems.map((tab) => {
+                    const Icon = tab.icon;
+                    const isActive = activeTab === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id as any)}
+                        className={`w-full flex items-center justify-between rounded-2xl px-3.5 py-3 text-xs font-semibold transition-all duration-200 cursor-pointer ${
+                          isActive
+                            ? 'bg-sky-50 text-sky-900 border border-sky-200 shadow-xs font-bold'
+                            : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-transparent'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className={`flex h-8 w-8 items-center justify-center rounded-xl transition ${
+                            isActive ? 'bg-sky-600 text-white shadow-xs' : 'bg-slate-100 text-slate-500'
+                          }`}>
+                            <Icon className="h-4 w-4" />
+                          </div>
+                          <span className="font-sans text-xs">{tab.label}</span>
+                        </div>
+                        {tab.count !== undefined && tab.count > 0 && (
+                          <span className={`font-mono text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            isActive ? 'bg-sky-200/80 text-sky-950' : 'bg-slate-100 text-slate-500'
+                          }`}>
+                            {tab.count}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="pt-3 border-t border-slate-100 space-y-2">
+                  <button
+                    onClick={() => setChatOpen(true)}
+                    className="w-full flex items-center gap-2.5 rounded-2xl bg-purple-50 hover:bg-purple-100/80 text-purple-900 border border-purple-200 px-3.5 py-3 text-xs font-bold transition shadow-xs cursor-pointer"
+                  >
+                    <MessageSquare className="h-4 w-4 text-purple-600" />
+                    <span>Ask LexOS AI</span>
+                  </button>
+                  <button
+                    onClick={() => handleExport('json')}
+                    className="w-full flex items-center gap-2.5 rounded-2xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 px-3.5 py-2.5 text-xs font-semibold transition cursor-pointer"
+                  >
+                    <Download className="h-3.5 w-3.5 text-slate-500" />
+                    <span>Export JSON Dossier</span>
+                  </button>
                 </div>
               </div>
-            )}
+            </div>
 
-            {/* TAB 5: RISK ASSESSMENT & ACTION PLAN */}
-            {activeTab === 'opinion' && (
-              <div className="space-y-6 text-left">
-                <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
-                  <div className="flex items-center gap-2">
-                    <Brain className="h-4.5 w-4.5 text-indigo-600" />
-                    <h3 className="font-serif text-base font-bold text-slate-900">
-                      Comprehensive IRAC Legal Opinion & Strategic Road Map
+            {/* RIGHT: ACTIVE MODULE CONTENT CANVAS (9 cols) */}
+            <div className="lg:col-span-9 space-y-6">
+              {/* TAB 1: ADVISORY SUMMARY & LEGAL ISSUES */}
+              {activeTab === 'summary' && (
+                <div className="space-y-6 text-left">
+                  {/* Executive Summary Card */}
+                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-4.5 w-4.5 text-sky-600" />
+                      <h3 className="font-serif text-base font-bold text-slate-900">
+                        Grounded Executive Advisory Summary
+                      </h3>
+                    </div>
+                    <p className="text-xs text-slate-700 leading-relaxed font-sans">
+                      {analysisData.summary ||
+                        'The applicant is seeking regular bail under Section 482 BNSS in connection with financial cyber transactions. Analysis confirms charge-sheet has been submitted, investigation is concluded, and electronic CDR logs lack Section 63 BSA statutory certification.'}
+                    </p>
+                  </div>
+
+                  {/* Legal Issues Cards */}
+                  <div className="space-y-3">
+                    <h4 className="font-serif text-sm font-bold text-slate-900 flex items-center gap-2">
+                      <Scale className="h-4 w-4 text-sky-600" />
+                      Formulated Legal Issues & Determinations
+                    </h4>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      {(analysisData.legal_issues || []).map((issue: any, idx: number) => (
+                        <div
+                          key={idx}
+                          className="rounded-3xl border border-slate-200 bg-white p-5 shadow-xs space-y-2.5 hover:shadow-md transition"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-mono text-[10px] font-bold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-md border border-sky-100">
+                              ISSUE #{idx + 1}
+                            </span>
+                            <span className="font-mono text-[9px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                              DOCUMENT FACT
+                            </span>
+                          </div>
+                          <p className="font-serif text-xs font-bold text-slate-900 leading-snug">
+                            {typeof issue === 'string' ? issue : issue.text || issue.issue}
+                          </p>
+                          {issue.evidence && (
+                            <p className="font-mono text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                              Evidence: {issue.evidence}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: STATUTES, ARTICLES & PRECEDENTS */}
+              {activeTab === 'statutes' && (
+                <div className="space-y-6 text-left">
+                  {/* Acts & Sections Grid */}
+                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
+                    <h3 className="font-serif text-base font-bold text-slate-900 flex items-center gap-2">
+                      <BookOpen className="h-4.5 w-4.5 text-sky-600" />
+                      Applicable Statutory Provisions ({analysisData.acts && analysisData.acts.length > 0 ? (Array.isArray(analysisData.acts) ? analysisData.acts.map((a: any) => typeof a === 'string' ? a : a.act || a.name).join(' • ') : analysisData.acts) : 'Statutes & Codes'})
                     </h3>
+
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {(analysisData.sections || []).map((sec: any, idx: number) => (
+                        <div
+                          key={idx}
+                          className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 space-y-1.5 hover:bg-white hover:shadow-xs transition"
+                        >
+                          <div className="flex items-center justify-between">
+                            <Badge variant="statute" size="sm">
+                              {typeof sec === 'string' ? sec : sec.section || sec.act}
+                            </Badge>
+                            <span className="font-mono text-[10px] text-emerald-700 font-bold">Operative</span>
+                          </div>
+                          <p className="text-[11px] text-slate-600 font-sans">
+                            {sec.relevance || 'Statutory power invoked in active petition proceedings.'}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <p className="text-xs text-slate-700 leading-relaxed font-sans">
-                    {analysisData.legal_opinion ||
-                      'Based on the principle laid down in Sanjay Chandra v. CBI and Section 482 BNSS, the applicant has established a prime facie case for regular bail subject to reasonable conditions and passport deposit.'}
-                  </p>
+
+                  {/* Precedents Network */}
+                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
+                    <h3 className="font-serif text-base font-bold text-slate-900 flex items-center gap-2">
+                      <Sparkles className="h-4.5 w-4.5 text-purple-600" />
+                      Supreme Court Precedent Citations
+                    </h3>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      {(analysisData.precedents || []).map((prec: any, idx: number) => (
+                        <div
+                          key={idx}
+                          className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-2 hover:shadow-md transition"
+                        >
+                          <div className="flex items-center justify-between">
+                            <Badge variant="precedent" size="sm">
+                              {prec.case_name || 'Supreme Court of India'}
+                            </Badge>
+                            <span className="font-mono text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                              {prec.similarity ? `${Math.round(prec.similarity * 100)}% Match` : '95% Match'}
+                            </span>
+                          </div>
+                          <p className="font-mono text-[11px] text-slate-500 font-semibold">
+                            {prec.citation || '(2011) 1 SCC 694'}
+                          </p>
+                          <p className="text-xs text-slate-600 leading-relaxed font-sans">
+                            {prec.summary || prec.rule || 'Established that pre-trial detention cannot be punitive when trial is likely to be prolonged.'}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
+              )}
 
-                {/* Risk & Gaps Grid */}
-                <div className="grid gap-4 md:grid-cols-3">
-                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-5 space-y-2">
-                    <h4 className="font-serif text-xs font-bold text-emerald-900">Key Strengths</h4>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      Investigation concluded, charge-sheet submitted, electronic certificate defect under Section 63 BSA.
-                    </p>
+              {/* TAB 3: EVIDENCE & SUBMISSIONS MATRIX */}
+              {activeTab === 'arguments' && (
+                <div className="space-y-6 text-left">
+                  {/* Evidence Reliability Matrix */}
+                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
+                    <h3 className="font-serif text-base font-bold text-slate-900 flex items-center gap-2">
+                      <ShieldCheck className="h-4.5 w-4.5 text-emerald-600" />
+                      Evidence Integrity & Reliability Matrix
+                    </h3>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {(analysisData.evidence || []).map((ev: any, idx: number) => (
+                        <div
+                          key={idx}
+                          className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 space-y-2"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-serif text-xs font-bold text-slate-900">
+                              {ev.label || `Evidentiary Record #${idx + 1}`}
+                            </span>
+                            <span
+                              className={`font-mono text-[10px] font-bold px-2 py-0.5 rounded-md border ${
+                                ev.reliability === 'HIGH'
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  : 'bg-amber-50 text-amber-800 border-amber-200'
+                              }`}
+                            >
+                              {ev.reliability || 'HIGH RELIABILITY'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-600 leading-relaxed font-sans">
+                            {ev.detail || ev.description || 'Record verified against charge sheet exhibits.'}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
-                  <div className="rounded-2xl border border-amber-200 bg-amber-50/40 p-5 space-y-2">
-                    <h4 className="font-serif text-xs font-bold text-amber-900">Potential Gaps</h4>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      State may argue multi-jurisdictional financial trails; advocate must emphasize fixed local roots.
-                    </p>
-                  </div>
+                  {/* Prosecution vs Defense Submissions */}
+                  <div className="grid gap-6 md:grid-cols-2">
+                    <div className="rounded-3xl border border-rose-200 bg-rose-50/30 p-6 shadow-xs space-y-3">
+                      <h4 className="font-serif text-sm font-bold text-rose-900 flex items-center gap-2">
+                        <Gavel className="h-4 w-4 text-rose-600" />
+                        {analysisData.arguments?.prosecution_label || 'State / Prosecution Case'}
+                      </h4>
+                      <p className="text-xs text-slate-700 leading-relaxed font-sans">
+                        {analysisData.arguments?.prosecution ||
+                          'Alleges fraudulent transaction transfers into bank accounts with potential flight risk and organized syndicate operations.'}
+                      </p>
+                    </div>
 
-                  <div className="rounded-2xl border border-sky-200 bg-sky-50/40 p-5 space-y-2">
-                    <h4 className="font-serif text-xs font-bold text-sky-900">Action Plan</h4>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      File Section 482 BNSS bail application citing Supreme Court bail jurisprudence and willingness to cooperate.
-                    </p>
+                    <div className="rounded-3xl border border-emerald-200 bg-emerald-50/30 p-6 shadow-xs space-y-3">
+                      <h4 className="font-serif text-sm font-bold text-emerald-900 flex items-center gap-2">
+                        <Shield className="h-4 w-4 text-emerald-600" />
+                        {analysisData.arguments?.defense_label || 'Applicant / Defense Submissions'}
+                      </h4>
+                      <p className="text-xs text-slate-700 leading-relaxed font-sans">
+                        {analysisData.arguments?.defense ||
+                          'Investigation is complete, charge sheet filed on 05-03-2024, no custodial interrogation required, and lack of Section 63 BSA certificate for electronic call data.'}
+                      </p>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
+
+              {/* TAB 4: INTERACTIVE KNOWLEDGE GRAPH */}
+              {activeTab === 'graph' && (
+                <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs space-y-4 text-left">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <Network className="h-4.5 w-4.5 text-sky-600" />
+                      <h3 className="font-serif text-base font-bold text-slate-900">
+                        Interactive FalkorDB Knowledge Graph Explorer
+                      </h3>
+                    </div>
+                    <span className="font-mono text-xs text-slate-500">
+                      Cypher Traversal Active
+                    </span>
+                  </div>
+
+                  <div className="h-[550px] w-full rounded-2xl overflow-hidden border border-slate-200 bg-slate-50/50">
+                    <CaseGraph data={analysisData.kg_data} />
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 5: RISK ASSESSMENT & ACTION PLAN */}
+              {activeTab === 'opinion' && (
+                <div className="space-y-6 text-left">
+                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Brain className="h-4.5 w-4.5 text-indigo-600" />
+                      <h3 className="font-serif text-base font-bold text-slate-900">
+                        Comprehensive IRAC Legal Opinion & Strategic Road Map
+                      </h3>
+                    </div>
+                    <p className="text-xs text-slate-700 leading-relaxed font-sans">
+                      {analysisData.legal_opinion ||
+                        'Based on the principle laid down in Sanjay Chandra v. CBI and Section 482 BNSS, the applicant has established a prime facie case for regular bail subject to reasonable conditions and passport deposit.'}
+                    </p>
+                  </div>
+
+                  {/* Risk & Gaps Grid */}
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-5 space-y-2">
+                      <h4 className="font-serif text-xs font-bold text-emerald-900">Key Strengths</h4>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        Investigation concluded, charge-sheet submitted, electronic certificate defect under Section 63 BSA.
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50/40 p-5 space-y-2">
+                      <h4 className="font-serif text-xs font-bold text-amber-900">Potential Gaps</h4>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        State may argue multi-jurisdictional financial trails; advocate must emphasize fixed local roots.
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-sky-200 bg-sky-50/40 p-5 space-y-2">
+                      <h4 className="font-serif text-xs font-bold text-sky-900">Action Plan</h4>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        File Section 482 BNSS bail application citing Supreme Court bail jurisprudence and willingness to cooperate.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      )}
-
-      {/* FLOATING MAGNETIC DOCK */}
-      {analysisData && (
-        <Dock
-          items={dockItems}
-          activeId={activeTab}
-          onSelect={(id) => setActiveTab(id as any)}
-          onOpenChat={() => setChatOpen(true)}
-        />
       )}
     </div>
   );

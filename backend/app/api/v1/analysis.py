@@ -639,60 +639,97 @@ async def get_analysis(
                 
     doc_info = dict(analysis.procedural_status or {})
     if doc and (doc.parsed_text or doc.raw_text):
-        from app.agents.metadata_extractor import extract_metadata
-        live_meta = extract_metadata(doc.parsed_text or doc.raw_text or "")
-        
-        def _get_live(k: str) -> Any:
-            v = live_meta.get(k)
-            if isinstance(v, dict):
-                return v.get("value")
-            return v
+        from app.agents.presentation_universal import build_analysis
+        doc_raw_text = doc.parsed_text or doc.raw_text or ""
+        try:
+            live_analysis = build_analysis(doc_raw_text)
+            live_meta = live_analysis.get('metadata', {})
 
-        # Ensure parties, court, dates, citations, judges are populated
-        p_live = _get_live("petitioner")
-        if doc_info.get("petitioner") in [None, "", "Not found in document"] and p_live:
-            doc_info["petitioner"] = str(p_live)
+            if live_analysis.get('category'):
+                doc_info["category"] = live_analysis['category']
+            if live_analysis.get('procedural_stage'):
+                doc_info["procedural_stage"] = live_analysis['procedural_stage']
+                doc_info["case_type"] = live_analysis['procedural_stage']
 
-        r_live = _get_live("respondent")
-        if doc_info.get("respondent") in [None, "", "Not found in document"] and r_live:
-            doc_info["respondent"] = str(r_live)
+            # Populate metadata fields directly
+            for k, v in live_meta.items():
+                if isinstance(v, dict) and v.get('value'):
+                    doc_info[k] = v['value']
 
-        c_live = _get_live("court")
-        if doc_info.get("court") in [None, "", "Not found in document"] and c_live:
-            doc_info["court"] = str(c_live)
+            # Dynamic timeline from document facts
+            if live_analysis.get('timeline'):
+                analysis.strategy_options = live_analysis['timeline']
 
-        d_live = _get_live("decision_date")
-        if doc_info.get("decision_date") in [None, "", "Not found in document"] and d_live:
-            doc_info["decision_date"] = str(d_live)
+            # Dynamic sections
+            if live_analysis.get('sections'):
+                analysis.applicable_sections = [
+                    {"section": s["display"], "act": s["act"], "num": s["num"], "relevance": "Operative statutory provision."}
+                    for s in live_analysis['sections']
+                ]
+                analysis.applicable_acts = list({s["act"] for s in live_analysis['sections']})
 
-        j_live = _get_live("presiding_judges")
-        if doc_info.get("judges") in [None, "", "Not found in document"] and j_live:
-            doc_info["judges"] = ", ".join(str(j) for j in j_live) if isinstance(j_live, list) else str(j_live)
+            # Dynamic precedents
+            if live_analysis.get('precedents'):
+                analysis.precedents = live_analysis['precedents']
 
-        cit_live = _get_live("citation_numbers")
-        if doc_info.get("citation") in [None, "", "Not found in document"] and cit_live:
-            doc_info["citation"] = ", ".join(str(c) for c in cit_live) if isinstance(cit_live, list) else str(cit_live)
+            # Dynamic evidence
+            if live_analysis.get('evidence'):
+                analysis.contradictions = live_analysis['evidence']
 
-        cm_live = _get_live("court_matter")
-        if doc_info.get("case_number") in [None, "", "Not found in document"] and cm_live:
-            doc_info["case_number"] = str(cm_live)
+            # Dynamic arguments with counsel attribution
+            labels = live_analysis.get('labels', ('Prosecution Submissions', 'Defense Submissions'))
+            sub_a = "\n\n".join(live_analysis.get('submissions', {}).get('a', []))
+            sub_b = "\n\n".join(live_analysis.get('submissions', {}).get('b', []))
+            arguments = {
+                "prosecution": sub_b or arguments.get("prosecution", ""),
+                "defense": sub_a or arguments.get("defense", ""),
+                "prosecution_label": labels[0],
+                "defense_label": labels[1]
+            }
+
+            # Dynamic KG & Trust score
+            if live_analysis.get('kg'):
+                analysis.explanation_graph = live_analysis['kg']
+            if live_analysis.get('trust_score'):
+                analysis.trust_score = live_analysis['trust_score']
+
+            # Dynamic Opinion / Conclusion
+            if live_analysis.get('risk', {}).get('conclusion'):
+                opinion = live_analysis['risk']['conclusion']
+        except Exception as exc:
+            logger.warning(f"Live build_analysis error: {exc}")
 
         if not doc_info.get("word_count") or doc_info.get("word_count") == 4882:
-            doc_info["word_count"] = live_meta.get("word_count", len((doc.parsed_text or "").split()))
+            doc_info["word_count"] = len(doc_raw_text.split())
+
+    def _format_items(items: Any, key: str = "section") -> str:
+        if not items:
+            return ""
+        result = []
+        for item in items:
+            if isinstance(item, dict):
+                val = item.get(key) or item.get("name") or item.get("act") or str(item)
+                result.append(str(val))
+            else:
+                result.append(str(item))
+        return ", ".join(result)
+
+    acts_val = _format_items(analysis.applicable_acts, key="act") or "BNS, BNSS, BSA"
+    sections_val = _format_items(analysis.applicable_sections, key="section") or "S.482 BNSS, S.63 BSA"
 
     # Build structured metadata map with status
     metadata = {
         "court": {"value": doc_info.get("court") or "High Court of Judicature", "status": "extracted" if doc_info.get("court") else "inferred"},
-        "judges": {"value": doc_info.get("judges") or "Hon'ble Bench", "status": "extracted" if doc_info.get("judges") else "inferred"},
+        "judges": {"value": doc_info.get("judges") or doc_info.get("presiding_judges") or "Hon'ble Bench", "status": "extracted" if doc_info.get("judges") or doc_info.get("presiding_judges") else "inferred"},
         "decision_date": {"value": doc_info.get("decision_date") or doc_info.get("date") or "14 March 2024", "status": "extracted" if doc_info.get("decision_date") or doc_info.get("date") else "inferred"},
         "petitioner": {"value": doc_info.get("petitioner") or "Applicant / Counsel", "status": "extracted" if doc_info.get("petitioner") else "inferred"},
         "respondent": {"value": doc_info.get("respondent") or "State of Maharashtra", "status": "extracted" if doc_info.get("respondent") else "inferred"},
         "case_number": {"value": doc_info.get("case_number") or "Bail Application / 2024", "status": "extracted" if doc_info.get("case_number") else "inferred"},
         "citations": {"value": doc_info.get("citation") or (analysis.precedents[0].get("citation") if analysis.precedents else "(2024) Cri LJ"), "status": "extracted"},
         "word_count": {"value": f"{doc_info.get('word_count', 3850)} Words", "status": "extracted"},
-        "acts": {"value": ", ".join(analysis.applicable_acts) if analysis.applicable_acts else "BNS, BNSS, BSA", "status": "extracted"},
-        "sections": {"value": ", ".join(analysis.applicable_sections) if analysis.applicable_sections else "S.482 BNSS, S.63 BSA", "status": "extracted"},
-        "procedural_stage": {"value": doc_info.get("case_type") or "Regular Bail Petition", "status": "extracted"},
+        "acts": {"value": acts_val, "status": "extracted"},
+        "sections": {"value": sections_val, "status": "extracted"},
+        "procedural_stage": {"value": doc_info.get("procedural_stage") or doc_info.get("case_type") or "Regular Bail Petition", "status": "extracted"},
         "ingestion_engine": {"value": "FalkorDB + Qdrant (BGE-M3)", "status": "extracted"}
     }
 
