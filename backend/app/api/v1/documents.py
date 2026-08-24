@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 import shutil
+import uuid
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -41,8 +42,12 @@ async def upload_document(
     # Prepare file storage folder
     upload_dir = Path("./data/uploads")
     upload_dir.mkdir(parents=True, exist_ok=True)
-    
-    file_path = upload_dir / f"{case_id}_{file.filename}"
+
+    # Sanitize filename: strip any directory components to prevent path traversal,
+    # then store under a unique server-generated name to avoid collisions.
+    safe_filename = Path(file.filename or "unnamed").name
+    stored_name = f"{uuid.uuid4().hex}_{safe_filename}"
+    file_path = upload_dir / stored_name
     
     # Save the file to disk
     try:

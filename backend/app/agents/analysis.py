@@ -78,6 +78,22 @@ async def case_understanding_agent(state: AgentState) -> AgentState:
 
             # Generate embeddings and upsert to Qdrant
             if doc_chunks and qdrant.is_available():
+                # Remove any previously indexed chunks for this exact document
+                # (e.g. from a re-upload) so vectors never duplicate.
+                try:
+                    from qdrant_client.models import Filter, FieldCondition, MatchAny
+                    qdrant.client.delete(
+                        collection_name=settings.QDRANT_COLLECTION_DOCS,
+                        points_selector=Filter(
+                            must=[
+                                FieldCondition(key="doc_type", match=MatchAny(any=["uploaded_document"])),
+                                FieldCondition(key="source", match=MatchAny(any=[filename])),
+                            ]
+                        ),
+                    )
+                except Exception as del_exc:
+                    logger.warning(f"Could not clear old vectors for '{filename}': {del_exc}")
+
                 doc_chunks = embedder.embed_chunks(doc_chunks)
                 qdrant_chunks = []
                 for c in doc_chunks:
@@ -967,7 +983,6 @@ async def explainability_agent(state: AgentState) -> AgentState:
     try:
         from app.llm.qwen import get_qwen_provider, QWEN_SYSTEM_PROMPT
 
-        reasoning = state.get("legal_reasoning", "")
         sections = state.get("applicable_sections", [])
         evidence = state.get("evidence_assessment", {})
         trust = state.get("trust_score", 0.5)
@@ -1062,7 +1077,6 @@ async def report_generation_agent(state: AgentState) -> AgentState:
         confidences = state.get("agent_confidence", {})
         explanation = state.get("explanation_graph", {})
         kg = state.get("kg_data", {})
-        reasoning = state.get("legal_reasoning", "")
         documents = state.get("documents", [])
 
         # ── Grounding / Source Validation with analysis_fixes_v2 ──

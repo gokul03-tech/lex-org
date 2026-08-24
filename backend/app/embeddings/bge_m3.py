@@ -7,7 +7,7 @@ We use the dense embeddings for Qdrant vector search.
 
 from __future__ import annotations
 
-from typing import Any
+from pathlib import Path
 
 import numpy as np
 from loguru import logger
@@ -33,6 +33,22 @@ class BGEM3Embedder:
         self._model = None
         self._loaded = False
 
+    def _resolve_model_path(self) -> str:
+        """Resolve the model name to a local path when available.
+
+        Prefers local weights under settings.MODELS_DIR (e.g. models/bge-m3)
+        to avoid HF Hub downloads; falls back to the raw name (hub ID).
+        """
+        candidate = Path(self.model_name)
+        if candidate.exists():
+            return str(candidate)
+
+        local = Path(settings.MODELS_DIR) / Path(self.model_name).name
+        if local.exists() and (local / "config.json").exists():
+            logger.info(f"Using locally cached model weights: {local}")
+            return str(local)
+        return self.model_name
+
     def load(self) -> bool:
         """Attempt to load the BGE-M3 model.
 
@@ -44,8 +60,17 @@ class BGEM3Embedder:
 
         try:
             from sentence_transformers import SentenceTransformer
-            self._model = SentenceTransformer(self.model_name, device=self.device)
-            actual_dim = self._model.get_sentence_embedding_dimension()
+            resolved_path = self._resolve_model_path()
+            logger.info(f"Loading BGE-M3 from: {resolved_path}")
+            self._model = SentenceTransformer(resolved_path, device=self.device)
+
+            # `get_embedding_dimension` is the current API name; fall back for
+            # older sentence-transformers versions that only expose the old name.
+            dim_fn = getattr(self._model, "get_embedding_dimension", None)
+            actual_dim = (
+                dim_fn() if callable(dim_fn)
+                else self._model.get_sentence_embedding_dimension()
+            )
             self.vector_size = actual_dim
             self._loaded = True
             logger.info(f"BGE-M3 loaded: dim={actual_dim}, device={self.device}")

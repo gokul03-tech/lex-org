@@ -167,13 +167,19 @@ class QdrantManager:
                 continue
 
             point_id = str(uuid.uuid4())
+            metadata = chunk.get("metadata", {}) or {}
             payload = {
                 "text": chunk.get("text", ""),
-                "chunk_index": chunk.get("chunk_index", 0),
-                "source": chunk.get("metadata", {}).get("source", ""),
-                "doc_type": chunk.get("metadata", {}).get("doc_type", ""),
-                "act": chunk.get("metadata", {}).get("act", ""),
+                "chunk_index": chunk.get("chunk_index", metadata.get("chunk_index", 0)),
+                "source": metadata.get("source", ""),
+                "doc_type": metadata.get("doc_type", ""),
+                "act": metadata.get("act", ""),
             }
+            # Preserve provenance fields needed for case-scoped retrieval
+            # and page-level citations; unknown extras pass through too.
+            for key, value in metadata.items():
+                if key not in payload:
+                    payload[key] = value
 
             points.append(
                 self.models.PointStruct(

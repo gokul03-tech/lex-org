@@ -65,7 +65,12 @@ export default function AnalysisPage() {
     setExpandedSections((prev) => ({ ...prev, [sec]: !prev[sec] }));
   };
 
+  // Guard against React StrictMode double-mount firing the fetch twice in dev
+  const hasFetchedRef = useRef(false);
+
   useEffect(() => {
+    if (!caseId || hasFetchedRef.current) return;
+    hasFetchedRef.current = true;
     fetchCaseInfo();
   }, [caseId]);
 
@@ -90,9 +95,18 @@ export default function AnalysisPage() {
     }
   };
 
+  // Refs to prevent double-fire: uploads while one is in flight, and
+  // overlapping EventSource streams when analysis is re-triggered.
+  const uploadInFlightRef = useRef(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
+    // Reset so selecting the same file again re-triggers onChange
+    event.target.value = '';
     if (!file || !caseId) return;
+    if (uploadInFlightRef.current) return;
+    uploadInFlightRef.current = true;
 
     setUploadingFile(true);
     setUploadProgress(10);
@@ -116,20 +130,26 @@ export default function AnalysisPage() {
       console.error('Upload failed:', err);
       setUploadingFile(false);
       setUploadProgress(null);
+    } finally {
+      uploadInFlightRef.current = false;
     }
   };
 
   const startAnalysisStream = () => {
+    // Close any previous stream before opening a new one
+    eventSourceRef.current?.close();
     setAnalyzing(true);
     setStages(prev => prev.map(s => ({ ...s, status: 'pending', progress: 0 })));
 
     const eventSource = new EventSource(`/api/v1/analysis/case/${caseId}/stream`);
+    eventSourceRef.current = eventSource;
 
     eventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
 
       if (data.stage === 'all_done') {
         eventSource.close();
+        eventSourceRef.current = null;
         setAnalyzing(false);
         fetchCaseInfo();
       } else {
@@ -151,6 +171,7 @@ export default function AnalysisPage() {
     eventSource.onerror = (err) => {
       console.error('SSE Error:', err);
       eventSource.close();
+      eventSourceRef.current = null;
       setAnalyzing(false);
       fetchCaseInfo();
     };
@@ -230,7 +251,7 @@ export default function AnalysisPage() {
       return { value: String(val), status: 'extracted' };
     }
 
-    return { value: fallbackLabel, status: 'not_found' };
+    return { value: 'Unstated in Record', status: 'not_found' };
   };
 
   const cleanTitle = (raw: string) => {
@@ -802,25 +823,25 @@ export default function AnalysisPage() {
 
                   {/* Prosecution vs Defense Submissions */}
                   <div className="grid gap-6 md:grid-cols-2">
-                    <div className="rounded-3xl border border-rose-200 bg-rose-50/30 p-6 shadow-xs space-y-3">
-                      <h4 className="font-serif text-sm font-bold text-rose-900 flex items-center gap-2">
-                        <Gavel className="h-4 w-4 text-rose-600" />
-                        {analysisData.arguments?.prosecution_label || 'State / Prosecution Case'}
-                      </h4>
-                      <p className="text-xs text-slate-700 leading-relaxed font-sans">
-                        {analysisData.arguments?.prosecution ||
-                          'Alleges fraudulent transaction transfers into bank accounts with potential flight risk and organized syndicate operations.'}
-                      </p>
-                    </div>
-
                     <div className="rounded-3xl border border-emerald-200 bg-emerald-50/30 p-6 shadow-xs space-y-3">
                       <h4 className="font-serif text-sm font-bold text-emerald-900 flex items-center gap-2">
                         <Shield className="h-4 w-4 text-emerald-600" />
-                        {analysisData.arguments?.defense_label || 'Applicant / Defense Submissions'}
+                        {analysisData.arguments?.defense_label || 'Petitioner / Applicant Submissions'}
                       </h4>
                       <p className="text-xs text-slate-700 leading-relaxed font-sans">
                         {analysisData.arguments?.defense ||
-                          'Investigation is complete, charge sheet filed on 05-03-2024, no custodial interrogation required, and lack of Section 63 BSA certificate for electronic call data.'}
+                          'Petitioner / Appellant contentions and statutory provisions recorded in judicial file.'}
+                      </p>
+                    </div>
+
+                    <div className="rounded-3xl border border-rose-200 bg-rose-50/30 p-6 shadow-xs space-y-3">
+                      <h4 className="font-serif text-sm font-bold text-rose-900 flex items-center gap-2">
+                        <Gavel className="h-4 w-4 text-rose-600" />
+                        {analysisData.arguments?.prosecution_label || 'Respondent / State Submissions'}
+                      </h4>
+                      <p className="text-xs text-slate-700 leading-relaxed font-sans">
+                        {analysisData.arguments?.prosecution ||
+                          'Respondent / State contentions and rebuttals recorded in judicial file.'}
                       </p>
                     </div>
                   </div>
@@ -860,7 +881,7 @@ export default function AnalysisPage() {
                     </div>
                     <p className="text-xs text-slate-700 leading-relaxed font-sans">
                       {analysisData.legal_opinion ||
-                        'Based on the principle laid down in Sanjay Chandra v. CBI and Section 482 BNSS, the applicant has established a prime facie case for regular bail subject to reasonable conditions and passport deposit.'}
+                        'Relief granted in terms of the operative directions of the judgment.'}
                     </p>
                   </div>
 
@@ -868,22 +889,28 @@ export default function AnalysisPage() {
                   <div className="grid gap-4 md:grid-cols-3">
                     <div className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-5 space-y-2">
                       <h4 className="font-serif text-xs font-bold text-emerald-900">Key Strengths</h4>
-                      <p className="text-xs text-slate-600 leading-relaxed">
-                        Investigation concluded, charge-sheet submitted, electronic certificate defect under Section 63 BSA.
+                      <p className="text-xs text-slate-600 leading-relaxed font-sans">
+                        {Array.isArray(analysisData.risk_analysis?.strengths) && analysisData.risk_analysis.strengths.length > 0
+                          ? analysisData.risk_analysis.strengths.join(' ')
+                          : (analysisData.risk_analysis?.strengths || 'Established prima facie grounds supported by documentary records and statutory compliance.')}
                       </p>
                     </div>
 
                     <div className="rounded-2xl border border-amber-200 bg-amber-50/40 p-5 space-y-2">
                       <h4 className="font-serif text-xs font-bold text-amber-900">Potential Gaps</h4>
-                      <p className="text-xs text-slate-600 leading-relaxed">
-                        State may argue multi-jurisdictional financial trails; advocate must emphasize fixed local roots.
+                      <p className="text-xs text-slate-600 leading-relaxed font-sans">
+                        {Array.isArray(analysisData.risk_analysis?.gaps) && analysisData.risk_analysis.gaps.length > 0
+                          ? analysisData.risk_analysis.gaps.join(' ')
+                          : (analysisData.risk_analysis?.gaps || 'Opposing counsel raises procedural and statutory contentions; ensure verified rebuttals.')}
                       </p>
                     </div>
 
                     <div className="rounded-2xl border border-sky-200 bg-sky-50/40 p-5 space-y-2">
                       <h4 className="font-serif text-xs font-bold text-sky-900">Action Plan</h4>
-                      <p className="text-xs text-slate-600 leading-relaxed">
-                        File Section 482 BNSS bail application citing Supreme Court bail jurisprudence and willingness to cooperate.
+                      <p className="text-xs text-slate-600 leading-relaxed font-sans">
+                        {Array.isArray(analysisData.risk_analysis?.action_plan) && analysisData.risk_analysis.action_plan.length > 0
+                          ? analysisData.risk_analysis.action_plan.join(' ')
+                          : (analysisData.risk_analysis?.action_plan || 'Pursue relief in terms of the operative directions of the judgment.')}
                       </p>
                     </div>
                   </div>

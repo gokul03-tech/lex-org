@@ -5,6 +5,8 @@ All configuration values are loaded from environment variables with sensible def
 
 from __future__ import annotations
 
+import secrets as _secrets
+import warnings
 from pathlib import Path
 from typing import Literal
 
@@ -26,9 +28,21 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     APP_ENV: Literal["development", "staging", "production"] = "development"
     DEBUG: bool = True
-    SECRET_KEY: str = "change-me-in-production-use-a-secure-random-key"
+    SECRET_KEY: str = ""  # Defaults to a random ephemeral key via validator below.
     API_PREFIX: str = "/api/v1"
     PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent.parent
+
+    def model_post_init(self, __context) -> None:
+        """Generate an ephemeral SECRET_KEY when none is configured."""
+        if not self.SECRET_KEY or "change-me" in self.SECRET_KEY:
+            self.SECRET_KEY = _secrets.token_urlsafe(48)
+            warnings.warn(
+                "SECRET_KEY is not set (or uses the insecure default). "
+                "Generated a random ephemeral key — JWTs will be invalidated on restart. "
+                "Set SECRET_KEY in your .env for production.",
+                UserWarning,
+                stacklevel=1,
+            )
 
     # ── Server ──────────────────────────────────────────────────
     HOST: str = "0.0.0.0"
@@ -85,7 +99,12 @@ class Settings(BaseSettings):
     INDIANKANOON_API_BASE: str = "https://api.indiankanoon.org"
 
     # ── Embedding Model ─────────────────────────────────────────
+    # Local storage for model weights (repo-root/models). Used to avoid
+    # re-downloading models from the Hugging Face Hub on every startup.
+    MODELS_DIR: Path = Path(__file__).resolve().parents[3] / "models"
     EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"
+    # Optional Hugging Face token (authenticates Hub metadata checks).
+    HF_TOKEN: str = ""
     EMBEDDING_DEVICE: str = "cpu"
     EMBEDDING_BATCH_SIZE: int = 32
 

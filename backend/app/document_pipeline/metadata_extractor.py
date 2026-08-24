@@ -325,7 +325,3 @@ class LegalMetadataExtractor:
         if "notice" in t_low:
             return "notice"
         return "judgment"
-
-        scores = {k: sum(1 for kw in v if kw in combined) for k, v in indicators.items()}
-        best = max(scores, key=scores.get)  # type: ignore[arg-type]
-        return best if scores[best] > 0 else "judgment"

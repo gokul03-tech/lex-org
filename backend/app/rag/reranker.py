@@ -7,10 +7,48 @@ significantly improving precision.
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any
 
 from loguru import logger
+
+# Module-level shared CrossEncoder so every RAGPipeline()/reranker instance
+# reuses the same loaded model instead of re-loading weights from disk.
+_shared_models: dict[str, Any] = {}
+_load_lock = threading.Lock()
+_load_failed: set[str] = set()
+
+
+def _get_shared_cross_encoder(model_name: str):
+    """Load (once) and return the shared CrossEncoder for the given model name."""
+    with _load_lock:
+        if model_name in _shared_models:
+            return _shared_models[model_name]
+        if model_name in _load_failed:
+            return None
+        try:
+            from sentence_transformers import CrossEncoder
+            logger.info(f"Loading CrossEncoder model: {model_name}")
+            model = CrossEncoder(model_name)
+            _shared_models[model_name] = model
+            return model
+        except Exception as exc:
+            logger.warning(
+                f"Failed to load CrossEncoder model, falling back to score-based reranking: {exc}"
+            )
+            _load_failed.add(model_name)
+            return None
+
+
+def warmup_reranker(model_name: str | None = None) -> bool:
+    """Pre-load the shared CrossEncoder (call at app startup).
+
+    Returns:
+        True if the model is available for reranking.
+    """
+    resolved = model_name or "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    return _get_shared_cross_encoder(resolved) is not None
 
 
 class CrossEncoderReranker:
@@ -41,15 +79,9 @@ class CrossEncoderReranker:
         return self._model
 
     def _load_model(self) -> None:
-        """Load the cross-encoder model."""
+        """Load the shared cross-encoder model."""
         self._loaded = True
-        try:
-            from sentence_transformers import CrossEncoder
-            logger.info(f"Loading CrossEncoder model: {self.model_name}")
-            self._model = CrossEncoder(self.model_name)
-        except Exception as exc:
-            logger.warning(f"Failed to load CrossEncoder model, falling back to score-based reranking: {exc}")
-            self._model = None
+        self._model = _get_shared_cross_encoder(self.model_name)
 
     def rerank(
         self,
@@ -73,12 +105,13 @@ class CrossEncoderReranker:
         start_time = time.monotonic()
 
         if self.model is not None:
-            return self._cross_encoder_rerank(query, results, top_k)
+            reranked = self._cross_encoder_rerank(query, results, top_k)
         else:
-            return self._score_based_rerank(query, results, top_k)
+            reranked = self._score_based_rerank(query, results, top_k)
 
         duration_ms = (time.monotonic() - start_time) * 1000
         logger.info(f"Reranking complete in {duration_ms:.0f}ms")
+        return reranked
 
     def _cross_encoder_rerank(
         self,

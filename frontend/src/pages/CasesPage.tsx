@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -40,7 +40,14 @@ export default function CasesPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Guard against React StrictMode double-mount firing the fetch twice in dev
+  const hasFetchedRef = useRef(false);
+  // Guard against double-submitting the create-case form
+  const createInFlightRef = useRef(false);
+
   useEffect(() => {
+    if (hasFetchedRef.current) return;
+    hasFetchedRef.current = true;
     fetchCases();
   }, []);
 
@@ -73,6 +80,8 @@ export default function CasesPage() {
   const handleCreateCase = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim() && !selectedFile) return;
+    if (createInFlightRef.current) return;
+    createInFlightRef.current = true;
 
     setSubmitting(true);
     try {
@@ -98,6 +107,7 @@ export default function CasesPage() {
       console.error('Failed to create case:', err);
     } finally {
       setSubmitting(false);
+      createInFlightRef.current = false;
     }
   };
 

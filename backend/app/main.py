@@ -22,6 +22,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: startup and shutdown events."""
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION} | env={settings.APP_ENV}")
 
+    # Propagate the HF token to the process environment before any Hub calls,
+    # so model metadata checks are authenticated (silences rate-limit warnings).
+    import os as _os
+    if settings.HF_TOKEN:
+        _os.environ.setdefault("HF_TOKEN", settings.HF_TOKEN)
+        _os.environ.setdefault("HUGGING_FACE_HUB_TOKEN", settings.HF_TOKEN)
+
     # Startup: initialize connections, warm up caches
     # These are deferred to actual service initialization to avoid import failures
     # when optional dependencies (neo4j, qdrant, etc.) are not installed.
@@ -74,6 +81,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 logger.error("CRITICAL: FalkorDB is unavailable on port 6379! Knowledge Graph features will run in DEGRADED mode.")
         except Exception as f_exc:
             logger.error(f"Startup FalkorDB connectivity check failed: {f_exc}")
+
+        # Warm up ML models (BGE-M3 embedder + CrossEncoder reranker) so the
+        # first analysis request doesn't pay the ~30s cold-start model load.
+        try:
+            import time as _time
+            t0 = _time.monotonic()
+            from app.embeddings.bge_m3 import get_bge_m3
+            if get_bge_m3().load():
+                logger.info(f"BGE-M3 embedder warmed up in {_time.monotonic() - t0:.1f}s")
+            else:
+                logger.warning("BGE-M3 failed to load; embeddings will use deterministic fallback.")
+        except Exception as emb_exc:
+            logger.warning(f"BGE-M3 warmup skipped: {emb_exc}")
+
+        try:
+            import time as _time
+            t0 = _time.monotonic()
+            from app.rag.reranker import warmup_reranker
+            if warmup_reranker():
+                logger.info(f"CrossEncoder reranker warmed up in {_time.monotonic() - t0:.1f}s")
+            else:
+                logger.warning("CrossEncoder unavailable; reranking falls back to score-based mode.")
+        except Exception as rr_exc:
+            logger.warning(f"Reranker warmup skipped: {rr_exc}")
     except Exception as exc:
         logger.error(f"Startup DB error: {exc}")
 

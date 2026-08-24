@@ -89,34 +89,33 @@ def extract_metadata(text: str) -> dict[str, Any]:
 
     # 6) COURT = explicit header beats inference
     court, stat = None, 'not_found'
-    header_court = re.search(r'IN THE ([A-Z ,]*HIGH COURT[A-Z ,]*|SUPREME COURT OF INDIA)', head[:800], re.I)
-    if header_court:
-        c_raw = header_court.group(1).strip()
-        if 'BOMBAY' in c_raw.upper():
-            court, stat = 'Bombay High Court', 'extracted'
-        elif 'DELHI' in c_raw.upper():
-            court, stat = 'Delhi High Court', 'extracted'
-        elif 'SUPREME COURT' in c_raw.upper():
-            court, stat = 'Supreme Court of India', 'extracted'
-        elif 'KARNATAKA' in c_raw.upper() or 'MYSORE' in c_raw.upper():
-            court, stat = 'High Court of Karnataka', 'extracted'
-        else:
-            court, stat = c_raw.title(), 'extracted'
+    for line in lines[:4]:
+        if 'COURT' in line.upper():
+            cu = line.upper()
+            if 'BOMBAY' in cu: court, stat = 'High Court of Judicature at Bombay', 'extracted'
+            elif 'DELHI' in cu: court, stat = 'High Court of Delhi at New Delhi', 'extracted'
+            elif 'SUPREME COURT' in cu: court, stat = 'Supreme Court of India', 'extracted'
+            elif 'MADRAS' in cu: court, stat = 'High Court of Judicature at Madras', 'extracted'
+            elif 'CALCUTTA' in cu: court, stat = 'High Court of Calcutta', 'extracted'
+            elif 'KARNATAKA' in cu: court, stat = 'High Court of Karnataka', 'extracted'
+            elif 'ALLAHABAD' in cu: court, stat = 'High Court of Judicature at Allahabad', 'extracted'
+            else: court, stat = re.sub(r'^IN THE\s+', '', line, flags=re.I).strip().title(), 'extracted'
+            break
 
     if not court:
-        explicit_court = re.search(r'(Supreme\s+Court\s+of\s+India|Bombay\s+High\s+Court|High\s+Court\s+of\s+Bombay|Delhi\s+High\s+Court|High\s+Court\s+of\s+Karnataka|Karnataka\s+High\s+Court|High\s+Court\s+of\s+Mysore|Madras\s+High\s+Court|Calcutta\s+High\s+Court|Allahabad\s+High\s+Court)', head, re.I)
+        explicit_court = re.search(r'(Supreme\s+Court\s+of\s+India|Bombay\s+High\s+Court|High\s+Court\s+of\s+Bombay|Delhi\s+High\s+Court|High\s+Court\s+of\s+Delhi|High\s+Court\s+of\s+Karnataka|Karnataka\s+High\s+Court|High\s+Court\s+of\s+Mysore|Madras\s+High\s+Court|Calcutta\s+High\s+Court|Allahabad\s+High\s+Court)', head, re.I)
         if explicit_court:
             court, stat = explicit_court.group(1).strip(), 'extracted'
         elif any(re.search(r'BOMLR|BomCR|Bom\s?CR', c, re.I) for c in cites):
-            court, stat = 'Bombay High Court', 'inferred'
+            court, stat = 'High Court of Judicature at Bombay', 'inferred'
         elif any(re.search(r'KANT|MYS', c) for c in cites):
-            court, stat = 'High Court of Mysore (Karnataka)', 'inferred'
+            court, stat = 'High Court of Karnataka', 'inferred'
         elif any(re.search(r'SCR|SCC|SCALE', c) for c in cites):
             court, stat = 'Supreme Court of India', 'inferred'
         elif any(re.search(r'DLT|DEL', c, re.I) for c in cites):
-            court, stat = 'Delhi High Court', 'inferred'
+            court, stat = 'High Court of Delhi at New Delhi', 'inferred'
         elif any(re.search(r'MLJ|MAD', c, re.I) for c in cites):
-            court, stat = 'Madras High Court', 'inferred'
+            court, stat = 'High Court of Judicature at Madras', 'inferred'
     m['court'] = _f(court, stat)
 
     # 7) Filing number — only explicit labels

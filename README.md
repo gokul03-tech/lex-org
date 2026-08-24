@@ -163,7 +163,7 @@ $$RRF\_Score(d) = \sum_{m \in M} \frac{1}{60 + r_m(d)}$$
 Where $r_m(d)$ is the rank of document $d$ in retriever $m$. This fuses vector relevance with exact statutory keyword preservation.
 
 ### 4. CrossEncoder Reranking
-The fused candidates are passed to a local **BGE-Reranker-Large** CrossEncoder:
+The fused candidates are passed to a local **ms-marco-MiniLM-L-6-v2** CrossEncoder:
 * Unlike Bi-Encoders, it processes the Query and Chunk jointly, calculating attention scores directly between them.
 * Re-orders candidates to place chunks with high factual relevance at the very top, pruning irrelevant fragments.
 
