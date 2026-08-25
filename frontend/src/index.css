@@ -4,50 +4,58 @@
 
 @layer base {
   :root {
-    /* Daylight Chambers - Warm Ivory & Sophisticated Legal Workspace */
-    --background: 40 20% 98%;          /* #FAF9F6 Warm Ivory */
-    --foreground: 222 47% 11%;         /* #0F172A Deep Slate */
-    --card: 0 0% 100%;                 /* #FFFFFF Pure White */
-    --card-foreground: 222 47% 11%;
+    /* ── Counsel · Light Elegant Legal Design System ──────────────
+       Warm paper surfaces, deep ink-navy primary, brass accent.   */
+    --background: 40 27% 97%;          /* #FAF8F3 warm ivory paper */
+    --foreground: 30 12% 12%;          /* #221E1B warm ink */
+    --card: 0 0% 100%;                 /* pure white surface */
+    --card-foreground: 30 12% 12%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 221 83% 53%;            /* #2563EB Royal Blue / Sky-Indigo */
+    --popover-foreground: 30 12% 12%;
+    --primary: 243 75% 59%;            /* #4F46E5 Indigo-600 */
     --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96%;          /* #F1F5F9 Slate 100 */
-    --secondary-foreground: 222 47% 11%;
-    --muted: 210 40% 94%;
-    --muted-foreground: 215 16% 47%;   /* #64748B Slate 500 */
+    --secondary: 42 22% 93%;           /* warm parchment */
+    --secondary-foreground: 30 12% 18%;
+    --muted: 42 20% 94%;
+    --muted-foreground: 33 10% 42%;    /* #746D63 warm gray */
     --accent: 214 32% 91%;
     --accent-foreground: 222 47% 11%;
-    --destructive: 0 84% 60%;          /* #EF4444 */
-    --destructive-foreground: 210 40% 98%;
-    --border: 214 32% 91%;             /* #E2E8F0 Slate 200 */
-    --input: 214 32% 91%;
-    --ring: 221 83% 53%;
-    --radius: 1rem;                    /* Modern 16px curved corners */
+    --destructive: 0 72% 51%;          /* #DC2626 Red-600 */
+    --destructive-foreground: 40 27% 97%;
+    --border: 40 20% 88%;              /* #E5DFD3 warm hairline */
+    --input: 40 20% 85%;
+    --ring: 243 75% 59%;
+    --radius: 0.75rem;
+
+    /* Extended tokens */
+    --brass: 35 45% 45%;               /* antique brass (secondary accent) */
+    --brass-light: 38 52% 62%;
+    --sage: 152 24% 34%;
+    --amber-soft: 38 92% 50%;
+    --ink-navy-hover: 243 65% 52%;     /* hover for solid primary */
   }
 
   .dark {
-    /* Daylight Chambers Dark Mode Accent */
-    --background: 222 47% 7%;          /* #0B1220 Courtroom Noir */
-    --foreground: 210 40% 98%;
-    --card: 222 47% 9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222 47% 9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 199 89% 48%;            /* #0EA5E9 Sky Blue */
-    --primary-foreground: 222 47% 7%;
-    --secondary: 217 33% 17%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217 33% 15%;
-    --muted-foreground: 215 20% 65%;
-    --accent: 217 33% 17%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217 33% 18%;
-    --input: 217 33% 18%;
-    --ring: 199 89% 48%;
+    /* Counsel Noir — reserved for future dark mode */
+    --background: 214 32% 7%;
+    --foreground: 40 20% 94%;
+    --card: 214 30% 10%;
+    --card-foreground: 40 20% 94%;
+    --popover: 214 30% 10%;
+    --popover-foreground: 40 20% 94%;
+    --primary: 40 30% 88%;
+    --primary-foreground: 214 32% 10%;
+    --secondary: 214 26% 15%;
+    --secondary-foreground: 40 20% 94%;
+    --muted: 214 26% 14%;
+    --muted-foreground: 38 12% 62%;
+    --accent: 35 45% 55%;
+    --accent-foreground: 214 32% 8%;
+    --destructive: 0 50% 50%;
+    --destructive-foreground: 40 20% 96%;
+    --border: 214 24% 18%;
+    --input: 214 24% 18%;
+    --ring: 35 45% 55%;
   }
 }
 
@@ -55,57 +63,87 @@
   * {
     @apply border-border;
   }
+  html {
+    font-size: 16px;
+  }
   body {
-    @apply bg-background text-foreground antialiased selection:bg-sky-500/20 selection:text-sky-900;
+    @apply bg-background text-foreground antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    @apply bg-sky-500/20 text-sky-900;
   }
   h1, h2, h3, .font-serif {
     font-family: 'Fraunces', Georgia, serif;
+    letter-spacing: -0.01em;
   }
   code, pre, .font-mono {
     font-family: 'IBM Plex Mono', Menlo, Monaco, Consolas, monospace;
   }
+
+  /* Elegant focus states everywhere */
+  :focus-visible {
+    outline: 2px solid hsl(var(--brass) / 0.7);
+    outline-offset: 2px;
+  }
 }
 
-/* Daylight Chambers UI Glass & Card Utilities */
 @layer utilities {
+  /* Elevated card — the core surface of the design system */
+  .card-elevated {
+    @apply rounded-xl border border-border bg-card shadow-[0_1px_2px_rgba(34,30,27,0.04),0_4px_16px_-4px_rgba(34,30,27,0.06)];
+  }
+  .card-elevated-hover {
+    @apply transition-all duration-300 hover:shadow-[0_2px_4px_rgba(34,30,27,0.05),0_12px_28px_-6px_rgba(34,30,27,0.12)] hover:-translate-y-0.5;
+  }
+
+  /* Hairline section divider with center ornament feel */
+  .rule-brass {
+    @apply border-t border-brass/30;
+  }
+
+  /* Backwards-compatible aliases (restyled to Counsel palette) */
   .glass-card {
-    @apply bg-white/80 backdrop-blur-md border border-slate-200/80 shadow-sm hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300;
+    @apply card-elevated card-elevated-hover;
   }
-
   .glass-panel {
-    @apply bg-white/90 backdrop-blur-xl border border-slate-200 shadow-md;
+    @apply bg-card/95 backdrop-blur-xl border border-border shadow-lg;
   }
-
   .daylight-gradient {
     @apply bg-gradient-to-r from-sky-600 via-indigo-600 to-violet-600 bg-clip-text text-transparent;
   }
-
   .daylight-btn-primary {
-    @apply bg-gradient-to-r from-sky-600 via-indigo-600 to-violet-600 text-white font-semibold shadow-md shadow-indigo-500/20 hover:shadow-lg hover:shadow-indigo-500/30 hover:opacity-95 transition-all;
+    @apply bg-gradient-to-r from-sky-600 via-indigo-600 to-violet-600 text-white font-semibold shadow-md shadow-indigo-500/20 hover:shadow-lg hover:shadow-indigo-500/30 hover:opacity-95 active:scale-[0.99] transition-all;
   }
 
-  /* Aurora Background Glows */
+  /* Ambient background — soft daylight glows */
   .aurora-bg {
     @apply pointer-events-none fixed inset-0 overflow-hidden -z-10;
   }
+
+  /* Small-caps eyebrow label used above headings */
+  .eyebrow {
+    @apply font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground;
+  }
+  .eyebrow-brass {
+    @apply eyebrow text-brass;
+  }
 }
 
-/* Custom Clean Scrollbars */
+/* Refined scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
-  background: #CBD5E1;
+  background: hsl(var(--border));
   border-radius: 9999px;
+  border: 2px solid hsl(var(--background));
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: #94A3B8;
+  background: hsl(33 10% 65%);
 }

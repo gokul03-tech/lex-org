@@ -1,0 +1,31 @@
+exception: TimeoutError: Page.wait_for_selector: Timeout 20000ms exceeded.
+Call log:
+  - waiting for locator("button:has-text(\"New Case Dossier\")") to be visible
+
+
+LexOrch-KG
+LEGAL INTELLIGENCE ENGINE
+
+COUNSEL, AUGMENTED
+
+Trust-aware intelligence for the modern chambers.
+
+Verify arguments, search judicial precedent, and analyze statutes through multi-agent reasoning, hybrid retrieval, and knowledge graphs.
+
+Grounded proofs — every claim traceable to source
+Indian law corpus · BNS · BNSS · BSA · IT Act
+Evidence graphs across Qdrant & FalkorDB
+
+© 2026 LexOrch-KG Legal Technologies
+
+MEMBER ACCESS
+
+Welcome back
+
+Sign in to your advisory account to continue.
+
+EMAIL ADDRESS
+PASSWORD
+Sign In
+
+Don't have an account? Register here

@@ -33,6 +33,13 @@ json_output/
 logs/
 outputs/
 data/
+*.log
+nohup.out
+
+# Databases
+*.sqlite3
+*.db-shm
+*.db-wal
 
 # Frontend dependencies and builds
 node_modules/
@@ -41,7 +48,22 @@ dist/
 frontend/dist/
 .svelte-kit/
 .next/
+.vite/
+frontend/.vite/
+coverage/
+frontend/coverage/
+*.local
 
 # OS files
 .DS_Store
 Thumbs.db
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+
+# ── Test fixtures ─────────────────────────────────────────────
+# backend/test_data/*.pdf are intentionally TRACKED (small synthetic
+# fixtures, ~3 KB each, regenerable via scripts/create_test_pdfs_50.py).
+# Do NOT add real case files here — uploads live in data/uploads (ignored).

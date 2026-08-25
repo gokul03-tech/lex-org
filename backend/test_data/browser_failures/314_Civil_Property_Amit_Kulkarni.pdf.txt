@@ -1,0 +1,28 @@
+verdict failed: {"overview_checks": {"matrix": true, "extracted_badge": true, "trust_ring": true}, "statutes_marker": null, "evidence_marker": null, "graph_nodes": 0, "graph_marker": null, "risk_conclusion_block": false, "junk_found": []}
+
+LexOrch-KG
+LEGAL INTELLIGENCE ENGINE
+
+COUNSEL, AUGMENTED
+
+Trust-aware intelligence for the modern chambers.
+
+Verify arguments, search judicial precedent, and analyze statutes through multi-agent reasoning, hybrid retrieval, and knowledge graphs.
+
+Grounded proofs — every claim traceable to source
+Indian law corpus · BNS · BNSS · BSA · IT Act
+Evidence graphs across Qdrant & FalkorDB
+
+© 2026 LexOrch-KG Legal Technologies
+
+MEMBER ACCESS
+
+Welcome back
+
+Sign in to your advisory account to continue.
+
+EMAIL ADDRESS
+PASSWORD
+Sign In
+
+Don't have an account? Register here

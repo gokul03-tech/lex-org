@@ -3,8 +3,12 @@ import { Toaster } from '@/components/ui/toaster';
 import Layout from '@/components/layout/Layout';
 import DashboardPage from '@/pages/DashboardPage';
 import CasesPage from '@/pages/CasesPage';
-import CaseDetailPage from '@/pages/CaseDetailPage';
-import AnalysisPage from '@/pages/AnalysisPage';
+import CaseWorkspaceLayout from '@/pages/case/CaseWorkspaceLayout';
+import OverviewPage from '@/pages/case/OverviewPage';
+import StatutesPage from '@/pages/case/StatutesPage';
+import EvidencePage from '@/pages/case/EvidencePage';
+import GraphPage from '@/pages/case/GraphPage';
+import RiskPage from '@/pages/case/RiskPage';
 import ReportPage from '@/pages/ReportPage';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
@@ -20,8 +24,16 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/cases" element={<CasesPage />} />
-          <Route path="/cases/:caseId" element={<CaseDetailPage />} />
-          <Route path="/cases/:caseId/analysis" element={<AnalysisPage />} />
+
+          {/* Separate-page case workspace */}
+          <Route path="/cases/:caseId" element={<CaseWorkspaceLayout />}>
+            <Route index element={<OverviewPage />} />
+            <Route path="statutes" element={<StatutesPage />} />
+            <Route path="evidence" element={<EvidencePage />} />
+            <Route path="graph" element={<GraphPage />} />
+            <Route path="risk" element={<RiskPage />} />
+          </Route>
+
           <Route path="/cases/:caseId/report" element={<ReportPage />} />
           <Route path="/admin" element={<AdminPage />} />
         </Route>

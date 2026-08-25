@@ -1,0 +1,101 @@
+verdict failed: {"overview_checks": {"matrix": true, "extracted_badge": false, "trust_ring": true}, "statutes_marker": "Sections Invoked", "evidence_marker": "Evidence Integrity", "graph_nodes": 14, "graph_marker": "Knowledge Graph Explorer", "risk_conclusion_block": true, "junk_found": []}
+
+LexOrch-KG
+LEGAL INTELLIGENCE
+«
+
+WORKSPACE
+
+Dashboard
+Case Dossiers
+System Admin
+A
+
+Legal Advocate
+
+COUNSEL
+
+Sign Out
+Case Dossiers
+
+LEXORCH-KG CHAMBERS
+
+Search cases & statutes
+⌘K
+All Dossiers
+/
+03 Constitutional Writ Ananya Sharma
+03 Constitutional Writ Ananya Sharma
+Supreme Court of India
+5 May 2023
+(2023) 6 SCC 301, [2023] 4 SCR 710
+94
+TRUST
+PDF Brief
+JSON
+DOCX
+
+WORKSPACE MODULES
+
+Advisory Summary
+10
+1
+Statutes & Precedents
+7
+2
+Evidence & Trial
+1
+3
+Knowledge Graph
+14
+4
+Risk & Strategy
+5
+Ask LexOS AI
+Export JSON
+Compiled Opinion Report
+IRAC Legal Opinion
+EXTRACTED
+
+ISSUE
+
+1.Whether the statutory requirements of Section 32 (Constitution of India) are satisfied on the facts.
+2.Whether the statutory requirements of Section 21 (Constitution of India) are satisfied on the facts.
+3.Whether the statutory requirements of Section 19(1)(a) (Constitution of India) are satisfied on the facts.
+
+RULE
+
+Section Art. 32 — Constitution of India
+Section Art. 21 — Constitution of India
+Section Art. 19(1)(a) — Constitution of India
+Section Art. 14 — Constitution of India
+Section Art. 19(2) — Constitution of India
+Article 14
+Article 19(2)
+Article 19(1)
+
+APPLICATION
+
+This writ petition (constitutional) before the Supreme Court of India concerns Dr. Ananya Sharma vs Union Of India & Ors., invoking Constitution of India. The record addresses questions of statutory compliance, evidentiary reliability, and procedural legality.
+
+CONCLUSION
+
+6. The writ petition under Article 32 of the Constitution is accordingly disposed of with directions to establish an independent oversight committee
+
+OPERATIVE · FOR THE PETITIONER
+
+Strategic Road Map
+Key Strengths
+DOCUMENT FACT
+
+The petitioner has invoked the extraordinary jurisdiction of this Court under Article 32 of the Constitution of India challenging statutory notifications regulating digital privacy and surveillance disclosures
+
+Potential Gaps
+DOCUMENT FACT
+
+The learned Solicitor General of India, Mr. Tushar Mehta, defended the notification, submitting that the measures fall squarely within reasonable restrictions under Article 19(2) in the interests of national security and prevention of cyber terrorism
+
+Action Plan
+DOCUMENT FACT
+
+6. The writ petition under Article 32 of the Constitution is accordingly disposed of with directions to establish an independent oversight committee

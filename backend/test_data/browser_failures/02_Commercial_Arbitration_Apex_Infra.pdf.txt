@@ -1,0 +1,94 @@
+verdict failed: {"overview_checks": {"matrix": true, "extracted_badge": false, "trust_ring": true}, "statutes_marker": "Sections Invoked", "evidence_marker": "Evidence Integrity", "graph_nodes": 13, "graph_marker": "Knowledge Graph Explorer", "risk_conclusion_block": true, "junk_found": []}
+
+LexOrch-KG
+LEGAL INTELLIGENCE
+«
+
+WORKSPACE
+
+Dashboard
+Case Dossiers
+System Admin
+A
+
+Legal Advocate
+
+COUNSEL
+
+Sign Out
+Case Dossiers
+
+LEXORCH-KG CHAMBERS
+
+Search cases & statutes
+⌘K
+All Dossiers
+/
+02 Commercial Arbitration Apex Infra
+02 Commercial Arbitration Apex Infra
+High Court of Delhi at New Delhi
+18 January 2023
+AIR 2023 DEL 145, (2023) 1 DLT 89
+94
+TRUST
+PDF Brief
+JSON
+DOCX
+
+WORKSPACE MODULES
+
+Advisory Summary
+4
+1
+Statutes & Precedents
+6
+2
+Evidence & Trial
+2
+3
+Knowledge Graph
+13
+4
+Risk & Strategy
+5
+Ask LexOS AI
+Export JSON
+Compiled Opinion Report
+IRAC Legal Opinion
+EXTRACTED
+
+ISSUE
+
+1.Whether the statutory requirements of Section 34 (Arbitration and Conciliation Act, 1996) are satisfied on the facts.
+2.Whether the statutory requirements of Section 73 (Indian Contract Act, 1872) are satisfied on the facts.
+3.Whether the statutory requirements of Section 34(2A) (Arbitration and Conciliation Act, 1996) are satisfied on the facts.
+
+RULE
+
+Section 34 — Arbitration and Conciliation Act, 1996
+Section 73 — Indian Contract Act, 1872
+Section 34(2A) — Arbitration and Conciliation Act, 1996
+Section 74 — Indian Contract Act, 1872
+
+APPLICATION
+
+This petition u/s 34 (setting aside award) before the High Court of Delhi at New Delhi concerns Apex Infrastructure Pvt. Ltd. vs National Highways Authority of India, invoking Arbitration and Conciliation Act, 1996, Indian Contract Act, 1872. The record addresses questions of statutory compliance, evidentiary reliability, and procedural legality.
+
+CONCLUSION
+
+7. Consequently, the petition under Section 34 is partly allowed and the award to the extent of liquidated damages is set aside
+
+OPERATIVE · FOR THE PETITIONER
+
+Strategic Road Map
+Key Strengths
+DOCUMENT FACT
+P-18 which established site handover defaults
+Potential Gaps
+DOCUMENT FACT
+Mr. Nanda, learned counsel appearing for the respondent NHAI, defended the impugned award
+He argued that the Arbitral Tribunal is the ultimate master of quantity and quality of evidence
+Action Plan
+DOCUMENT FACT
+
+7. Consequently, the petition under Section 34 is partly allowed and the award to the extent of liquidated damages is set aside

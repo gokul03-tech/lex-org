@@ -1,14 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Briefcase, FileText, CheckCircle2, Cpu, PlusCircle, Search, 
-  ChevronRight, Clock, FolderOpen, X, Loader2, Sparkles, Scale, Info, Upload
+import { motion } from 'framer-motion';
+import {
+  FileText, ChevronRight, Clock, FolderOpen, X, Loader2,
+  Scale, Upload, ArrowRight, Plus,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { LegalFeatureMarquee } from '@/components/ui/legal-feature-marquee';
 import { CommandMenu } from '@/components/ui/command-menu';
+import { LegalFeatureMarquee } from '@/components/ui/legal-feature-marquee';
 import apiClient from '@/lib/api';
 
 interface Case {
@@ -20,13 +19,20 @@ interface Case {
   created_at: string;
 }
 
+const CASE_TYPES = [
+  'Criminal Defense',
+  'Cyber Crime Defense',
+  'Commercial Arbitration',
+  'Constitutional Law',
+  'Civil Dispute',
+];
+
 export default function DashboardPage() {
   const navigate = useNavigate();
   const [cases, setCases] = useState<Case[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
-  
-  // Create case form states
+
   const [newTitle, setNewTitle] = useState('');
   const [newClient, setNewClient] = useState('');
   const [newType, setNewType] = useState('Criminal Defense');
@@ -34,7 +40,6 @@ export default function DashboardPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Guard against React StrictMode double-mount firing the fetch twice in dev
   const hasFetchedRef = useRef(false);
 
   useEffect(() => {
@@ -65,22 +70,22 @@ export default function DashboardPage() {
       if (selectedFile) {
         formData.append('file', selectedFile);
       }
-      formData.append('title', newTitle || (selectedFile ? selectedFile.name.replace(/\.[^/.]+$/, "") : 'Untitled Matter'));
+      formData.append('title', newTitle || (selectedFile ? selectedFile.name.replace(/\.[^/.]+$/, '') : 'Untitled Matter'));
       formData.append('case_type', newType);
       formData.append('description', `Client: ${newClient}. ${newDesc}`);
 
       const res = await apiClient.post('/cases/', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
-      
+
       setCases((prev) => [res.data, ...prev]);
       setNewTitle('');
       setNewClient('');
       setNewDesc('');
       setSelectedFile(null);
       setCreateOpen(false);
-      
-      navigate(`/cases/${res.data.id}/analysis`);
+
+      navigate(`/cases/${res.data.id}`);
     } catch (err) {
       console.error('Failed to create case:', err);
     } finally {
@@ -93,272 +98,283 @@ export default function DashboardPage() {
     return raw.replace(/\s+on\s+\d{1,2}\s+[A-Za-z]+,?\s+\d{4}.*$/i, '').trim();
   };
 
-  const getStatusBadge = (status: string) => {
+  const statusMeta = (status: string): { label: string; dot: string; text: string; bg: string; border: string } => {
     switch (status) {
       case 'analysis_complete':
       case 'report_generated':
-        return (
-          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-700 border border-emerald-200">
-            <span className="h-1 w-1 rounded-full bg-emerald-500" />
-            Analysis Compiled
-          </span>
-        );
+        return { label: 'Analysis Compiled', dot: 'bg-sage', text: 'text-sage', bg: 'bg-sage/10', border: 'border-sage/30' };
       case 'documents_uploaded':
-        return (
-          <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2.5 py-0.5 text-[10px] font-semibold text-sky-700 border border-sky-200">
-            <span className="h-1 w-1 rounded-full bg-sky-500" />
-            Files Uploaded
-          </span>
-        );
+        return { label: 'Files Uploaded', dot: 'bg-brass', text: 'text-brass', bg: 'bg-brass/10', border: 'border-brass/30' };
       default:
-        return (
-          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-[10px] font-semibold text-amber-700 border border-amber-200">
-            <span className="h-1 w-1 rounded-full bg-amber-500" />
-            Draft
-          </span>
-        );
+        return { label: 'Draft', dot: 'bg-muted-foreground', text: 'text-muted-foreground', bg: 'bg-secondary', border: 'border-border' };
     }
   };
 
   return (
-    <div className="container mx-auto p-6 lg:p-10 space-y-8 text-left relative max-w-7xl">
+    <div className="mx-auto max-w-6xl space-y-10 px-6 py-8 lg:px-10 lg:py-12">
       <CommandMenu />
 
-      {/* Welcome Banner in Daylight Chambers theme */}
+      {/* Header */}
       <motion.div
-        initial={{ opacity: 0, y: 15 }}
+        initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-3xl border border-slate-200 bg-white/90 p-8 shadow-xs backdrop-blur-md flex flex-col md:flex-row justify-between items-start md:items-center gap-6"
+        className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between"
       >
-        <div className="max-w-2xl space-y-2.5">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 border border-sky-200 px-3.5 py-1 text-xs font-semibold text-sky-700 shadow-2xs">
-            <Sparkles className="h-3.5 w-3.5" />
-            LexOrch-KG Legal Intelligence Core
-          </span>
-          <h1 className="font-serif text-3xl md:text-4xl font-bold tracking-tight text-slate-900">
-            Advisor Command Center
+        <div className="space-y-2">
+          <p className="eyebrow">Advisor Command Center</p>
+          <h1 className="font-serif text-3xl font-semibold tracking-tight md:text-4xl">
+            Good to see you, <span className="text-primary">Counsel</span>.
           </h1>
-          <p className="text-slate-600 text-sm leading-relaxed">
-            Upload legal case briefs, inspect acts & sections, and generate interactive knowledge graphs. Select or initialize a case file to begin analysis.
+          <p className="max-w-xl text-[15px] leading-relaxed text-muted-foreground">
+            Open a case dossier to inspect acts and sections, run multi-agent analysis,
+            and generate advisory reports grounded in evidence.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <Button 
-            onClick={() => {
-              const event = new KeyboardEvent('keydown', { key: 'k', metaKey: true });
-              document.dispatchEvent(event);
-            }} 
-            variant="outline"
-            className="border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-mono text-xs px-3.5 py-5 rounded-2xl gap-2 cursor-pointer shadow-2xs"
-          >
-            <Search className="h-4 w-4 text-slate-400" />
-            <span className="hidden sm:inline">Search (⌘K)</span>
-          </Button>
-          <Button 
-            onClick={() => setCreateOpen(true)} 
-            className="daylight-btn-primary px-5 py-5 text-xs rounded-2xl shrink-0 shadow-md gap-2 transition-all cursor-pointer font-semibold"
-          >
-            <PlusCircle className="h-4.5 w-4.5" /> Initialize Case File
-          </Button>
+        <Button onClick={() => setCreateOpen(true)} size="lg" className="gap-2 rounded-lg shadow-sm">
+          <Plus className="h-4 w-4" /> New Case Dossier
+        </Button>
+      </motion.div>
+
+      {/* Stats strip */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.05 }}
+        className="grid grid-cols-3 divide-x divide-border overflow-hidden rounded-xl border border-border bg-card"
+      >
+        <div className="px-6 py-4">
+          <p className="eyebrow mb-1">Active Dossiers</p>
+          <p className="font-serif text-2xl font-semibold">{cases.length}</p>
+        </div>
+        <div className="px-6 py-4">
+          <p className="eyebrow mb-1">Compiled</p>
+          <p className="font-serif text-2xl font-semibold text-sage">
+            {cases.filter((c) => ['analysis_complete', 'report_generated'].includes(c.status)).length}
+          </p>
+        </div>
+        <div className="px-6 py-4">
+          <p className="eyebrow mb-1">In Progress</p>
+          <p className="font-serif text-2xl font-semibold text-brass">
+            {cases.filter((c) => c.status === 'documents_uploaded').length}
+          </p>
         </div>
       </motion.div>
 
-      {/* Active Case Folders Section */}
-      <div className="space-y-4">
+      {/* Case folders */}
+      <section className="space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="font-serif text-lg font-bold text-slate-900 flex items-center gap-2">
-            <FolderOpen className="h-5 w-5 text-sky-600" /> Active Legal Folders
-          </h3>
-          <Button
-            variant="ghost"
-            onClick={() => navigate('/cases')}
-            className="text-xs font-semibold text-sky-700 hover:text-sky-800"
-          >
-            View All Dossiers →
+          <h2 className="flex items-center gap-2.5 font-serif text-xl font-semibold tracking-tight">
+            <FolderOpen className="h-5 w-5 text-brass" strokeWidth={1.8} />
+            Active Legal Folders
+          </h2>
+          <Button variant="ghost" onClick={() => navigate('/cases')} className="gap-1.5 text-[13px] font-medium text-muted-foreground hover:text-foreground">
+            View all dossiers <ArrowRight className="h-3.5 w-3.5" />
           </Button>
         </div>
 
         {loading ? (
-          <div className="flex h-40 items-center justify-center">
-            <Loader2 className="h-7 w-7 animate-spin text-sky-600" />
+          <div className="grid gap-4 md:grid-cols-2">
+            {[0, 1].map((i) => (
+              <div key={i} className="card-elevated h-44 animate-pulse p-5" />
+            ))}
           </div>
         ) : cases.length === 0 ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-xs text-slate-500 shadow-xs">
-            No active legal folders created yet. Click "Initialize Case File" above to get started.
+          <div className="card-elevated flex flex-col items-center gap-4 px-8 py-14 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full border border-brass/30 bg-brass/10">
+              <Scale className="h-6 w-6 text-brass" strokeWidth={1.6} />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="font-serif text-lg font-semibold">No dossiers yet</h3>
+              <p className="mx-auto max-w-sm text-sm leading-relaxed text-muted-foreground">
+                Initialize your first case file to begin AI-assisted analysis.
+              </p>
+            </div>
+            <Button onClick={() => setCreateOpen(true)} className="gap-2 rounded-lg">
+              <Plus className="h-4 w-4" /> Initialize Case File
+            </Button>
           </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
-            {cases.slice(0, 4).map((c) => (
-              <motion.div
-                key={c.id}
-                whileHover={{ y: -3 }}
-                onClick={() => navigate(`/cases/${c.id}/analysis`)}
-                className="group rounded-2xl border border-slate-200 bg-white p-5 shadow-xs hover:shadow-lg hover:border-slate-300 transition-all flex flex-col justify-between cursor-pointer text-left"
-              >
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold text-slate-400 font-mono bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-md">
-                      {c.id}
-                    </span>
-                    {getStatusBadge(c.status)}
+            {cases.slice(0, 4).map((c, idx) => {
+              const s = statusMeta(c.status);
+              return (
+                <motion.button
+                  key={c.id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.05 }}
+                  whileHover={{ y: -2 }}
+                  onClick={() => navigate(`/cases/${c.id}`)}
+                  className="card-elevated card-elevated-hover group flex cursor-pointer flex-col justify-between rounded-xl p-5 text-left"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <span
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${s.bg} ${s.text} ${s.border}`}
+                      >
+                        <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
+                        {s.label}
+                      </span>
+                      <span className="rounded border border-border bg-secondary px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
+                        {c.case_type || 'General'}
+                      </span>
+                    </div>
+                    <div>
+                      <h3 className="font-serif text-base font-semibold leading-snug tracking-tight transition-colors group-hover:text-primary">
+                        {cleanTitle(c.title)}
+                      </h3>
+                      {c.description && (
+                        <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">
+                          {c.description}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-serif text-sm font-bold text-slate-900 group-hover:text-sky-700 transition-colors">
-                      {cleanTitle(c.title)}
-                    </h3>
-                    <span className="text-[11px] text-slate-500 mt-1 block font-medium">
-                      Category: {c.case_type || 'Unspecified'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 leading-relaxed line-clamp-2">
-                    {c.description || 'No detailed case facts uploaded yet. Open case brief folder to run AI ingestion.'}
-                  </p>
-                </div>
 
-                <div className="mt-5 border-t border-slate-100 pt-3 flex items-center justify-between text-[11px] text-slate-400">
-                  <span className="flex items-center gap-1 font-mono">
-                    <Clock className="h-3 w-3" />
-                    {new Date(c.created_at).toLocaleDateString()}
-                  </span>
-                  <span className="flex items-center gap-0.5 font-bold text-sky-700 group-hover:translate-x-1 transition-transform">
-                    {c.status === 'analysis_complete' ? 'Open Dashboard' : 'Start Analysis'}
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  </span>
-                </div>
-              </motion.div>
-            ))}
+                  <div className="mt-5 flex items-center justify-between border-t border-border pt-3.5 text-xs text-muted-foreground">
+                    <span className="inline-flex items-center gap-1.5 font-mono text-[11px]">
+                      <Clock className="h-3 w-3" />
+                      {new Date(c.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-[13px] font-medium text-primary transition-transform group-hover:translate-x-0.5">
+                      {c.status === 'analysis_complete' ? 'Open' : 'Start analysis'}
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </span>
+                  </div>
+                </motion.button>
+              );
+            })}
           </div>
         )}
-      </div>
+      </section>
 
-      {/* Legal Architecture & Interactive Marquee Section */}
+      {/* Architecture marquee */}
       <LegalFeatureMarquee />
 
-      {/* CREATE NEW CASE DIALOG MODAL */}
-      <AnimatePresence>
-        {createOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setCreateOpen(false)}
-              className="absolute inset-0 bg-slate-900/40 backdrop-blur-xs"
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.96 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              className="relative w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl text-left z-10"
-            >
+      {/* Create case modal */}
+      {createOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setCreateOpen(false)}
+            className="absolute inset-0 bg-foreground/40 backdrop-blur-[2px]"
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.97, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.97, y: 8 }}
+            transition={{ duration: 0.18 }}
+            className="relative z-10 w-full max-w-lg overflow-hidden rounded-xl border border-border bg-card shadow-2xl"
+          >
+            <div className="border-b border-border px-6 pb-4 pt-6">
               <button
                 onClick={() => setCreateOpen(false)}
-                className="absolute right-4 top-4 text-slate-400 hover:text-slate-600"
+                className="absolute right-4 top-4 rounded-md p-1 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+                aria-label="Close"
               >
-                <X className="h-5 w-5" />
+                <X className="h-4.5 w-4.5" />
               </button>
+              <p className="eyebrow mb-1">New Matter</p>
+              <h2 className="font-serif text-xl font-semibold tracking-tight">Initialize Case Dossier</h2>
+              <p className="mt-1 text-[13px] text-muted-foreground">
+                Upload the primary document — the pipeline handles parsing and metadata extraction.
+              </p>
+            </div>
 
-              <h2 className="font-serif text-xl font-bold text-slate-900 flex items-center gap-2">
-                <Scale className="h-5 w-5 text-sky-600" />
-                Initialize Legal Folder
-              </h2>
-              <p className="text-xs text-slate-500 mt-1">Define case matter coordinates before triggering AI ingestion pipeline.</p>
+            <form onSubmit={handleCreateCase} className="space-y-5 px-6 py-5">
+              <div>
+                <label className="eyebrow mb-1.5 block">Case Document · PDF, DOCX, TXT *</label>
+                <label className="relative block cursor-pointer rounded-lg border border-dashed border-input bg-secondary/60 px-4 py-6 text-center transition hover:border-brass/50 hover:bg-secondary">
+                  <input
+                    type="file"
+                    accept=".pdf,.docx,.txt"
+                    onChange={(e) => {
+                      if (e.target.files?.[0]) {
+                        const file = e.target.files[0];
+                        setSelectedFile(file);
+                        const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
+                        setNewTitle(nameWithoutExt.charAt(0).toUpperCase() + nameWithoutExt.slice(1));
+                      }
+                    }}
+                    className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                  />
+                  {selectedFile ? (
+                    <div className="flex items-center justify-center gap-2.5 text-foreground">
+                      <FileText className="h-5 w-5 text-brass" strokeWidth={1.7} />
+                      <span className="max-w-[260px] truncate text-sm font-medium">{selectedFile.name}</span>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-1.5 text-muted-foreground">
+                      <Upload className="h-5 w-5 text-brass" strokeWidth={1.7} />
+                      <span className="text-[13px] font-medium">Click to upload or drag &amp; drop</span>
+                      <span className="font-mono text-[11px]">PDF · DOCX · TXT up to 50 MB</span>
+                    </div>
+                  )}
+                </label>
+              </div>
 
-              <form onSubmit={handleCreateCase} className="mt-5 space-y-4 text-xs">
+              <div>
+                <label className="eyebrow mb-1.5 block">Case Title / Matter Reference</label>
+                <input
+                  type="text"
+                  required
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  placeholder="e.g. Mehta Realty vs Shanti Devi"
+                  className="w-full rounded-lg border border-input bg-card px-3.5 py-2.5 text-sm transition placeholder:text-muted-foreground/70 focus:border-brass/60 focus:outline-none focus:ring-2 focus:ring-brass/20"
+                />
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="font-mono text-[10px] font-semibold text-slate-600 uppercase tracking-wider block mb-1">Upload Case Document (PDF, DOCX, TXT) *</label>
-                  <div className="border border-dashed border-slate-300 rounded-2xl p-4 bg-slate-50/70 hover:bg-slate-50 transition text-center relative cursor-pointer">
-                    <input
-                      type="file"
-                      accept=".pdf,.docx,.txt"
-                      onChange={(e) => {
-                        if (e.target.files?.[0]) {
-                          const file = e.target.files[0];
-                          setSelectedFile(file);
-                          const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
-                          setNewTitle(nameWithoutExt.charAt(0).toUpperCase() + nameWithoutExt.slice(1));
-                        }
-                      }}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    />
-                    {selectedFile ? (
-                      <div className="flex items-center justify-center gap-2 text-slate-800">
-                        <FileText className="h-5 w-5 text-sky-600" />
-                        <span className="font-bold truncate max-w-[240px]">{selectedFile.name}</span>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col items-center gap-1.5 text-slate-500">
-                        <Upload className="h-6 w-6 text-sky-600" />
-                        <span className="font-medium">Drag & drop or click to choose file</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="font-mono text-[10px] font-semibold text-slate-600 uppercase tracking-wider block mb-1">Case Title / Matter Reference</label>
+                  <label className="eyebrow mb-1.5 block">Client Name</label>
                   <input
                     type="text"
-                    required
-                    value={newTitle}
-                    onChange={(e) => setNewTitle(e.target.value)}
-                    placeholder="e.g. State vs. John Doe (Organized Cyber Fraud)"
-                    className="w-full rounded-xl border border-slate-200 bg-white p-2.5 text-slate-900 focus:outline-none focus:border-sky-500 shadow-2xs"
+                    value={newClient}
+                    onChange={(e) => setNewClient(e.target.value)}
+                    placeholder="e.g. Shanti Devi"
+                    className="w-full rounded-lg border border-input bg-card px-3.5 py-2.5 text-sm transition placeholder:text-muted-foreground/70 focus:border-brass/60 focus:outline-none focus:ring-2 focus:ring-brass/20"
                   />
                 </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="font-mono text-[10px] font-semibold text-slate-600 uppercase tracking-wider block mb-1">Client Name</label>
-                    <input
-                      type="text"
-                      value={newClient}
-                      onChange={(e) => setNewClient(e.target.value)}
-                      placeholder="e.g. Vikram Dev"
-                      className="w-full rounded-xl border border-slate-200 bg-white p-2.5 text-slate-900 focus:outline-none focus:border-sky-500 shadow-2xs"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="font-mono text-[10px] font-semibold text-slate-600 uppercase tracking-wider block mb-1">Category Type</label>
-                    <select
-                      value={newType}
-                      onChange={(e) => setNewType(e.target.value)}
-                      className="w-full rounded-xl border border-slate-200 bg-white p-2.5 text-slate-900 focus:outline-none focus:border-sky-500 shadow-2xs"
-                    >
-                      <option value="Criminal Defense">Criminal Defense</option>
-                      <option value="Cyber Crime Defense">Cyber Crime Defense</option>
-                      <option value="Commercial Arbitration">Commercial Arbitration</option>
-                      <option value="Constitutional Law">Constitutional Law</option>
-                      <option value="Civil Dispute">Civil Dispute</option>
-                    </select>
-                  </div>
-                </div>
-
                 <div>
-                  <label className="font-mono text-[10px] font-semibold text-slate-600 uppercase tracking-wider block mb-1">Brief Context / Notes</label>
-                  <textarea
-                    rows={3}
-                    value={newDesc}
-                    onChange={(e) => setNewDesc(e.target.value)}
-                    placeholder="Add preliminary notes regarding charge sheet logs..."
-                    className="w-full rounded-xl border border-slate-200 bg-white p-2.5 text-slate-900 focus:outline-none focus:border-sky-500 shadow-2xs resize-none"
-                  />
+                  <label className="eyebrow mb-1.5 block">Practice Area</label>
+                  <select
+                    value={newType}
+                    onChange={(e) => setNewType(e.target.value)}
+                    className="w-full rounded-lg border border-input bg-card px-3.5 py-2.5 text-sm transition focus:border-brass/60 focus:outline-none focus:ring-2 focus:ring-brass/20"
+                  >
+                    {CASE_TYPES.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
                 </div>
+              </div>
 
-                <div className="flex justify-end gap-3 pt-2">
-                  <Button type="button" variant="ghost" onClick={() => setCreateOpen(false)} className="text-slate-600 rounded-xl">
-                    Cancel
-                  </Button>
-                  <Button type="submit" disabled={submitting} className="daylight-btn-primary px-5 py-2.5 rounded-xl font-semibold">
-                    {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Initialize Folder'}
-                  </Button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+              <div>
+                <label className="eyebrow mb-1.5 block">Brief Context / Notes</label>
+                <textarea
+                  rows={3}
+                  value={newDesc}
+                  onChange={(e) => setNewDesc(e.target.value)}
+                  placeholder="Preliminary notes, charge details, key dates…"
+                  className="w-full resize-none rounded-lg border border-input bg-card px-3.5 py-2.5 text-sm transition placeholder:text-muted-foreground/70 focus:border-brass/60 focus:outline-none focus:ring-2 focus:ring-brass/20"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2.5 border-t border-border pt-4">
+                <Button type="button" variant="ghost" onClick={() => setCreateOpen(false)} className="rounded-lg text-muted-foreground">
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={submitting} className="min-w-36 gap-2 rounded-lg">
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Initialize Dossier'}
+                </Button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }

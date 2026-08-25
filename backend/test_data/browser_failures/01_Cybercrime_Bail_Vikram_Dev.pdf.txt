@@ -1,0 +1,94 @@
+verdict failed: {"overview_checks": {"matrix": true, "extracted_badge": false, "trust_ring": true}, "statutes_marker": "Sections Invoked", "evidence_marker": "Evidence Integrity", "graph_nodes": 16, "graph_marker": "Knowledge Graph Explorer", "risk_conclusion_block": true, "junk_found": []}
+
+LexOrch-KG
+LEGAL INTELLIGENCE
+«
+
+WORKSPACE
+
+Dashboard
+Case Dossiers
+System Admin
+A
+
+Legal Advocate
+
+COUNSEL
+
+Sign Out
+Case Dossiers
+
+LEXORCH-KG CHAMBERS
+
+Search cases & statutes
+⌘K
+All Dossiers
+/
+01 Cybercrime Bail Vikram Dev
+01 Cybercrime Bail Vikram Dev
+High Court of Judicature at Bombay
+14 March 2024
+(2024) 2 Bom CR 412, 2024 Cri LJ 1580
+99
+TRUST
+PDF Brief
+JSON
+DOCX
+
+WORKSPACE MODULES
+
+Advisory Summary
+5
+1
+Statutes & Precedents
+6
+2
+Evidence & Trial
+4
+3
+Knowledge Graph
+16
+4
+Risk & Strategy
+5
+Ask LexOS AI
+Export JSON
+Compiled Opinion Report
+IRAC Legal Opinion
+EXTRACTED
+
+ISSUE
+
+1.Whether the statutory requirements of Section 482 (Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023) are satisfied on the facts.
+2.Whether the statutory requirements of Section 111 (Bharatiya Nyaya Sanhita (BNS), 2023) are satisfied on the facts.
+3.Whether the statutory requirements of Section 66D (Information Technology Act, 2000) are satisfied on the facts.
+
+RULE
+
+Section 482 — Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023
+Section 111 — Bharatiya Nyaya Sanhita (BNS), 2023
+Section 66D — Information Technology Act, 2000
+Section 63 — Bharatiya Sakshya Adhiniyam (BSA), 2023
+
+APPLICATION
+
+This regular bail petition before the High Court of Judicature at Bombay concerns Vikram Dev vs The State Of Maharashtra, invoking Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023, Bharatiya Sakshya Adhiniyam (BSA), 2023, Information Technology Act, 2000, Bharatiya Nyaya Sanhita (BNS), 2023. The record addresses questions of statutory compliance, evidentiary reliability, and procedural legality.
+
+CONCLUSION
+
+7. In view of the above circumstances, the applicant is directed to be released on bail on executing a P.R. Bond of Rs
+
+OPERATIVE · FOR THE APPLICANT
+
+Strategic Road Map
+Key Strengths
+DOCUMENT FACT
+Merchant, learned Senior Counsel for the applicant, submitted that the investigation is complete and the charge sheet has already been filed on 05-03-2024. He contends that the applicant had no mens rea or knowledge of the phishing fraud
+No direct financial transfer has been traced to the applicant's accounts
+Potential Gaps
+DOCUMENT FACT
+On the other hand, the learned APP Ms. Shinde for the State vehemently opposed the bail plea
+She argued that the applicant operated a key logistics conduit under Section 111 of the Bharatiya Nyaya Sanhita (BNS), 2023
+Action Plan
+DOCUMENT FACT
+7. In view of the above circumstances, the applicant is directed to be released on bail on executing a P.R. Bond of Rs

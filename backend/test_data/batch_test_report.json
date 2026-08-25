@@ -1,0 +1,852 @@
+[
+  {
+    "file": "01_Cybercrime_Bail_Vikram_Dev.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 99
+  },
+  {
+    "file": "02_Commercial_Arbitration_Apex_Infra.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "03_Constitutional_Writ_Ananya_Sharma.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "04_Civil_Property_Specific_Performance.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "05_Criminal_Narcotics_Bail_NDPS.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "criminal",
+    "trust": 99
+  },
+  {
+    "file": "06_Criminal_Digital_Fraud_Bail_Zoya_Khan.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 97
+  },
+  {
+    "file": "07_Commercial_Arbitration_Sunrise_Logistics_Ltd.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 97
+  },
+  {
+    "file": "08_Constitutional_Writ_Lakshmi_Menon.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "09_Civil_Property_Zoya_Khan.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "10_Criminal_NDPS_Bail_Vinod_Gowda.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "criminal",
+    "trust": 95
+  },
+  {
+    "file": "11_Criminal_Digital_Fraud_Bail_Yashwant_Rao.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 99
+  },
+  {
+    "file": "12_Commercial_Arbitration_Orbit_Pharma_Labs_Ltd.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 97
+  },
+  {
+    "file": "13_Constitutional_Writ_Orbit_Pharma_Labs_Ltd.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "14_Civil_Property_Alok_Banerjee.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "15_Criminal_NDPS_Bail_Meenakshi_Rathore.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "criminal",
+    "trust": 95
+  },
+  {
+    "file": "16_Criminal_Digital_Fraud_Bail_Kavita_Krishnan.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 99
+  },
+  {
+    "file": "17_Commercial_Arbitration_Trident_Steel_Works_Pvt_Ltd.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 97
+  },
+  {
+    "file": "18_Constitutional_Writ_Vinod_Gowda.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "19_Civil_Property_Arjun_Malhotra.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "20_Criminal_NDPS_Bail_Priyanka_Verma.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "criminal",
+    "trust": 95
+  },
+  {
+    "file": "21_Criminal_Digital_Fraud_Bail_Deepak_Rathi.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 99
+  },
+  {
+    "file": "22_Commercial_Arbitration_Sunrise_Logistics_Ltd.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 97
+  },
+  {
+    "file": "23_Constitutional_Writ_Pinnacle_EdTech_Solutions_Pv.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "24_Civil_Property_Orbit_Pharma_Labs_Ltd.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "25_Criminal_NDPS_Bail_Harpreet_Singh.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "criminal",
+    "trust": 95
+  },
+  {
+    "file": "26_Criminal_Digital_Fraud_Bail_Manoj_Tiwari.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 99
+  },
+  {
+    "file": "27_Commercial_Arbitration_Sunrise_Logistics_Ltd.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 97
+  },
+  {
+    "file": "28_Constitutional_Writ_Harpreet_Singh.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "29_Civil_Property_Radhika_Shetty.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "30_Criminal_NDPS_Bail_Manoj_Tiwari.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "criminal",
+    "trust": 95
+  },
+  {
+    "file": "31_Criminal_Digital_Fraud_Bail_Kavita_Krishnan.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 99
+  },
+  {
+    "file": "32_Commercial_Arbitration_Orbit_Pharma_Labs_Ltd.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 97
+  },
+  {
+    "file": "33_Constitutional_Writ_Ramesh_Kulkarni.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "34_Civil_Property_Sunrise_Logistics_Ltd.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "35_Criminal_NDPS_Bail_Rahul_Srivastava.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "criminal",
+    "trust": 95
+  },
+  {
+    "file": "36_Criminal_Digital_Fraud_Bail_Imran_Sheikh.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 99
+  },
+  {
+    "file": "37_Commercial_Arbitration_Cascade_Textiles_Mills_Ltd.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 97
+  },
+  {
+    "file": "38_Constitutional_Writ_Prakash_Nair.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "39_Civil_Property_Cascade_Textiles_Mills_Ltd.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "40_Criminal_NDPS_Bail_Priyanka_Verma.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "criminal",
+    "trust": 95
+  },
+  {
+    "file": "41_Criminal_Digital_Fraud_Bail_Radhika_Shetty.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 99
+  },
+  {
+    "file": "42_Commercial_Arbitration_Pinnacle_EdTech_Solutions_Pv.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 97
+  },
+  {
+    "file": "43_Constitutional_Writ_Deepak_Rathi.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "44_Civil_Property_Manoj_Tiwari.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "45_Criminal_NDPS_Bail_Radhika_Shetty.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "criminal",
+    "trust": 95
+  },
+  {
+    "file": "46_Criminal_Digital_Fraud_Bail_Karthik_Subramanian.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 99
+  },
+  {
+    "file": "47_Commercial_Arbitration_Granite_Mines_India_Pvt_Ltd.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 2,
+    "category": "criminal",
+    "trust": 97
+  },
+  {
+    "file": "48_Constitutional_Writ_Farhan_Qureshi.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "49_Civil_Property_Manoj_Tiwari.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "civil",
+    "trust": 97
+  },
+  {
+    "file": "50_Criminal_NDPS_Bail_Zoya_Khan.pdf",
+    "checks": {
+      "parsed": true,
+      "petitioner": true,
+      "respondent": true,
+      "decision_date": true,
+      "court": true,
+      "judges": true,
+      "sections": true,
+      "kg": true
+    },
+    "errors": [],
+    "pages": 1,
+    "category": "criminal",
+    "trust": 95
+  }
+]
