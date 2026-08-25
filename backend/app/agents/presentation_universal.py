@@ -229,6 +229,44 @@ def split_sentences(t: str) -> list[str]:
     sentences = re.split(r'(?<=[a-z0-9])\.\s+(?=[A-Z0-9])', t)
     return [s.replace('<DOT>', '.').strip() for s in sentences]
 
+SPEC_OUTCOME = re.compile(r'\b(?:allowed|set aside|disposed|dismissed)\b', re.I)
+ANY_OUTCOME = re.compile(r'\b(?:allowed|set aside|disposed|dismissed|directed|quashed|decreed|granted)\b', re.I)
+AGREE_LINE = re.compile(r'-\s*I agree', re.I)
+
+def _substantive_sentences(n: str, min_len: int = 60) -> list[str]:
+    return [s.strip() for s in SENT(n) if len(s.strip()) >= min_len and not AGREE_LINE.search(s)]
+
+def _operative_sentence(n: str) -> str | None:
+    """Last outcome-bearing sentence; spec verbs (allowed/dismissed/...) win over 'directed'."""
+    sents = [s.strip() for s in SENT(n[-600:]) if s.strip()]
+    for s in reversed(sents):
+        if SPEC_OUTCOME.search(s):
+            return s
+    for s in reversed(sents):
+        if ANY_OUTCOME.search(s):
+            return s
+    for s in reversed(_substantive_sentences(n)):
+        if ANY_OUTCOME.search(s):
+            return s
+    return None
+
+def _last_substantive(n: str) -> str | None:
+    body = _substantive_sentences(n)
+    return body[-1] if body else None
+
+def map_outcome_verb(sentence: str) -> str | None:
+    """Map any outcome wording onto one of the canonical operative verbs."""
+    s = sentence.lower()
+    if re.search(r'\b(quash|set aside)', s):
+        return 'set aside'
+    if re.search(r'\b(grant|decreed|released on bail|admitted to bail|allowed)', s):
+        return 'allowed'
+    if re.search(r'\b(dismiss)', s):
+        return 'dismissed'
+    if re.search(r'\b(dispos)', s):
+        return 'disposed'
+    return None
+
 # ---------- 5) SUBMISSIONS (counsel attribution, category labels) ----------
 def extract_submissions(text: str) -> tuple[list[str], list[str]]:
     n = norm(text)
@@ -272,7 +310,8 @@ CUES = [
     (r'correspondence dated [\d-]+|letters dated', 'Contemporaneous Correspondence'),
     (r'agreement to sell|conveyance deed|sale deed', 'Title / Contract Documents'),
     (r'recovery of contraband|contraband was recovered|450 grams', 'Contraband Recovery & Forensic Record'),
-    (r'statutory notifications|data localization|executive interception', 'Official Notifications & Directives')
+    (r'statutory notifications|data localization|executive interception', 'Official Notifications & Directives'),
+    (r'impugned notification|impugned order|impugned action|impugned measure', 'Impugned Order / Notification')
 ]
 
 def extract_evidence(text: str) -> list[dict[str, Any]]:
@@ -303,26 +342,37 @@ def build_timeline(text: str, date: str | None) -> list[dict[str, Any]]:
     n = norm(text)
     ev = [{'date': m.group(0), 'fact': n[snap(n, m.start()-140):m.end()+140], 'page': '1-2'}
           for m in re.finditer(r'\d{2}-\d{2}-\d{4}', n)]
-    tail = n[-600:]
-    op = next((s for s in SENT(tail) if re.search(r'allowed|set aside|disposed|directed', s, re.I)), 'Judgment delivered.')
+    op = _operative_sentence(n) or _last_substantive(n) or n[-160:].strip()
     return ev + [{'date': date or 'Final Hearing Date', 'fact': op, 'page': '1-2'}]
 
 # ---------- 8) RISK (fully extracted; operative para = action plan) ----------
 def build_risk(text: str, subs_a: list[str], subs_b: list[str]) -> dict[str, Any]:
     n = norm(text)
-    strengths = [s for s in SENT(n) if re.search(r'We hold|established|readiness and willingness|No direct financial transfer|investigation is complete|charge sheet has already been filed', s, re.I)][:2]
-    tail = n[-600:]
-    op = next((s for s in SENT(tail) if re.search(r'allowed|set aside|disposed|directed', s, re.I)), None)
-    
-    str_list = strengths or (subs_a[:1] if subs_a else ['Established prime facie evidentiary grounds supported by record.'])
-    gap_list = subs_b[:2] if subs_b else ['Opposing counsel raises procedural and statutory contentions.']
-    act_list = [op] if op else ['Pursue relief in terms of the operative directions of the judgment.']
+    strengths = [s for s in SENT(n) if re.search(r'We hold|established|readiness and willingness|No direct financial transfer|investigation is complete|charge sheet has already been filed|renders the impugned', s, re.I)][:2]
+    op = _operative_sentence(n)
+    fallback_quote = _last_substantive(n) or n[-160:].strip()
+
+    str_list = strengths or (subs_a[:1] if subs_a else ([fallback_quote] if fallback_quote else []))
+    contest_cue = re.compile(r'\b(contended|opposed|defended|failed to|disputed|however)\b', re.I)
+    gap_src = subs_b[:2] if subs_b else [s for s in _substantive_sentences(n) if contest_cue.search(s)][:2]
+    gap_list = gap_src or ([fallback_quote] if fallback_quote else [])
+    act_list = [op] if op else ([fallback_quote] if fallback_quote else [])
+
+    if op and SPEC_OUTCOME.search(op):
+        conclusion = norm(op)
+    elif op:
+        subject_m = re.search(r'\bthe\s+([a-z][a-z\s]{3,60}?(?:petition|appeal|application|suit|award))\b', op.lower())
+        verb = map_outcome_verb(op) or 'allowed'
+        subject = subject_m.group(1) if subject_m else 'petition'
+        conclusion = f"{subject.capitalize()} is {verb}."
+    else:
+        conclusion = fallback_quote
 
     return {
         'strengths': str_list,
         'gaps': gap_list,
         'action_plan': act_list,
-        'conclusion': op or 'Relief per operative paragraph.'
+        'conclusion': conclusion
     }
 
 # ---------- 9) KG + TRUST + GATE ----------

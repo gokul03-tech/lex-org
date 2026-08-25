@@ -243,9 +243,9 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
         if isinstance(parties, list) and len(parties) > 0:
             p_name = str(parties[0])
         elif isinstance(parties, dict):
-            p_name = parties.get("plaintiff") or parties.get("petitioner") or "Not found in document"
+            p_name = parties.get("plaintiff") or parties.get("petitioner")
         else:
-            p_name = "Not found in document"
+            p_name = None
 
     r_name = _val("respondent")
     if not r_name or r_name == "Not found in document":
@@ -253,17 +253,17 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
         if isinstance(parties, list) and len(parties) > 1:
             r_name = str(parties[1])
         elif isinstance(parties, dict):
-            r_name = parties.get("defendant") or parties.get("respondent") or "Not found in document"
+            r_name = parties.get("defendant") or parties.get("respondent")
         else:
-            r_name = "Not found in document"
+            r_name = None
 
     court_name = _val("court")
     if not court_name or court_name == "Not found in document":
         courts = state.get("entities", {}).get("courts", [])
-        court_name = str(courts[0]) if (courts and isinstance(courts, list)) else case.court_name or "Not found in document"
+        court_name = str(courts[0]) if (courts and isinstance(courts, list)) else case.court_name or None
 
-    dec_date = _val("decision_date") or _val("date") or "Not found in document"
-    case_num = _val("court_matter") or _val("case_number") or case.case_number or "Not found in document"
+    dec_date = _val("decision_date") or _val("date") or None
+    case_num = _val("court_matter") or _val("case_number") or case.case_number or None
 
     cit_raw = _val("citation_numbers") or _val("citation")
     if isinstance(cit_raw, list) and cit_raw:
@@ -271,7 +271,7 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
     elif cit_raw and cit_raw != "Not found in document":
         citation_val = str(cit_raw)
     else:
-        citation_val = "Not found in document"
+        citation_val = None
 
     judges_raw = _val("presiding_judges") or state.get("entities", {}).get("judges", [])
     if isinstance(judges_raw, list) and judges_raw:
@@ -279,7 +279,7 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
     elif judges_raw and judges_raw != "Not found in document":
         judges_str = str(judges_raw)
     else:
-        judges_str = "Not found in document"
+        judges_str = None
 
     doc_info = {
         "file_name": doc.filename,

@@ -23,14 +23,16 @@ import argparse
 import csv
 import hashlib
 import json
+import os
 import re
 import sys
 import time
 from collections import Counter
+from collections.abc import Iterator
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -67,8 +69,16 @@ OPERATIVE_VERB_RE = re.compile(r"\b(?:allowed|dismissed|disposed|set aside)\b", 
 SUPPORTED_SUFFIXES = {".pdf", ".txt", ".html", ".htm"}
 MIME_BY_SUFFIX = {".pdf": "application/pdf", ".txt": "text/plain"}
 
-_norm_ws = lambda s: re.sub(r"\s+", " ", str(s or "")).strip()
-_nows = lambda s: re.sub(r"[^a-z0-9]", "", str(s or "").lower())
+def _norm_ws(s: Any) -> str:
+    """Collapse all whitespace runs to single spaces and strip."""
+    return re.sub(r"\s+", " ", str(s or "")).strip()
+
+
+def _nows(s: Any) -> str:
+    """Lowercase alphanumeric fingerprint (mirrors the pipeline's ``nows``)."""
+    return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
+
+
 EM_DASH = "\u2014"
 
 
@@ -280,7 +290,12 @@ def check_timeline(report: dict[str, Any]) -> list[Violation]:
     if not timeline:
         return [Violation("V06", "timeline is empty")]
     decision = (report.get("metadata") or {}).get("decision_date")
-    if isinstance(decision, dict) and decision.get("status") == "extracted" and decision.get("value"):
+    extracted = (
+        isinstance(decision, dict)
+        and decision.get("status") == "extracted"
+        and decision.get("value")
+    )
+    if extracted:
         tail_date = (timeline[-1] or {}).get("date") if isinstance(timeline[-1], dict) else None
         if _norm_ws(tail_date) != _norm_ws(decision["value"]):
             return [
@@ -328,9 +343,8 @@ def check_precedents(report: dict[str, Any]) -> list[Violation]:
         elif title_key and _nows(name) == title_key:
             violations.append(Violation("V08", f"{label} case_name matches the case itself"))
         similarity = precedent.get("similarity")
-        if similarity is not None and (
-            isinstance(similarity, bool) or not isinstance(similarity, (int, float)) or similarity > 100
-        ):
+        numeric = isinstance(similarity, (int, float)) and not isinstance(similarity, bool)
+        if similarity is not None and (not numeric or similarity > 100):
             violations.append(Violation("V08", f"{label} similarity out of range: {similarity!r}"))
         citation = str(precedent.get("citation") or "").strip()
         if citation:
@@ -389,7 +403,7 @@ def check_category_sections(report: dict[str, Any]) -> list[Violation]:
             violations.append(Violation("V10", f"risk.{key} is empty"))
     if not str(risk.get("conclusion") or "").strip():
         violations.append(Violation("V10", "risk.conclusion is empty"))
-    return violations()
+    return violations
 
 
 def compute_coverage(report: dict[str, Any]) -> tuple[float | None, dict[str, int]]:
@@ -441,7 +455,9 @@ def supporting_quotes(report: dict[str, Any]) -> list[str]:
     return [q for q in quotes if q.strip()]
 
 
-def llm_extra_violations(text: str, report: dict[str, Any]) -> tuple[list[Violation], dict[str, Any]]:
+def llm_extra_violations(
+    text: str, report: dict[str, Any]
+) -> tuple[list[Violation], dict[str, Any]]:
     """L01-L03: issues non-empty, operative conclusion, verbatim quote grounding."""
     from app.agents.presentation_universal import render_issues
 
@@ -455,14 +471,16 @@ def llm_extra_violations(text: str, report: dict[str, Any]) -> tuple[list[Violat
         violations.append(Violation("L02", f"conclusion lacks operative verb: {conclusion[:80]!r}"))
 
     source = _norm_ws(text)
+    quotes = [q for q in supporting_quotes(report)]
     ungrounded = 0
-    for quote in supporting_quotes(report):
+    for quote in quotes:
         if _norm_ws(quote) not in source:
             ungrounded += 1
+            snippet = _norm_ws(quote)[:90]
             violations.append(
-                Violation("L03", f"supporting quote not verbatim in source: {_norm_ws(quote)[:90]!r}")
+                Violation("L03", f"supporting quote not verbatim in source: {snippet!r}")
             )
-    stats = {"issues": len(issues), "quotes": len(supporting_quotes(report)), "ungrounded_quotes": ungrounded}
+    stats = {"issues": len(issues), "quotes": len(quotes), "ungrounded_quotes": ungrounded}
     return violations, stats
 
 
@@ -478,7 +496,7 @@ def evaluate_file(path: Path, cache_dir: Path | None = None) -> FileResult:
     if cached is not None:
         return cached
 
-    result = FileResult(file=path.name)
+    result = FileResult(file=path.name, parsed=False)
     try:
         text, result.engine, result.pages = ingest_document(path)
         report = build_analysis(text)
@@ -545,7 +563,7 @@ def aggregate_results(results: list[dict[str, Any]]) -> BatchSummary:
     trusts: list[float] = []
 
     for result in results:
-        codes = result["violation_codes"] if "violation_codes" in result else _codes_of(result)
+        codes = _codes_of(result)
         if result["parsed"]:
             summary.parsed += 1
         else:
@@ -553,7 +571,8 @@ def aggregate_results(results: list[dict[str, Any]]) -> BatchSummary:
         if result["parsed"] and not codes:
             summary.passed += 1
         if result.get("category"):
-            summary.categories[result["category"]] = summary.categories.get(result["category"], 0) + 1
+            key = result["category"]
+            summary.categories[key] = summary.categories.get(key, 0) + 1
         if isinstance(result.get("coverage"), (int, float)):
             coverages.append(float(result["coverage"]))
         if isinstance(result.get("trust_score"), (int, float)):
@@ -704,12 +723,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--sample", type=int, default=5, help="docs per category for --with-llm sampling"
     )
+    parser.add_argument(
+        "--recurse", action="store_true", help="scan --dir recursively (default: flat)"
+    )
     return parser.parse_args(argv)
 
 
-def discover_files(root: Path) -> list[Path]:
-    """Recursively collect supported documents under ``root`` (sorted)."""
-    return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in SUPPORTED_SUFFIXES)
+def discover_files(root: Path, recurse: bool = False) -> list[Path]:
+    """Collect supported documents under ``root`` (flat by default, sorted).
+
+    Flat scanning keeps stale artifacts in subdirectories (e.g. debug dumps)
+    out of the corpus; pass ``recurse=True`` to sweep the whole tree.
+    """
+    pattern = root.rglob("*") if recurse else root.glob("*")
+    return sorted(
+        p for p in pattern if p.is_file() and p.suffix.lower() in SUPPORTED_SUFFIXES
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -719,7 +748,7 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = Path(args.out).resolve()
     cache_dir = Path(os.environ.get("EVAL_CACHE_DIR", ".cache/eval"))
 
-    files = discover_files(root)
+    files = discover_files(root, recurse=args.recurse)
     if not files:
         logger.error(f"no supported documents found under {root}")
         return 2
@@ -737,20 +766,23 @@ def main(argv: list[str] | None = None) -> int:
     computed: list[dict[str, Any]] = []
     progress = tqdm(total=len(files), desc="batch-eval", unit="doc") if tqdm else None
     try:
+        if progress:
+            progress.update(len(cached_results))
         if payloads:
+            future_map = {}
             with ProcessPoolExecutor(max_workers=max(1, args.workers)) as pool:
-                futures = [pool.submit(_worker, payload) for payload in payloads]
-                for future in as_completed(futures):
+                for payload in payloads:
+                    future = pool.submit(_worker, payload)
+                    future_map[future] = Path(payload[0])
+                for future in as_completed(future_map):
                     result = future.result()
-                    computed.append(_attach_path(result, Path(result["file"])))
+                    computed.append(_attach_path(result, future_map[future]))
                     if progress:
                         progress.update(1)
-                    elif int(len(computed) % 25) == 0:
+                    elif len(computed) % 25 == 0:
                         logger.info(f"progress {len(computed)}/{len(payloads)}")
-        if progress:
-            progress.close()
     finally:
-        if progress and not progress.disable:
+        if progress:
             progress.close()
 
     results = sorted(cached_results + computed, key=lambda r: r["file"])
@@ -772,6 +804,4 @@ def _attach_path(result: dict[str, Any], path: Path) -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    import os
-
     sys.exit(main())

@@ -392,7 +392,61 @@ Run pytest in the backend directory to execute unit and provider tests:
 .venv/bin/pytest
 ```
 
+### 4. Batch Evaluation (600 docs)
+
+`backend/scripts/batch_eval.py` validates that the deterministic pipeline
+(`DocumentParser` → `build_analysis`) produces **grounded, leak-free output**
+across the full corpus in `backend/test_data/` (600 unseen judgments), with
+per-file checkpoints for resumable runs.
+
+```bash
+cd backend
+# standard run: parse + analyze + validate V01-V10, 8 parallel workers
+python -m scripts.batch_eval --dir ./test_data --out ./reports --workers 8
+
+# optional LLM-layer spot checks on a stratified sample (5 docs/category)
+python -m scripts.batch_eval --dir ./test_data --out ./reports --workers 8 --with-llm --sample 5
+
+# CI-friendly pytest wrapper over the same validators
+pytest tests/test_batch_grounding.py
+```
+
+Scanning is flat by default; add `--recurse` to sweep subdirectories.
+Progress is cached per file under `backend/.cache/eval/<sha1>.json`, so
+re-runs only process new/changed documents.
+
+**Validation rules** (each violation = `{code, message}`):
+
+| Code | Check |
+|------|-------|
+| V01 | No exception raised during ingest → analyze |
+| V02 | Banned-string scan over every string value (`"Not found in document"`, `"Mock summary"`, `"keyword"`, `"vector"`, `"Applicable Statutes"`, raw dict reprs, …) |
+| V03 | `metadata.case_title` non-empty and never equal to the filename stem |
+| V04 | Every metadata field status ∈ `{extracted, inferred, not_found}` |
+| V05 | `trust_score ∈ [40, 99]` — never 100 |
+| V06 | Timeline non-empty; tail event date equals extracted `decision_date` |
+| V07 | Every statute has a formatted display containing `—` and the act name |
+| V08 | Precedents: no junk names, no self-match vs case title, similarity ≤ 100, one citation bound to one name |
+| V09 | Category ∈ `{criminal_bail, criminal_trial, civil, arbitration, writ, other}` |
+| V10 | Submissions/evidence/risk populated; labels match `LABELS[category]` |
+
+With `--with-llm`, sampled docs additionally check: **L01** issues[] non-empty,
+**L02** conclusion contains an operative verb (`allowed|dismissed|disposed|set
+aside`), and **L03** every supporting quote exists verbatim
+(whitespace-insensitive) in the source text.
+
+**Report fields** (`reports/eval_<ts>.json` + `.csv`):
+
+- Aggregate: `total`, `parsed`, `parse_fail`, `pass_count`, `pass_rate`,
+  `categories` histogram, `avg_coverage`
+  (= extracted / (extracted+inferred+not_found)), `avg_trust`,
+  `top_violations`, `hard_violations` (V02/V03/V08), `failed_files`.
+- CSV row per file: `name, category, trust, coverage, violations`.
+
+**Exit code** is `0` iff `pass_rate ≥ 0.95` **and** zero V02/V03/V08 violations.
+
 ---
+
 
 ## 📜 License
 This project is licensed under the Apache-2.0 License. See the LICENSE file for details.
