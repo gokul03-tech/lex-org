@@ -1,0 +1,12 @@
+suite,item,metric,value
+E1_extraction,_summary,passed,PASS
+E1_extraction,_summary,micro_exact,0.9846
+E1_extraction,_summary,macro_f1,0.9441
+E1_extraction,_summary,sections_f1,0.7
+E1_extraction,_summary,articles_f1,0.95
+E1_extraction,_summary,precedents_pair_acc,1.0
+E1_extraction,_summary,duration_s,0.1
+E1_extraction,vikram,detail,"{""doc"": ""vikram"", ""court"": 1.0, ""petitioner"": 1.0, ""respondent"": 1.0, ""decision_date"": 1.0, ""case_number"": 1.0, ""category"": 1.0, ""judges_f1"": 1.0, ""citations_f1"": 0.667, ""timeline_recall"": 0.889, ""sections_f1"": 1.0, ""articles_f1"": 1.0, ""precedents_acc"": 1.0}"
+E1_extraction,ananya,detail,"{""doc"": ""ananya"", ""court"": 1.0, ""petitioner"": 1.0, ""respondent"": 1.0, ""decision_date"": 1.0, ""case_number"": 1.0, ""category"": 1.0, ""judges_f1"": 1.0, ""citations_f1"": 1.0, ""timeline_recall"": 1.0, ""sections_f1"": 0.0, ""articles_f1"": 0.8, ""precedents_acc"": 1.0}"
+E1_extraction,apex,detail,"{""doc"": ""apex"", ""court"": 1.0, ""petitioner"": 1.0, ""respondent"": 1.0, ""decision_date"": 1.0, ""case_number"": 1.0, ""category"": 1.0, ""judges_f1"": 1.0, ""citations_f1"": 1.0, ""timeline_recall"": 0.889, ""sections_f1"": 1.0, ""articles_f1"": 1.0, ""precedents_acc"": 1.0}"
+E1_extraction,mehta,detail,"{""doc"": ""mehta"", ""court"": 1.0, ""petitioner"": 1.0, ""respondent"": 1.0, ""decision_date"": 1.0, ""case_number"": 1.0, ""category"": 1.0, ""judges_f1"": 1.0, ""citations_f1"": 1.0, ""timeline_recall"": 1.0, ""sections_f1"": 0.8, ""articles_f1"": 1.0, ""precedents_acc"": 1.0}"

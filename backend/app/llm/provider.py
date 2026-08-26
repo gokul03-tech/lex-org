@@ -126,7 +126,23 @@ def get_llm_provider(model_type: str = "qwen") -> LLMProvider:
 
         model_path = settings.QWEN_MODEL_PATH if model_type == "qwen" else settings.DEEPSEEK_MODEL_PATH
         if not model_path:
-            raise ValueError(f"No model path configured for {model_type}. Set QWEN_MODEL_PATH or DEEPSEEK_MODEL_PATH.")
+            # No GGUF configured for this slot: load local HF weights instead
+            # (e.g. an AWQ model stored under MODELS_DIR) via transformers.
+            hf_model_id = (
+                settings.QWEN_HF_MODEL_ID if model_type == "qwen" else settings.DEEPSEEK_HF_MODEL_ID
+            )
+            from loguru import logger
+
+            logger.warning(
+                f"No GGUF path configured for '{model_type}' under LLM_BACKEND=llama_cpp; "
+                f"falling back to TransformersProvider with model_id={hf_model_id}"
+            )
+            from app.llm.transformers_provider import TransformersProvider
+
+            return TransformersProvider(
+                model_name=f"{model_type}-transformers",
+                model_id=hf_model_id,
+            )
         return LlamaCppProvider(
             model_name=f"{model_type}-gguf",
             model_path=model_path,

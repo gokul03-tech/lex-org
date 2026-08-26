@@ -1,0 +1,61 @@
+suite,item,metric,value
+E1_extraction,_summary,passed,PASS
+E1_extraction,_summary,micro_exact,0.9846
+E1_extraction,_summary,macro_f1,0.9774
+E1_extraction,_summary,sections_f1,0.95
+E1_extraction,_summary,articles_f1,0.95
+E1_extraction,_summary,precedents_pair_acc,1.0
+E1_extraction,_summary,duration_s,0.1
+E1_extraction,vikram,detail,"{""doc"": ""vikram"", ""court"": 1.0, ""petitioner"": 1.0, ""respondent"": 1.0, ""decision_date"": 1.0, ""case_number"": 1.0, ""category"": 1.0, ""judges_f1"": 1.0, ""citations_f1"": 0.667, ""timeline_recall"": 0.889, ""sections_f1"": 1.0, ""articles_f1"": 1.0, ""precedents_acc"": 1.0}"
+E1_extraction,ananya,detail,"{""doc"": ""ananya"", ""court"": 1.0, ""petitioner"": 1.0, ""respondent"": 1.0, ""decision_date"": 1.0, ""case_number"": 1.0, ""category"": 1.0, ""judges_f1"": 1.0, ""citations_f1"": 1.0, ""timeline_recall"": 1.0, ""sections_f1"": 1.0, ""articles_f1"": 0.8, ""precedents_acc"": 1.0}"
+E1_extraction,apex,detail,"{""doc"": ""apex"", ""court"": 1.0, ""petitioner"": 1.0, ""respondent"": 1.0, ""decision_date"": 1.0, ""case_number"": 1.0, ""category"": 1.0, ""judges_f1"": 1.0, ""citations_f1"": 1.0, ""timeline_recall"": 0.889, ""sections_f1"": 1.0, ""articles_f1"": 1.0, ""precedents_acc"": 1.0}"
+E1_extraction,mehta,detail,"{""doc"": ""mehta"", ""court"": 1.0, ""petitioner"": 1.0, ""respondent"": 1.0, ""decision_date"": 1.0, ""case_number"": 1.0, ""category"": 1.0, ""judges_f1"": 1.0, ""citations_f1"": 1.0, ""timeline_recall"": 1.0, ""sections_f1"": 0.8, ""articles_f1"": 1.0, ""precedents_acc"": 1.0}"
+E2_retrieval,_summary,passed,PASS
+E2_retrieval,_summary,bm25_only,"{""recall_at_5"": 0.95, ""precision_at_5"": 0.65, ""mrr"": 0.875, ""ndcg_at_10"": 0.9191}"
+E2_retrieval,_summary,vector_only,"{""recall_at_5"": 0.1625, ""precision_at_5"": 0.15, ""mrr"": 0.4479, ""ndcg_at_10"": 0.5276}"
+E2_retrieval,_summary,hybrid_rrf,"{""recall_at_5"": 0.6208, ""precision_at_5"": 0.4, ""mrr"": 0.8125, ""ndcg_at_10"": 0.7761}"
+E2_retrieval,_summary,hybrid_rerank,"{""recall_at_5"": 0.5792, ""precision_at_5"": 0.4, ""mrr"": 0.875, ""ndcg_at_10"": 0.8145}"
+E2_retrieval,_summary,primary_recall_at_5,0.5792
+E2_retrieval,_summary,primary_precision_at_5,0.4
+E2_retrieval,_summary,primary_mrr,0.875
+E2_retrieval,_summary,primary_ndcg_at_10,0.8145
+E2_retrieval,_summary,duration_s,50.3
+E3_grounding,_summary,passed,PASS
+E3_grounding,_summary,total_violations,0
+E3_grounding,_summary,duration_s,0.0
+E3_grounding,vikram,detail,"{""doc"": ""vikram"", ""violations"": [], ""count"": 0, ""trust"": 99}"
+E3_grounding,ananya,detail,"{""doc"": ""ananya"", ""violations"": [], ""count"": 0, ""trust"": 97}"
+E3_grounding,apex,detail,"{""doc"": ""apex"", ""violations"": [], ""count"": 0, ""trust"": 97}"
+E3_grounding,mehta,detail,"{""doc"": ""mehta"", ""violations"": [], ""count"": 0, ""trust"": 97}"
+E4_reasoning,_summary,passed,PASS
+E4_reasoning,_summary,irac_avg,1.0
+E4_reasoning,_summary,outcome_acc,1.0
+E4_reasoning,_summary,label_acc,1.0
+E4_reasoning,_summary,duration_s,0.0
+E4_reasoning,vikram,detail,"{""doc"": ""vikram"", ""irac"": {""issue"": true, ""rule"": true, ""application"": true, ""conclusion"": true, ""score"": 1.0}, ""predicted_outcome"": ""allowed"", ""gold_outcome"": ""allowed"", ""outcome_correct"": true, ""labels_ok"": true, ""llm_judge"": null}"
+E4_reasoning,ananya,detail,"{""doc"": ""ananya"", ""irac"": {""issue"": true, ""rule"": true, ""application"": true, ""conclusion"": true, ""score"": 1.0}, ""predicted_outcome"": ""disposed of"", ""gold_outcome"": ""disposed of"", ""outcome_correct"": true, ""labels_ok"": true, ""llm_judge"": null}"
+E4_reasoning,apex,detail,"{""doc"": ""apex"", ""irac"": {""issue"": true, ""rule"": true, ""application"": true, ""conclusion"": true, ""score"": 1.0}, ""predicted_outcome"": ""partly allowed"", ""gold_outcome"": ""partly allowed"", ""outcome_correct"": true, ""labels_ok"": true, ""llm_judge"": null}"
+E4_reasoning,mehta,detail,"{""doc"": ""mehta"", ""irac"": {""issue"": true, ""rule"": true, ""application"": true, ""conclusion"": true, ""score"": 1.0}, ""predicted_outcome"": ""allowed"", ""gold_outcome"": ""allowed"", ""outcome_correct"": true, ""labels_ok"": true, ""llm_judge"": null}"
+E5_human_pack,_summary,passed,PASS
+E5_human_pack,_summary,pack_path,"""reports/human_eval_pack.md"""
+E5_human_pack,_summary,docs,4
+E5_human_pack,_summary,duration_s,0.0
+E6_performance,_summary,passed,PASS
+E6_performance,_summary,stages,"{""metadata"": {""p50_ms"": 0.2, ""p95_ms"": 0.3}, ""sections"": {""p50_ms"": 0.1, ""p95_ms"": 0.1}, ""precedents"": {""p50_ms"": 0.2, ""p95_ms"": 0.2}, ""submissions"": {""p50_ms"": 0.5, ""p95_ms"": 0.7}, ""evidence"": {""p50_ms"": 0.5, ""p95_ms"": 0.6}, ""timeline"": {""p50_ms"": 0.1, ""p95_ms"": 0.2}, ""risk"": {""p50_ms"": 0.3, ""p95_ms"": 0.3}, ""kg"": {""p50_ms"": 0.0, ""p95_ms"": 0.0}, ""gate"": {""p50_ms"": 0.1, ""p95_ms"": 0.1}, ""parse"": {""p50_ms"": 4.1, ""p95_ms"": 4.7}}"
+E6_performance,_summary,docs_per_min,9684.4
+E6_performance,_summary,avg_total_ms,6.2
+E6_performance,_summary,rss_delta_mb,0.0
+E6_performance,_summary,duration_s,0.1
+E7_robustness,_summary,passed,PASS
+E7_robustness,_summary,mode,"""corpus"""
+E7_robustness,_summary,files,600
+E7_robustness,_summary,parsed,600
+E7_robustness,_summary,pass_rate,1.0
+E7_robustness,_summary,categories,"{""criminal_bail"": 240, ""arbitration"": 120, ""writ"": 120, ""civil"": 120}"
+E7_robustness,_summary,unknown_categories,[]
+E7_robustness,_summary,top_violations,[]
+E7_robustness,_summary,duration_s,0.1
+E8_ablation,_summary,passed,PASS
+E8_ablation,_summary,configs,"[{""config"": ""full"", ""field_f1"": 0.99, ""violations"": 0, ""mrr"": 0.875}, {""config"": ""no_kg"", ""field_f1"": 0.99, ""violations"": 0, ""mrr"": 0.875}, {""config"": ""no_gate"", ""field_f1"": 0.99, ""violations"": 0, ""mrr"": 0.875}, {""config"": ""no_bm25"", ""field_f1"": 0.99, ""violations"": 0, ""mrr"": 0.4479}, {""config"": ""no_vector"", ""field_f1"": 0.99, ""violations"": 0, ""mrr"": 0.875}, {""config"": ""no_reranker"", ""field_f1"": 0.99, ""violations"": 0, ""mrr"": 0.8125}]"
+E8_ablation,_summary,deltas,"[{""config"": ""full"", ""field_f1_delta"": 0.0, ""mrr_delta"": 0.0, ""extra_violations"": 0}, {""config"": ""no_kg"", ""field_f1_delta"": 0.0, ""mrr_delta"": 0.0, ""extra_violations"": 0}, {""config"": ""no_gate"", ""field_f1_delta"": 0.0, ""mrr_delta"": 0.0, ""extra_violations"": 0}, {""config"": ""no_bm25"", ""field_f1_delta"": 0.0, ""mrr_delta"": -0.4271, ""extra_violations"": 0}, {""config"": ""no_vector"", ""field_f1_delta"": 0.0, ""mrr_delta"": 0.0, ""extra_violations"": 0}, {""config"": ""no_reranker"", ""field_f1_delta"": 0.0, ""mrr_delta"": -0.0625, ""extra_violations"": 0}]"
+E8_ablation,_summary,duration_s,0.5

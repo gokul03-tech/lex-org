@@ -1,0 +1,10 @@
+suite,item,metric,value
+E7_robustness,_summary,passed,PASS
+E7_robustness,_summary,mode,"""corpus"""
+E7_robustness,_summary,files,600
+E7_robustness,_summary,parsed,600
+E7_robustness,_summary,pass_rate,1.0
+E7_robustness,_summary,categories,"{""criminal_bail"": 240, ""arbitration"": 120, ""writ"": 120, ""civil"": 120}"
+E7_robustness,_summary,unknown_categories,[]
+E7_robustness,_summary,top_violations,[]
+E7_robustness,_summary,duration_s,0.2

@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any
 
 DEFAULT_BANNED: tuple[str, ...] = (
     "Not found in document",
@@ -145,7 +146,8 @@ def mrr(ranked_relevance: list[int]) -> float:
 
 def ndcg_at_k(ranked_relevance: list[int], k: int) -> float:
     """Normalized discounted cumulative gain with log2 discount."""
-    dcg = sum(rel / math.log2(i + 1) for i, rel in enumerate(_gains_at(ranked_relevance, k), start=1))
+    gains = _gains_at(ranked_relevance, k)
+    dcg = sum(rel / math.log2(i + 1) for i, rel in enumerate(gains, start=1))
     ideal = sorted(ranked_relevance, reverse=True)[:k]
     idcg = sum(rel / math.log2(i + 1) for i, rel in enumerate(ideal, start=1))
     return dcg / idcg if idcg > 0 else 0.0
@@ -156,7 +158,10 @@ def aggregate_ranking(per_query_rows: list[dict[str, float]]) -> RankingReport:
     if not per_query_rows:
         return RankingReport()
     keys = ("recall_at_5", "precision_at_5", "mrr", "ndcg_at_10")
-    avg = {key: sum(row.get(key, 0.0) for row in per_query_rows) / len(per_query_rows) for key in keys}
+    avg = {
+        key: sum(row.get(key, 0.0) for row in per_query_rows) / len(per_query_rows)
+        for key in keys
+    }
     return RankingReport(**avg, per_query=per_query_rows)
 
 

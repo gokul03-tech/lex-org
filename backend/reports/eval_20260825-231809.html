@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>LexOrch-KG Evaluation Dashboard</title>
+<style>
+ body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;margin:24px;background:#f8fafc;color:#0f172a}
+ h1{font-size:22px} .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
+ .card{background:#fff;border-radius:12px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+ .chip{color:#fff;border-radius:999px;padding:2px 12px;font-size:12px;font-weight:700}
+ table{border-collapse:collapse;width:100%;font-size:13px}
+ td,th{border-bottom:1px solid #e2e8f0;padding:6px 8px;text-align:left}
+ th{background:#f1f5f9} code{font-size:11px}
+ .bar-row{display:flex;align-items:center;margin:4px 0}
+ .bar-label{width:170px;font-size:12px;color:#475569}
+ .bar{background:#dc2626;color:#fff;font-size:11px;padding:3px 6px;border-radius:4px;min-width:30px;text-align:right}
+ .bar.lat{background:#2563eb} .ok{color:#16a34a;font-weight:600}
+ footer{margin-top:28px;color:#94a3b8;font-size:12px}
+</style></head><body>
+<h1>LexOrch-KG Evaluation Dashboard</h1>
+<p>Generated 2026-08-25 23:18:09 &middot; gates:
+<span class="chip" style="background:#16a34a">E1_f1_ge_0.90</span> <span class="chip" style="background:#16a34a">E2_mrr_ge_0.80</span> <span class="chip" style="background:#16a34a">E3_violations_eq_0</span>
+</p>
+<div class="grid">
+        <div class="card">
+          <h3>E1_extraction <span class="chip" style="background:#16a34a">PASS</span></h3>
+          <table><tr><th>metric</th><th>value</th></tr><tr><td>micro_exact</td><td><code>0.9846</code></td></tr><tr><td>macro_f1</td><td><code>0.9441</code></td></tr><tr><td>sections_f1</td><td><code>0.7</code></td></tr><tr><td>articles_f1</td><td><code>0.95</code></td></tr><tr><td>precedents_pair_acc</td><td><code>1.0</code></td></tr><tr><td>duration_s</td><td><code>0.1</code></td></tr></table>
+        </div>
+        <div class="card">
+          <h3>E2_retrieval <span class="chip" style="background:#16a34a">PASS</span></h3>
+          <table><tr><th>metric</th><th>value</th></tr><tr><td>bm25_only</td><td><code>{"recall_at_5": 0.95, "precision_at_5": 0.65, "mrr": 0.875, "ndcg_at_10": 0.9191}</code></td></tr><tr><td>vector_only</td><td><code>{"recall_at_5": 0.1125, "precision_at_5": 0.1, "mrr": 0.1375, "ndcg_at_10": 0.3076}</code></td></tr><tr><td>hybrid_rrf</td><td><code>{"recall_at_5": 0.4, "precision_at_5": 0.3, "mrr": 0.4167, "ndcg_at_10": 0.6221}</code></td></tr><tr><td>hybrid_rerank</td><td><code>{"recall_at_5": 0.5792, "precision_at_5": 0.4, "mrr": 0.875, "ndcg_at_10": 0.8145}</code></td></tr><tr><td>duration_s</td><td><code>17.1</code></td></tr></table>
+        </div>
+        <div class="card">
+          <h3>E3_grounding <span class="chip" style="background:#16a34a">PASS</span></h3>
+          <table><tr><th>metric</th><th>value</th></tr><tr><td>total_violations</td><td><code>0</code></td></tr><tr><td>duration_s</td><td><code>0.0</code></td></tr></table>
+        </div>
+        <div class="card">
+          <h3>E4_reasoning <span class="chip" style="background:#16a34a">PASS</span></h3>
+          <table><tr><th>metric</th><th>value</th></tr><tr><td>irac_avg</td><td><code>1.0</code></td></tr><tr><td>outcome_acc</td><td><code>1.0</code></td></tr><tr><td>label_acc</td><td><code>1.0</code></td></tr><tr><td>duration_s</td><td><code>0.0</code></td></tr></table>
+        </div>
+        <div class="card">
+          <h3>E5_human_pack <span class="chip" style="background:#16a34a">PASS</span></h3>
+          <table><tr><th>metric</th><th>value</th></tr><tr><td>pack_path</td><td><code>"reports/human_eval_pack.md"</code></td></tr><tr><td>docs</td><td><code>4</code></td></tr><tr><td>duration_s</td><td><code>0.0</code></td></tr></table>
+        </div>
+        <div class="card">
+          <h3>E6_performance <span class="chip" style="background:#16a34a">PASS</span></h3>
+          <table><tr><th>metric</th><th>value</th></tr><tr><td>stages</td><td><code>{"metadata": {"p50_ms": 0.2, "p95_ms": 0.3}, "sections": {"p50_ms": 0.1, "p95_ms": 0.1}, "precedents": {"p50_ms": 0.2, "p95_ms": 0.2}, "submissions": {"p50_ms": 0.5, "p95_ms": 0.6}, "evidence": {"p50_ms": 0.6, "p95_ms": </code></td></tr><tr><td>docs_per_min</td><td><code>9343.9</code></td></tr><tr><td>avg_total_ms</td><td><code>6.4</code></td></tr><tr><td>rss_delta_mb</td><td><code>0.0</code></td></tr><tr><td>duration_s</td><td><code>0.1</code></td></tr></table>
+        </div>
+        <div class="card">
+          <h3>E7_robustness <span class="chip" style="background:#16a34a">PASS</span></h3>
+          <table><tr><th>metric</th><th>value</th></tr><tr><td>mode</td><td><code>"leave_one_type_out"</code></td></tr><tr><td>docs</td><td><code>4</code></td></tr><tr><td>cue_masked_detection_changes</td><td><code>16</code></td></tr><tr><td>total_probes</td><td><code>20</code></td></tr><tr><td>duration_s</td><td><code>0.1</code></td></tr></table>
+        </div>
+        <div class="card">
+          <h3>E8_ablation <span class="chip" style="background:#16a34a">PASS</span></h3>
+          <table><tr><th>metric</th><th>value</th></tr><tr><td>configs</td><td><code>[{"config": "full", "field_f1": 0.94, "violations": 0, "mrr": 0.875}, {"config": "no_kg", "field_f1": 0.94, "violations": 0, "mrr": 0.875}, {"config": "no_gate", "field_f1": 0.94, "violations": 0, "mrr": 0.875}, {"config</code></td></tr><tr><td>deltas</td><td><code>[{"config": "full", "field_f1_delta": 0.0, "mrr_delta": 0.0, "extra_violations": 0}, {"config": "no_kg", "field_f1_delta": 0.0, "mrr_delta": 0.0, "extra_violations": 0}, {"config": "no_gate", "field_f1_delta": 0.0, "mrr_</code></td></tr><tr><td>duration_s</td><td><code>0.5</code></td></tr></table>
+        </div></div>
+<div class="card"><h3>Violation histogram</h3><p class="ok">No violations recorded.</p></div>
+<div class="card"><h3>Stage latency (p50)</h3><div class="bar-row"><span class="bar-label">metadata</span><div class="bar lat" style="width:4%">0.2 ms</div></div><div class="bar-row"><span class="bar-label">sections</span><div class="bar lat" style="width:2%">0.1 ms</div></div><div class="bar-row"><span class="bar-label">precedents</span><div class="bar lat" style="width:4%">0.2 ms</div></div><div class="bar-row"><span class="bar-label">submissions</span><div class="bar lat" style="width:11%">0.5 ms</div></div><div class="bar-row"><span class="bar-label">evidence</span><div class="bar lat" style="width:13%">0.6 ms</div></div><div class="bar-row"><span class="bar-label">timeline</span><div class="bar lat" style="width:2%">0.1 ms</div></div><div class="bar-row"><span class="bar-label">risk</span><div class="bar lat" style="width:6%">0.3 ms</div></div><div class="bar-row"><span class="bar-label">kg</span><div class="bar lat" style="width:0%">0.0 ms</div></div><div class="bar-row"><span class="bar-label">gate</span><div class="bar lat" style="width:2%">0.1 ms</div></div><div class="bar-row"><span class="bar-label">parse</span><div class="bar lat" style="width:100%">4.4 ms</div></div></div>
+<div class="card"><h3>Ablation &Delta; table</h3><table><tr><th>config</th><th>Δ field_f1</th><th>Δ mrr</th><th>extra viol</th></tr><tr><td>full</td><td>0.0</td><td>0.0</td><td>0</td></tr><tr><td>no_kg</td><td>0.0</td><td>0.0</td><td>0</td></tr><tr><td>no_gate</td><td>0.0</td><td>0.0</td><td>0</td></tr><tr><td>no_bm25</td><td>0.0</td><td>-0.7375</td><td>0</td></tr><tr><td>no_vector</td><td>0.0</td><td>0.0</td><td>0</td></tr><tr><td>no_reranker</td><td>0.0</td><td>-0.4583</td><td>0</td></tr></table></div>
+<footer>LexOrch-KG evaluation framework - self-contained report.</footer>
+</body></html>

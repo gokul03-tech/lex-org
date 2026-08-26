@@ -277,53 +277,76 @@ For servers with dedicated GPU setups (e.g., V100/A100 or high VRAM RTX GPUs), l
 
 ### Prerequisites
 * Docker & Docker Compose
-* Python 3.10 - 3.13
+* Python 3.10 - 3.13 (`python3.13` recommended)
 * Node.js (v18+) & npm
 
 ---
 
-### Step-by-Step Installation
+### ⚡ Quick Start: Running the Project
 
-#### 1. Configure Environments
-Copy the config template in the project root:
+To run the complete application, open separate terminals for the backend and frontend services:
+
+#### Step 1: Start Database Containers
 ```bash
-cp configs/.env.example .env
-```
-Ensure to also copy or maintain `.env` inside the `backend/` folder.
-
-#### 2. Start the Databases (Docker)
-Ensure Docker is running, then start the Qdrant and FalkorDB containers:
-```bash
-# Start Qdrant (v1.10.0) on port 6333
-docker run -d -p 6333:6333 -p 6334:6334 --name lexorch-qdrant qdrant/qdrant:v1.10.0
-
-# Start FalkorDB on port 6379 (connecting to port 6379 of Redis engine wrapper)
-docker run -d -p 6379:6379 --name falkordb falkordb/falkordb:latest
-```
-
-If the containers already exist, run:
-```bash
+# Start pre-configured Qdrant and FalkorDB containers
 docker start lexorch-qdrant falkordb
+
+# OR if starting for the first time via Docker Compose:
+docker compose -f docker/docker-compose.yml up -d qdrant falkordb redis
 ```
 
-#### 3. Setup Backend Environment
-Navigate to `backend/`, create a virtual environment, and install dependencies in editable mode:
+#### Step 2: Start the Backend Server
 ```bash
 cd backend
-python3 -m venv .venv
+source .venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+> **Note:** If creating a fresh virtual environment on systems where Python 3.14 is default, initialize with Python 3.13:
+> `python3.13 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
+
+#### Step 3: Start the Frontend Client
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+#### 🌐 Access Links
+| Service | URL | Description |
+| :--- | :--- | :--- |
+| **Frontend Web App** | [`http://localhost:5173`](http://localhost:5173) | Interactive Legal Advisory UI |
+| **Backend Swagger Docs** | [`http://localhost:8000/docs`](http://localhost:8000/docs) | Interactive OpenAPI / Swagger UI |
+| **Backend Health Check** | [`http://localhost:8000/health`](http://localhost:8000/health) | API & System Health endpoint |
+| **Qdrant Dashboard** | [`http://localhost:6333/dashboard`](http://localhost:6333/dashboard) | Vector DB web console |
+
+---
+
+### Detailed Setup & Ingestion
+
+#### 1. Configure Environments
+Copy the configuration template to root and backend:
+```bash
+cp configs/.env.example .env
+cp configs/.env.example backend/.env
+```
+
+#### 2. Setup Backend Virtual Environment
+```bash
+cd backend
+python3.13 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 ```
 *(If you have an NVIDIA GPU, verify that PyTorch is installed with CUDA support to enable fast local BGE-M3 embeddings).*
 
-#### 4. Download local BGE-M3 Embeddings
-To download and save the BGE-M3 model weights locally for offline acceleration, run:
+#### 3. Download Local BGE-M3 Embeddings (Optional)
+To cache the BGE-M3 model weights locally for offline acceleration:
 ```bash
 python setup_bge_m3.py
 ```
 This saves the model weights under `models/bge-m3/`.
 
-#### 5. Ingest Legal Corpora
+#### 4. Ingest Legal Corpora
 Seed your vector database with the core legal dataset (Indian Constitution and central Acts):
 ```bash
 # Ingest the Indian Constitution
@@ -332,24 +355,6 @@ python scripts/ingest_constitution.py
 # Ingest other central Acts and dataset corpus files
 python scripts/ingest_datasets.py
 ```
-
-#### 6. Run the Servers
-
-##### Launch the Backend API:
-```bash
-cd backend
-source .venv/bin/activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-*API docs will be available at: `http://localhost:8000/docs`*
-
-##### Launch the Frontend React Client:
-```bash
-cd frontend
-npm install
-npm run dev
-```
-*Open your browser and navigate to: `http://localhost:5173`*
 
 ---
 
@@ -446,6 +451,43 @@ aside`), and **L03** every supporting quote exists verbatim
 **Exit code** is `0` iff `pass_rate ≥ 0.95` **and** zero V02/V03/V08 violations.
 
 ---
+
+## 📊 Evaluation Framework
+
+A complete 8-suite evaluation framework lives in `backend/evals/` +
+`backend/scripts/eval_suite.py`, gated by a hand-verified GOLD dataset
+(`evals/gold.py`: vikram / ananya / apex / mehta).
+
+```bash
+cd backend
+make eval                 # all 8 suites + JSON/CSV/HTML reports
+make eval-corpus          # E7 robustness over all 600 test_data docs (checkpointed)
+python -m scripts.eval_suite --suite retrieval            # single suite
+python -m scripts.eval_suite --suite all --dir ./test_data --workers 8 --with-llm
+pytest tests/test_eval_suite.py           # CI gate
+```
+
+| Suite | What it measures | Pass gate |
+|-------|------------------|-----------|
+| **E1 extraction** | per-field exact match vs GOLD; section→act F1, article F1, precedent name+citation pairs, timeline recall | macro-F1 ≥ 0.90 |
+| **E2 retrieval** | Recall@5 / P@5 / MRR / nDCG@10 over gold qrels; ablation matrix: bm25-only / vector-only / hybrid-RRF / hybrid+reranker | MRR ≥ 0.80 |
+| **E3 grounding ⭐** | banned-string scan, whitespace-insensitive verbatim quotes, citation binding, no self-match, trust ∈ [40,99] | violations = 0 |
+| **E4 reasoning** | IRAC completeness; outcome verb vs GOLD (`allowed/partly allowed/disposed of/dismissed`); label accuracy; optional `--with-llm` judge (temp 0, rubric 1–5) | IRAC = 1.0, outcome ≥ 0.75 |
+| **E5 human** | generates `reports/human_eval_pack.md`: fact-check Qs w/ gold answers, 4-dim Likert sheet, 10-item SUS | — |
+| **E6 performance** | p50/p95 ms per pipeline stage (parse→metadata→…→gate), docs/min, RSS delta | ≥ 10 docs/min |
+| **E7 robustness** | `--dir`: full-corpus pass rate + category histogram + top violations (reuses `.cache/eval/<sha1>.json` checkpoints); else leave-one-category-out cue masking | pass rate ≥ 0.95 (when `--dir`) |
+| **E8 ablation** | Δ table: `full / -kg / -gate / -bm25 / -vector / -reranker` on E1 F1, E2 MRR, E3 violations | — |
+
+**Global exit gate:** `0` iff E1 F1 ≥ 0.90 **AND** E3 violations = 0 **AND**
+E2 MRR ≥ 0.80 **AND** (E7 ≥ 0.95 when `--dir` is passed).
+
+Reports land in `backend/reports/eval_<ts>.json`, `.csv`, and a self-contained
+`.html` dashboard (suite cards with red/green chips, violation histogram,
+latency bars, ablation Δ table). Retrieval runs on CPU by default so a live
+server keeps its GPU memory (`LEXORCH_EVAL_DEVICE=cuda` to override).
+
+---
+
 
 
 ## 📜 License

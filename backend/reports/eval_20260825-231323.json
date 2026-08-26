@@ -1,0 +1,84 @@
+{
+  "generated_at": "2026-08-25 23:13:23",
+  "suites": [
+    {
+      "suite": "E1_extraction",
+      "passed": true,
+      "metrics": {
+        "micro_exact": 0.9846,
+        "macro_f1": 0.9441,
+        "sections_f1": 0.7,
+        "articles_f1": 0.95,
+        "precedents_pair_acc": 1.0,
+        "duration_s": 0.1
+      },
+      "details": [
+        {
+          "doc": "vikram",
+          "court": 1.0,
+          "petitioner": 1.0,
+          "respondent": 1.0,
+          "decision_date": 1.0,
+          "case_number": 1.0,
+          "category": 1.0,
+          "judges_f1": 1.0,
+          "citations_f1": 0.667,
+          "timeline_recall": 0.889,
+          "sections_f1": 1.0,
+          "articles_f1": 1.0,
+          "precedents_acc": 1.0
+        },
+        {
+          "doc": "ananya",
+          "court": 1.0,
+          "petitioner": 1.0,
+          "respondent": 1.0,
+          "decision_date": 1.0,
+          "case_number": 1.0,
+          "category": 1.0,
+          "judges_f1": 1.0,
+          "citations_f1": 1.0,
+          "timeline_recall": 1.0,
+          "sections_f1": 0.0,
+          "articles_f1": 0.8,
+          "precedents_acc": 1.0
+        },
+        {
+          "doc": "apex",
+          "court": 1.0,
+          "petitioner": 1.0,
+          "respondent": 1.0,
+          "decision_date": 1.0,
+          "case_number": 1.0,
+          "category": 1.0,
+          "judges_f1": 1.0,
+          "citations_f1": 1.0,
+          "timeline_recall": 0.889,
+          "sections_f1": 1.0,
+          "articles_f1": 1.0,
+          "precedents_acc": 1.0
+        },
+        {
+          "doc": "mehta",
+          "court": 1.0,
+          "petitioner": 1.0,
+          "respondent": 1.0,
+          "decision_date": 1.0,
+          "case_number": 1.0,
+          "category": 1.0,
+          "judges_f1": 1.0,
+          "citations_f1": 1.0,
+          "timeline_recall": 1.0,
+          "sections_f1": 0.8,
+          "articles_f1": 1.0,
+          "precedents_acc": 1.0
+        }
+      ]
+    }
+  ],
+  "gates": {
+    "E1_f1_ge_0.90": true,
+    "E2_mrr_ge_0.80": false,
+    "E3_violations_eq_0": false
+  }
+}

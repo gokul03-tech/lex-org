@@ -14,9 +14,10 @@ Usage (from backend/):
     python -m scripts.eval_suite --suite all
     python -m scripts.eval_suite --suite all --dir ./test_data --workers 8
 
-Exit 0 iff E1 F1 >= 0.90 AND E3 violations == 0 AND E2 MRR >= 0.8 AND
-(E7 >= 0.95 when --dir was given).
+    Exit 0 iff E1 F1 >= 0.90 AND E3 violations == 0 AND E2 MRR >= 0.8 AND
+    (E7 >= 0.95 when --dir was given).
 """
+# ruff: noqa: E501  (self-contained HTML/CSS report templates cannot be wrapped)
 from __future__ import annotations
 
 import argparse
@@ -43,9 +44,22 @@ except ImportError:  # pragma: no cover
 
 from loguru import logger
 
-from evals.gold import GOLD, TEST_DATA_DIR, gold_docs, gold_markers
+from app.agents.presentation_universal import (
+    LABELS,
+    bind_sections,
+    build_analysis,
+    build_kg,
+    build_risk,
+    build_timeline,
+    detect_category,
+    extract_evidence,
+    extract_metadata,
+    extract_precedents,
+    extract_submissions,
+)
+from app.document_pipeline.parser import DocumentParser
+from evals.gold import GOLD, gold_docs, gold_markers
 from evals.metrics import (
-    act_matches,
     aggregate_ranking,
     citation_binding_violations,
     exact_match,
@@ -55,7 +69,6 @@ from evals.metrics import (
     mapping_f1,
     mrr,
     ndcg_at_k,
-    norm_text,
     outcome_accuracy,
     outcome_normalize,
     pair_accuracy,
@@ -65,19 +78,6 @@ from evals.metrics import (
     verbatim,
     ws_norm,
 )
-from app.agents.presentation_universal import (
-    LABELS,
-    build_analysis,
-    build_kg,
-    bind_sections,
-    detect_category,
-    extract_evidence,
-    extract_metadata,
-    extract_precedents,
-    extract_submissions,
-)
-from app.document_pipeline.parser import DocumentParser
-from app.agents.presentation_universal import build_timeline, build_risk
 
 REPORTS_DIR = Path("./reports")
 PASS_E1_F1 = 0.90
@@ -160,6 +160,15 @@ def _meta_value(report: dict[str, Any], key: str) -> Any:
     return value.get("value") if isinstance(value, dict) else value
 
 
+def _statute_map(report: dict[str, Any]) -> dict[str, str]:
+    """Section->act map excluding constitutional articles (compared separately)."""
+    return {
+        s["num"]: s["act"]
+        for s in report.get("sections") or []
+        if not str(s.get("num", "")).startswith("Art.")
+    }
+
+
 def e1_extraction(docs: list) -> SuiteResult:
     """Per-field exact/F1 comparison of pipeline output against GOLD."""
     result = SuiteResult("E1_extraction")
@@ -170,7 +179,6 @@ def e1_extraction(docs: list) -> SuiteResult:
 
     for doc in docs:
         report, _ = build_report(load_text(doc.path))
-        meta = report.get("metadata") or {}
         pred_judges = _meta_value(report, "judges") or _meta_value(report, "presiding_judges") or []
         pred_citations = _meta_value(report, "citation_numbers") or []
 
@@ -194,7 +202,7 @@ def e1_extraction(docs: list) -> SuiteResult:
                 else 1.0
             ),
         }
-        section_scores.append(mapping_f1({s["num"]: s["act"] for s in report.get("sections") or []}, doc.sections))
+        section_scores.append(mapping_f1(_statute_map(report), doc.sections))
         article_scores.append(list_f1(report.get("articles") or [], doc.articles))
         precedent_scores.append(pair_accuracy(
             [(p.get("case_name"), p.get("citation")) for p in report.get("precedents") or []],
@@ -252,10 +260,14 @@ def _relevant(chunk: str, markers: list[str]) -> bool:
 
 async def _run_retrieval_configs(docs: list, configs: list[str]) -> dict[str, dict[str, Any]]:
     """Index gold chunks and evaluate each retrieval configuration."""
-    from app.embeddings.bge_m3 import get_bge_m3
+    from app.embeddings.bge_m3 import BGEM3Embedder
     from app.rag.merger import ResultMerger
-    from app.rag.retrievers.keyword_search import KeywordRetriever
     from app.rag.reranker import CrossEncoderReranker
+    from app.rag.retrievers.keyword_search import KeywordRetriever
+
+    # Evaluation defaults to CPU so a live server can keep its GPU memory.
+    device = os.environ.get("LEXORCH_EVAL_DEVICE", "cpu")
+    embedder = BGEM3Embedder(device=device)
 
     corpus: list[dict[str, Any]] = []
     relevance_by_chunk: dict[int, set[int]] = {}
@@ -272,7 +284,6 @@ async def _run_retrieval_configs(docs: list, configs: list[str]) -> dict[str, di
 
     keyword = KeywordRetriever()
     keyword.index(corpus)
-    embedder = get_bge_m3()
     vectors = embedder.encode_documents([c["text"] for c in corpus])
     norms = (vectors ** 2).sum(axis=1, keepdims=True) ** 0.5
     unit_vectors = vectors / (norms + 1e-9)
@@ -300,28 +311,29 @@ async def _run_retrieval_configs(docs: list, configs: list[str]) -> dict[str, di
 
     reranker = CrossEncoderReranker() if "hybrid_rerank" in configs else None
     output: dict[str, dict[str, Any]] = {}
+    key_to_index = [doc.key for doc in docs]
     for config in configs:
         rows = []
         for key, query, _markers in queries:
-            target = int(key and 0) or [d.key for d in docs].index(key)
+            target = key_to_index.index(key)
             relevant = relevance_by_chunk.get(target, set())
 
             def rel_list(ids: list[int]) -> list[int]:
                 return [1 if cid in relevant else 0 for cid in ids]
 
             if config == "bm25_only":
-                ranked = rel_list(resolve_ids(asyncio.run(keyword_search(query, 10))))
+                ranked = rel_list(resolve_ids(await keyword_search(query, 10)))
             elif config == "vector_only":
                 ranked = rel_list(resolve_ids(vector_search(query, 10)))
             elif config == "hybrid_rrf":
                 merged = merger.merge([
-                    asyncio.run(keyword_search(query, 10)),
+                    await keyword_search(query, 10),
                     vector_search(query, 10),
                 ])
                 ranked = rel_list(resolve_ids(merged))
             else:
                 merged = merger.merge([
-                    asyncio.run(keyword_search(query, 20)),
+                    await keyword_search(query, 20),
                     vector_search(query, 20),
                 ])
                 if reranker is not None:
@@ -357,8 +369,13 @@ def e2_retrieval(docs: list) -> SuiteResult:
         result.passed = False
         result.metrics = {"error": str(exc)[:200]}
         return result
-    result.metrics = configs
+    result.metrics = dict(configs)
     primary = configs.get("hybrid_rerank") or next(iter(configs.values()), {})
+    result.metrics.update({
+        f"primary_{key}": value
+        for key, value in primary.items()
+        if isinstance(value, (int, float))
+    })
     result.passed = primary.get("mrr", 0.0) >= PASS_E2_MRR
     return result
 
@@ -485,12 +502,12 @@ def e5_human_pack(out_dir: Path) -> SuiteResult:
         answers = {
             "pet": data["petitioner"], "resp": data["respondent"], "court": data["court"],
             "file": data["file"], "key": doc.key, "decision_date": data["decision_date"],
-            "outcome": data["outcome"],
+            "outcome": data["outcome"], "petitioner": data["petitioner"],
             "judges": ", ".join(data["judges"][:1]),
         }
         for index, (question_tmpl, answer_key) in enumerate(FACT_TEMPLATES, start=1):
             question = question_tmpl.format(**answers)
-            gold_answer = answers[answer_key]
+            gold_answer = answers[answer_key.strip("{}")]
             lines += [
                 f"**Q{index}. {question}**",
                 "",
@@ -615,7 +632,7 @@ def e7_robustness(args_dir: str | None, workers: int = 8) -> SuiteResult:
         root = Path(args_dir).resolve()
         files = discover_files(root)
         cache_dir = Path(".cache/eval")
-        payloads, cached = [], []
+        payloads = []
         for path in files:
             if _load_cache(cache_dir, file_sha1(path)) is None:
                 payloads.append((str(path), str(cache_dir)))
@@ -684,8 +701,6 @@ ABLATION_CONFIGS = ("full", "no_kg", "no_gate", "no_bm25", "no_vector", "no_rera
 def e8_ablation(docs: list) -> SuiteResult:
     """Component-off deltas for E1 F1 / E2 MRR / E3 violations."""
     result = SuiteResult("E8_ablation")
-    from app.rag.merger import ResultMerger
-    from app.rag.retrievers.keyword_search import KeywordRetriever
 
     reports: dict[str, dict[str, Any]] = {}
     for doc in docs:
@@ -697,7 +712,7 @@ def e8_ablation(docs: list) -> SuiteResult:
             exact_match(_meta_value(report, "petitioner"), doc.petitioner),
             exact_match(_meta_value(report, "respondent"), doc.respondent),
             list_f1(_meta_value(report, "judges") or [], doc.judges),
-            mapping_f1({s["num"]: s["act"] for s in report.get("sections") or []}, doc.sections),
+            mapping_f1(_statute_map(report), doc.sections),
         ]
         return statistics.mean(scores)
 
@@ -764,13 +779,17 @@ def write_reports(suites: list[SuiteResult], ts: str, out_dir: Path) -> tuple[Pa
     json_path = out_dir / f"eval_{ts}.json"
     csv_path = out_dir / f"eval_{ts}.csv"
 
+    def gate_of(prefix: str) -> bool:
+        suite = next((s for s in suites if s.suite.startswith(prefix)), None)
+        return bool(suite.passed) if suite else False
+
     payload = {
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "suites": [asdict(suite) for suite in suites],
         "gates": {
-            "E1_f1_ge_0.90": next(s.passed for s in suites if s.suite.startswith("E1")),
-            "E2_mrr_ge_0.80": next(s.passed for s in suites if s.suite.startswith("E2")),
-            "E3_violations_eq_0": next(s.passed for s in suites if s.suite.startswith("E3")),
+            "E1_f1_ge_0.90": gate_of("E1"),
+            "E2_mrr_ge_0.80": gate_of("E2"),
+            "E3_violations_eq_0": gate_of("E3"),
         },
     }
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
@@ -896,14 +915,17 @@ def print_summary(suites: list[SuiteResult], paths: tuple[Path, Path, Path], exi
 
 
 def compute_exit_code(suites: list[SuiteResult], ran_e7_corpus: bool) -> int:
-    """Gate: E1 F1>=0.90 AND E3==0 AND E2 MRR>=0.8 AND (E7>=0.95 when --dir)."""
+    """Gate: E1 F1>=0.90 AND E3==0 AND E2 MRR>=0.8 AND (E7>=0.95 when --dir).
+
+    Partial runs (--suite extraction) gate on 'all executed suites passed'.
+    """
 
     def find(prefix: str) -> SuiteResult | None:
         return next((s for s in suites if s.suite.startswith(prefix)), None)
 
     e1, e2, e3, e7 = find("E1"), find("E2"), find("E3"), find("E7")
-    if not e1 or not e2 or not e3:
-        return 2
+    if e1 is None or e2 is None or e3 is None:
+        return 0 if suites and all(s.passed for s in suites) else 1
     if not (e1.passed and e2.passed and e3.passed):
         return 1
     if ran_e7_corpus and e7 is not None and not e7.passed:

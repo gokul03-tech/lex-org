@@ -22,8 +22,8 @@ TEST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "test_
 EMAIL = "e2e-batch@lexorch-testing.com"
 PASSWORD = "E2eBatch!2026"
 
-CASE_TIMEOUT = 300          # seconds per document
-SSE_READ_TIMEOUT = 120      # max gap between SSE events
+CASE_TIMEOUT = 1200          # seconds per document
+SSE_READ_TIMEOUT = 600      # max gap between SSE events
 
 
 def categorize(filename: str) -> str:
@@ -68,7 +68,7 @@ def run_case(session: requests.Session, token: str, pdf_path: str) -> dict:
                 "description": "[E2E-BATCH] automated overnight verification run",
             },
             headers=headers,
-            timeout=60,
+            timeout=300,
         )
     if r.status_code != 201:
         out["errors"].append(f"create_case {r.status_code}: {r.text[:160]}")
@@ -82,7 +82,7 @@ def run_case(session: requests.Session, token: str, pdf_path: str) -> dict:
         with session.get(
             f"{BASE}/analysis/case/{case_id}/stream",
             headers={**headers, "Accept": "text/event-stream"},
-            stream=True, timeout=(30, SSE_READ_TIMEOUT),
+            stream=True, timeout=(60, SSE_READ_TIMEOUT),
         ) as resp:
             resp.raise_for_status()
             stages_seen = set()

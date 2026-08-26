@@ -8,11 +8,37 @@ Requires llama-cpp-python package. Falls back to MockProvider if not installed.
 from __future__ import annotations
 
 import json
+import threading
 from typing import Any
 
 from loguru import logger
 
 from app.llm.provider import LLMProvider
+
+# Module-level shared Llama instances so every provider instantiation
+# reuses the same loaded weights instead of re-mmapping the GGUF per agent.
+_shared_llamas: dict[tuple, Any] = {}
+_load_lock = threading.Lock()
+
+
+def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers: int):
+    """Load (once) and return a shared Llama instance for the given config."""
+    key = (model_path, n_ctx, n_threads, n_gpu_layers)
+    with _load_lock:
+        if key in _shared_llamas:
+            return _shared_llamas[key]
+        from llama_cpp import Llama
+
+        logger.info(f"Loading GGUF model from {model_path}")
+        model = Llama(
+            model_path=model_path,
+            n_ctx=n_ctx,
+            n_threads=n_threads,
+            n_gpu_layers=n_gpu_layers,
+            verbose=False,
+        )
+        _shared_llamas[key] = model
+        return model
 
 
 class LlamaCppProvider(LLMProvider):
@@ -42,19 +68,12 @@ class LlamaCppProvider(LLMProvider):
             self._load_model()
 
     def _load_model(self) -> None:
-        """Lazy-load the GGUF model via llama-cpp-python."""
+        """Load the GGUF model via the shared module-level cache."""
         try:
-            from llama_cpp import Llama
-
-            logger.info(f"Loading GGUF model from {self.model_path}")
-            self._model = Llama(
-                model_path=self.model_path,
-                n_ctx=self.n_ctx,
-                n_threads=self.n_threads,
-                n_gpu_layers=self.n_gpu_layers,
-                verbose=False,
+            self._model = _get_shared_llama(
+                self.model_path, self.n_ctx, self.n_threads, self.n_gpu_layers
             )
-            logger.info(f"Model loaded: {self.model_name}")
+            logger.info(f"Model ready: {self.model_name}")
         except ImportError:
             logger.warning("llama-cpp-python not installed. Using mock fallback.")
             self._model = None

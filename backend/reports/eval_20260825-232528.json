@@ -1,0 +1,30 @@
+{
+  "generated_at": "2026-08-25 23:25:28",
+  "suites": [
+    {
+      "suite": "E7_robustness",
+      "passed": true,
+      "metrics": {
+        "mode": "corpus",
+        "files": 600,
+        "parsed": 600,
+        "pass_rate": 1.0,
+        "categories": {
+          "criminal_bail": 240,
+          "arbitration": 120,
+          "writ": 120,
+          "civil": 120
+        },
+        "unknown_categories": [],
+        "top_violations": [],
+        "duration_s": 0.2
+      },
+      "details": []
+    }
+  ],
+  "gates": {
+    "E1_f1_ge_0.90": false,
+    "E2_mrr_ge_0.80": false,
+    "E3_violations_eq_0": false
+  }
+}

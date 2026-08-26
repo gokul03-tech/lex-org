@@ -3,7 +3,7 @@
     "file": "01_Cybercrime_Bail_Vikram_Dev.pdf",
     "ok": true,
     "errors": [],
-    "case_id": "4b2dc592-55bc-497e-9f73-b37279892426",
+    "case_id": "18997782-cc59-4cfe-9dbe-e146e0727cc4",
     "stages": 18,
     "checks": {
       "summary": true,
@@ -17,70 +17,7 @@
       "trust_score": true
     },
     "trust": 99,
-    "secs": 2.8,
+    "secs": 892.2,
     "idx": 1
-  },
-  {
-    "file": "02_Commercial_Arbitration_Apex_Infra.pdf",
-    "ok": true,
-    "errors": [],
-    "case_id": "d98fa8ab-bf41-4b33-b68c-67d71f303499",
-    "stages": 18,
-    "checks": {
-      "summary": true,
-      "court": true,
-      "parties": true,
-      "sections": true,
-      "precedents": true,
-      "evidence": true,
-      "risk": true,
-      "kg_nodes": true,
-      "trust_score": true
-    },
-    "trust": 97,
-    "secs": 2.8,
-    "idx": 2
-  },
-  {
-    "file": "03_Constitutional_Writ_Ananya_Sharma.pdf",
-    "ok": true,
-    "errors": [],
-    "case_id": "d0639044-7d5b-47fc-a811-dfa7385ac919",
-    "stages": 18,
-    "checks": {
-      "summary": true,
-      "court": true,
-      "parties": true,
-      "sections": true,
-      "precedents": true,
-      "evidence": true,
-      "risk": true,
-      "kg_nodes": true,
-      "trust_score": true
-    },
-    "trust": 97,
-    "secs": 2.8,
-    "idx": 3
-  },
-  {
-    "file": "04_Civil_Property_Specific_Performance.pdf",
-    "ok": true,
-    "errors": [],
-    "case_id": "1bf99dfb-68dd-49ba-8fdc-aeff56c20111",
-    "stages": 18,
-    "checks": {
-      "summary": true,
-      "court": true,
-      "parties": true,
-      "sections": true,
-      "precedents": true,
-      "evidence": true,
-      "risk": true,
-      "kg_nodes": true,
-      "trust_score": true
-    },
-    "trust": 97,
-    "secs": 2.8,
-    "idx": 4
   }
 ]

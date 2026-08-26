@@ -9,9 +9,31 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
+
+from app.core.config import settings
+
+DEFAULT_RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+
+def _resolve_model_path(model_name: str) -> str:
+    """Resolve the reranker model to a local path when available.
+
+    Prefers weights under settings.MODELS_DIR (e.g. models/ms-marco-MiniLM-L-6-v2)
+    to avoid HF Hub downloads; falls back to the raw name (hub ID).
+    """
+    candidate = Path(model_name)
+    if candidate.exists():
+        return str(candidate)
+
+    local = Path(settings.MODELS_DIR) / Path(model_name).name
+    if local.exists() and ((local / "config.json").exists() or (local / "model.safetensors").exists()):
+        logger.info(f"Using locally cached reranker weights: {local}")
+        return str(local)
+    return model_name
 
 # Module-level shared CrossEncoder so every RAGPipeline()/reranker instance
 # reuses the same loaded model instead of re-loading weights from disk.
@@ -29,8 +51,9 @@ def _get_shared_cross_encoder(model_name: str):
             return None
         try:
             from sentence_transformers import CrossEncoder
-            logger.info(f"Loading CrossEncoder model: {model_name}")
-            model = CrossEncoder(model_name)
+            resolved = _resolve_model_path(model_name)
+            logger.info(f"Loading CrossEncoder model: {resolved}")
+            model = CrossEncoder(resolved)
             _shared_models[model_name] = model
             return model
         except Exception as exc:
@@ -47,7 +70,7 @@ def warmup_reranker(model_name: str | None = None) -> bool:
     Returns:
         True if the model is available for reranking.
     """
-    resolved = model_name or "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    resolved = model_name or DEFAULT_RERANKER_MODEL
     return _get_shared_cross_encoder(resolved) is not None
 
 
@@ -67,7 +90,7 @@ class CrossEncoderReranker:
             model_name: Cross-encoder model name. Defaults to
                        ms-marco-MiniLM-L-6-v2 for general purpose.
         """
-        self.model_name = model_name or "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        self.model_name = model_name or DEFAULT_RERANKER_MODEL
         self._model = None
         self._loaded = False
 

@@ -88,11 +88,12 @@ class Settings(BaseSettings):
     LLM_API_BASE: str = "http://localhost:8000/v1"
     LLM_API_KEY: str = ""
     QWEN_MODEL_NAME: str = "Qwen/Qwen3-8B-AWQ"
-    DEEPSEEK_MODEL_NAME: str = "deepseek-ai/DeepSeek-R1-Distill-Qwen-8B"
+    # NOTE: deepseek-ai never released an 8B Qwen distill; use the 7B AWQ quant
+    DEEPSEEK_MODEL_NAME: str = "casperhansen/deepseek-r1-distill-qwen-7b-awq"
 
     # Transformers local model configurations
     QWEN_HF_MODEL_ID: str = "Qwen/Qwen3-8B-AWQ"
-    DEEPSEEK_HF_MODEL_ID: str = "deepseek-ai/DeepSeek-R1-Distill-Qwen-8B"
+    DEEPSEEK_HF_MODEL_ID: str = "casperhansen/deepseek-r1-distill-qwen-7b-awq"
 
     # Indian Kanoon API configurations
     INDIANKANOON_API_KEY: str = ""

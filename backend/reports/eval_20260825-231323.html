@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>LexOrch-KG Evaluation Dashboard</title>
+<style>
+ body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;margin:24px;background:#f8fafc;color:#0f172a}
+ h1{font-size:22px} .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
+ .card{background:#fff;border-radius:12px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+ .chip{color:#fff;border-radius:999px;padding:2px 12px;font-size:12px;font-weight:700}
+ table{border-collapse:collapse;width:100%;font-size:13px}
+ td,th{border-bottom:1px solid #e2e8f0;padding:6px 8px;text-align:left}
+ th{background:#f1f5f9} code{font-size:11px}
+ .bar-row{display:flex;align-items:center;margin:4px 0}
+ .bar-label{width:170px;font-size:12px;color:#475569}
+ .bar{background:#dc2626;color:#fff;font-size:11px;padding:3px 6px;border-radius:4px;min-width:30px;text-align:right}
+ .bar.lat{background:#2563eb} .ok{color:#16a34a;font-weight:600}
+ footer{margin-top:28px;color:#94a3b8;font-size:12px}
+</style></head><body>
+<h1>LexOrch-KG Evaluation Dashboard</h1>
+<p>Generated 2026-08-25 23:13:23 &middot; gates:
+<span class="chip" style="background:#16a34a">E1_f1_ge_0.90</span> <span class="chip" style="background:#dc2626">E2_mrr_ge_0.80</span> <span class="chip" style="background:#dc2626">E3_violations_eq_0</span>
+</p>
+<div class="grid">
+        <div class="card">
+          <h3>E1_extraction <span class="chip" style="background:#16a34a">PASS</span></h3>
+          <table><tr><th>metric</th><th>value</th></tr><tr><td>micro_exact</td><td><code>0.9846</code></td></tr><tr><td>macro_f1</td><td><code>0.9441</code></td></tr><tr><td>sections_f1</td><td><code>0.7</code></td></tr><tr><td>articles_f1</td><td><code>0.95</code></td></tr><tr><td>precedents_pair_acc</td><td><code>1.0</code></td></tr><tr><td>duration_s</td><td><code>0.1</code></td></tr></table>
+        </div></div>
+<div class="card"><h3>Violation histogram</h3><p class="ok">No violations recorded.</p></div>
+<div class="card"><h3>Stage latency (p50)</h3></div>
+<div class="card"><h3>Ablation &Delta; table</h3></div>
+<footer>LexOrch-KG evaluation framework - self-contained report.</footer>
+</body></html>
