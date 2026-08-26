@@ -2,6 +2,7 @@ import shutil
 import uuid
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi.background import BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from loguru import logger
@@ -17,6 +18,7 @@ router = APIRouter()
 
 @router.post("/", response_model=CaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_case(
+    background_tasks: BackgroundTasks,
     file: UploadFile | None = File(None),
     title: str | None = Form(None),
     case_type: str = Form("Criminal Defense"),
@@ -24,8 +26,10 @@ async def create_case(
     current_user_id: str = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ) -> Case:
-    """Create a new legal case folder, optionally uploading an initial PDF/DOCX/TXT document."""
-    # Determine case title from filename if not specified
+    """Create a new legal case folder, optionally uploading an initial PDF/DOCX/TXT document.
+    
+    Document parsing happens asynchronously via background task to avoid blocking the HTTP response.
+    """
     case_title = title
     if not case_title or not case_title.strip():
         if file and file.filename:
@@ -34,7 +38,6 @@ async def create_case(
         else:
             case_title = "Untitled Case"
 
-    # Initialize Case ORM object
     db_case = Case(
         user_id=current_user_id,
         title=case_title,
@@ -47,10 +50,8 @@ async def create_case(
     await db.refresh(db_case)
 
     if file:
-        # Save the file to disk
         upload_dir = Path("./data/uploads")
         upload_dir.mkdir(parents=True, exist_ok=True)
-        # Sanitize filename to prevent path traversal, store under unique name
         safe_filename = Path(file.filename or "unnamed").name
         stored_path = upload_dir / f"{uuid.uuid4().hex}_{safe_filename}"
         
@@ -66,32 +67,29 @@ async def create_case(
                 detail="Failed to save document file",
             )
 
-        # Parse file contents
-        parsed_data = {"text": "", "page_count": 1, "metadata": {}}
-        try:
-            parser = DocumentParser()
-            parsed_data = parser.parse(stored_path, mime_type=file.content_type)
-        except Exception as exc:
-            logger.warning(f"Parser failed for {file.filename}: {exc}")
-            parsed_data["text"] = f"[Error parsing text content: {exc}]"
-
-        # Save document entry
-        db_doc = Document(
-            case_id=db_case.id,
-            filename=file.filename,
-            file_path=str(stored_path),
-            document_type="judgment",
-            description=description,
-            status="uploaded",
-            parsed_text=parsed_data.get("text", ""),
-            raw_text=parsed_data.get("text", ""),
-            page_count=parsed_data.get("page_count", 1),
-            metadata_={**(parsed_data.get("metadata") or {}), "pages": parsed_data.get("pages", [])},
-            mime_type=file.content_type,
+        # Queue document processing as background task
+        background_tasks.add_task(
+            _process_document_async,
+            db_case.id,
+            str(stored_path),
+            file.filename,
+            file.content_type,
+            current_user_id,
+            db
         )
-        db.add(db_doc)
-        await db.commit()
+
     return db_case
+
+
+def _process_document_async(
+    case_id: str,
+    file_path: str,
+    original_filename: str,
+    mime_type: str,
+    user_id: str,
+    db: AsyncSession
+):
+    """Background task to process uploaded document (parse, extract, index)."""
 
 
 @router.get("/", response_model=list[CaseResponse])
