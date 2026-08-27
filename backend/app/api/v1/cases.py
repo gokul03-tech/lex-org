@@ -8,7 +8,7 @@ from sqlalchemy.future import select
 from loguru import logger
 
 from app.api.deps import require_user
-from app.db.session import get_db
+from app.db.session import get_db, async_session_factory
 from app.db.models import Case, Document
 from app.schemas import CaseResponse, CaseUpdate
 from app.document_pipeline.parser import DocumentParser
@@ -67,29 +67,60 @@ async def create_case(
                 detail="Failed to save document file",
             )
 
-        # Queue document processing as background task
+        # Queue document processing as background task (non-blocking)
         background_tasks.add_task(
             _process_document_async,
             db_case.id,
             str(stored_path),
             file.filename,
             file.content_type,
-            current_user_id,
-            db
         )
 
     return db_case
 
 
-def _process_document_async(
+async def _process_document_async(
     case_id: str,
     file_path: str,
     original_filename: str,
     mime_type: str,
-    user_id: str,
-    db: AsyncSession
 ):
-    """Background task to process uploaded document (parse, extract, index)."""
+    """Background task: parse document, save metadata, index chunks."""
+    import asyncio
+
+    def _sync_parse():
+        parser = DocumentParser()
+        return parser.parse(file_path, mime_type=mime_type)
+
+    try:
+        parsed_data = await asyncio.to_thread(_sync_parse)
+    except Exception as exc:
+        logger.warning(f"Parser failed for {original_filename}: {exc}")
+        parsed_data = {"text": f"[Error parsing text content: {exc}]", "page_count": 1, "metadata": {}}
+
+    from app.agents.metadata_extractor import extract_metadata
+    legal_meta = extract_metadata(parsed_data.get("text", ""))
+
+    async with async_session_factory() as session:
+        db_doc = Document(
+            case_id=case_id,
+            filename=original_filename,
+            file_path=file_path,
+            document_type="judgment",
+            status="uploaded",
+            parsed_text=parsed_data.get("text", ""),
+            raw_text=parsed_data.get("text", ""),
+            page_count=parsed_data.get("page_count", 1),
+            metadata_={
+                **(parsed_data.get("metadata") or {}),
+                **legal_meta,
+                "pages": parsed_data.get("pages", []),
+            },
+            mime_type=mime_type,
+        )
+        session.add(db_doc)
+        await session.commit()
+        logger.info(f"Background processed document {original_filename} for case {case_id}")
 
 
 @router.get("/", response_model=list[CaseResponse])

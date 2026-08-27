@@ -1008,7 +1008,9 @@ Advocate's Question:
 {question}
 """
         provider = get_qwen_provider()
-        answer = provider.generate(prompt, system_prompt=QWEN_SYSTEM_PROMPT, max_tokens=1024)
+        answer = await asyncio.to_thread(
+            provider.generate, prompt, system_prompt=QWEN_SYSTEM_PROMPT, max_tokens=1024
+        )
 
     except Exception as exc:
         logger.error(f"Chat RAG failed: {exc}")

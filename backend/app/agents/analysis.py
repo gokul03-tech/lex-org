@@ -8,6 +8,7 @@ Explainability, and ReportGeneration.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any
@@ -1298,7 +1299,9 @@ Trust Score: {trust:.2f}
 
 Write a 3-4 sentence executive summary in plain English suitable for an advocate."""
         provider = get_qwen_provider()
-        exec_summary = provider.generate(exec_prompt, system_prompt=QWEN_SYSTEM_PROMPT, max_tokens=300)
+        exec_summary = await asyncio.to_thread(
+            provider.generate, exec_prompt, system_prompt=QWEN_SYSTEM_PROMPT, max_tokens=300
+        )
 
         report = {
             "title": "Legal Advisory Report",

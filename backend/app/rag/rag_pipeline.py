@@ -71,13 +71,13 @@ class RAGPipeline:
         if intent:
             detected_intent = LegalIntent(intent)
         else:
-            detected_intent = self.intent_detector.detect(query)
+            detected_intent = await asyncio.to_thread(self.intent_detector.detect, query)
         intent_weights = self.intent_detector.get_retriever_weights(detected_intent)
         logger.info(f"  Stage 1 (Intent): {detected_intent.value} ({time.monotonic() - stage_start:.3f}s)")
 
         # ── Stage 2: Query Rewriting ──
         stage_start = time.monotonic()
-        query_variants = self.query_rewriter.rewrite(query, detected_intent.value)
+        query_variants = await asyncio.to_thread(self.query_rewriter.rewrite, query, detected_intent.value)
         logger.info(f"  Stage 2 (Rewrite): {len(query_variants)} variants ({time.monotonic() - stage_start:.3f}s)")
 
         # ── Stage 3: 4-Way Parallel Retrieval ──
