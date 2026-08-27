@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Search, FileText, Clock, ChevronRight, FolderOpen, X, Loader2,
@@ -30,8 +31,16 @@ const CASE_TYPES = [
 
 export default function CasesPage() {
   const navigate = useNavigate();
-  const [cases, setCases] = useState<Case[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
+  const { data: cases = [], isLoading: loading } = useQuery<Case[]>({
+    queryKey: ['cases'],
+    queryFn: async () => {
+      const res = await apiClient.get('/cases/');
+      return res.data ?? [];
+    },
+  });
+
   const [searchVal, setSearchVal] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
@@ -45,26 +54,7 @@ export default function CasesPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const hasFetchedRef = useRef(false);
   const createInFlightRef = useRef(false);
-
-  useEffect(() => {
-    if (hasFetchedRef.current) return;
-    hasFetchedRef.current = true;
-    fetchCases();
-  }, []);
-
-  const fetchCases = async () => {
-    try {
-      setLoading(true);
-      const res = await apiClient.get('/cases/');
-      setCases(res.data);
-    } catch (err) {
-      console.error('Error fetching cases:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleDeleteCase = async (e: React.MouseEvent, caseId: string) => {
     e.stopPropagation();
@@ -73,7 +63,7 @@ export default function CasesPage() {
     }
     try {
       await apiClient.delete(`/cases/${caseId}`);
-      setCases((prev) => prev.filter((c) => c.id !== caseId));
+      queryClient.invalidateQueries({ queryKey: ['cases'] });
     } catch (err) {
       console.error('Failed to delete case:', err);
       alert('Failed to delete case folder. Please try again.');
@@ -99,7 +89,7 @@ export default function CasesPage() {
       const res = await apiClient.post('/cases/', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      setCases((prev) => [res.data, ...prev]);
+      queryClient.invalidateQueries({ queryKey: ['cases'] });
       setNewTitle('');
       setNewClient('');
       setNewDesc('');

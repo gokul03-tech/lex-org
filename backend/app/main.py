@@ -82,29 +82,37 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception as f_exc:
             logger.error(f"Startup FalkorDB connectivity check failed: {f_exc}")
 
-        # Warm up ML models (BGE-M3 embedder + CrossEncoder reranker) so the
-        # first analysis request doesn't pay the ~30s cold-start model load.
-        try:
-            import time as _time
-            t0 = _time.monotonic()
-            from app.embeddings.bge_m3 import get_bge_m3
-            if get_bge_m3().load():
-                logger.info(f"BGE-M3 embedder warmed up in {_time.monotonic() - t0:.1f}s")
-            else:
-                logger.warning("BGE-M3 failed to load; embeddings will use deterministic fallback.")
-        except Exception as emb_exc:
-            logger.warning(f"BGE-M3 warmup skipped: {emb_exc}")
+        # Warm up ML models (BGE-M3 embedder + CrossEncoder reranker) in a background task
+        # so server startup is instant (under 10ms) and does not block HTTP requests or reload events.
+        async def _warmup_models_background():
+            import asyncio
+            def _sync_warmup():
+                try:
+                    import time as _time
+                    t0 = _time.monotonic()
+                    from app.embeddings.bge_m3 import get_bge_m3
+                    if get_bge_m3().load():
+                        logger.info(f"BGE-M3 embedder warmed up in {_time.monotonic() - t0:.1f}s")
+                    else:
+                        logger.warning("BGE-M3 failed to load; embeddings will use deterministic fallback.")
+                except Exception as emb_exc:
+                    logger.warning(f"BGE-M3 warmup skipped: {emb_exc}")
 
-        try:
-            import time as _time
-            t0 = _time.monotonic()
-            from app.rag.reranker import warmup_reranker
-            if warmup_reranker():
-                logger.info(f"CrossEncoder reranker warmed up in {_time.monotonic() - t0:.1f}s")
-            else:
-                logger.warning("CrossEncoder unavailable; reranking falls back to score-based mode.")
-        except Exception as rr_exc:
-            logger.warning(f"Reranker warmup skipped: {rr_exc}")
+                try:
+                    import time as _time
+                    t0 = _time.monotonic()
+                    from app.rag.reranker import warmup_reranker
+                    if warmup_reranker():
+                        logger.info(f"CrossEncoder reranker warmed up in {_time.monotonic() - t0:.1f}s")
+                    else:
+                        logger.warning("CrossEncoder unavailable; reranking falls back to score-based mode.")
+                except Exception as rr_exc:
+                    logger.warning(f"Reranker warmup skipped: {rr_exc}")
+
+            await asyncio.to_thread(_sync_warmup)
+
+        import asyncio
+        asyncio.create_task(_warmup_models_background())
     except Exception as exc:
         logger.error(f"Startup DB error: {exc}")
 

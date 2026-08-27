@@ -10,16 +10,13 @@ export function useCaseWorkspace(caseId: string | undefined) {
     queryKey: ['case-workspace', caseId],
     enabled: Boolean(caseId),
     queryFn: async (): Promise<WorkspaceData> => {
-      const caseRes = await apiClient.get(`/cases/${caseId}`);
-      const raw = caseRes.data ?? {};
+      const [caseRes, analysisRes] = await Promise.all([
+        apiClient.get(`/cases/${caseId}`).catch(() => ({ data: {} })),
+        apiClient.get(`/analysis/case/${caseId}`).catch(() => ({ data: null })),
+      ]);
 
-      let analysisRaw: unknown = null;
-      try {
-        const analysisRes = await apiClient.get(`/analysis/case/${caseId}`);
-        if (analysisRes.data) analysisRaw = analysisRes.data;
-      } catch {
-        analysisRaw = null;
-      }
+      const raw = caseRes.data ?? {};
+      const analysisRaw = analysisRes.data ?? null;
 
       const caseInfo = {
         id: String(raw.id ?? caseId),

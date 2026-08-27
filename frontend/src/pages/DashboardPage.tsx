@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import {
   FileText, ChevronRight, Clock, FolderOpen, X, Loader2,
@@ -9,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { CommandMenu } from '@/components/ui/command-menu';
 import { LegalFeatureMarquee } from '@/components/ui/legal-feature-marquee';
 import apiClient from '@/lib/api';
+import { Trash2 } from 'lucide-react';
 
 interface Case {
   id: string;
@@ -29,10 +31,17 @@ const CASE_TYPES = [
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const [cases, setCases] = useState<Case[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [createOpen, setCreateOpen] = useState(false);
+  const queryClient = useQueryClient();
 
+  const { data: cases = [], isLoading: loading } = useQuery<Case[]>({
+    queryKey: ['cases'],
+    queryFn: async () => {
+      const res = await apiClient.get('/cases/');
+      return res.data ?? [];
+    },
+  });
+
+  const [createOpen, setCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newClient, setNewClient] = useState('');
   const [newType, setNewType] = useState('Criminal Defense');
@@ -40,23 +49,18 @@ export default function DashboardPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const hasFetchedRef = useRef(false);
-
-  useEffect(() => {
-    if (hasFetchedRef.current) return;
-    hasFetchedRef.current = true;
-    fetchCases();
-  }, []);
-
-  const fetchCases = async () => {
+  const handleDeleteCase = async (e: React.MouseEvent, caseId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!window.confirm('Are you sure you want to delete this case dossier? All associated documents and analysis will be permanently deleted.')) {
+      return;
+    }
     try {
-      setLoading(true);
-      const res = await apiClient.get('/cases/');
-      setCases(res.data);
+      await apiClient.delete(`/cases/${caseId}`);
+      queryClient.invalidateQueries({ queryKey: ['cases'] });
     } catch (err) {
-      console.error('Error fetching cases:', err);
-    } finally {
-      setLoading(false);
+      console.error('Failed to delete case:', err);
+      alert('Failed to delete case folder. Please try again.');
     }
   };
 
@@ -78,7 +82,7 @@ export default function DashboardPage() {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
-      setCases((prev) => [res.data, ...prev]);
+      queryClient.invalidateQueries({ queryKey: ['cases'] });
       setNewTitle('');
       setNewClient('');
       setNewDesc('');
@@ -215,9 +219,20 @@ export default function DashboardPage() {
                         <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
                         {s.label}
                       </span>
-                      <span className="rounded border border-border bg-secondary px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
-                        {c.case_type || 'General'}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="rounded border border-border bg-secondary px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
+                          {c.case_type || 'General'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteCase(e, c.id)}
+                          className="rounded-md p-1 text-muted-foreground/50 transition hover:bg-destructive/10 hover:text-destructive"
+                          title="Delete dossier"
+                          aria-label="Delete dossier"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" strokeWidth={1.7} />
+                        </button>
+                      </div>
                     </div>
                     <div>
                       <h3 className="font-serif text-base font-semibold leading-snug tracking-tight transition-colors group-hover:text-primary">

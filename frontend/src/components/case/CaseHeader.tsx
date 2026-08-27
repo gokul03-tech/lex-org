@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ChevronLeft, Scale, Calendar, BookOpen, Download, FileText, FileType } from 'lucide-react';
+import { ChevronLeft, Scale, Calendar, BookOpen, Download, FileText, FileType, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { MiniGauge, StatusDot } from './primitives';
 import type { WorkspaceData } from '@/types/case-workspace';
@@ -7,9 +7,10 @@ import type { WorkspaceData } from '@/types/case-workspace';
 interface CaseHeaderProps {
   data: WorkspaceData;
   onExport: (format: 'pdf' | 'json' | 'docx') => void;
+  onDelete?: () => void;
 }
 
-export function CaseHeader({ data, onExport }: CaseHeaderProps) {
+export function CaseHeader({ data, onExport, onDelete }: CaseHeaderProps) {
   const a = data.analysis;
   const title = a?.caseTitle.value || data.caseInfo.title || 'Case Dossier';
 
@@ -80,6 +81,11 @@ export function CaseHeader({ data, onExport }: CaseHeaderProps) {
           <Button variant="outline" size="sm" onClick={() => onExport('docx')} className="h-9 gap-1.5 rounded-lg text-[13px]">
             <FileType className="h-3.5 w-3.5" /> DOCX
           </Button>
+          {onDelete && (
+            <Button variant="outline" size="sm" onClick={onDelete} className="h-9 gap-1.5 rounded-lg text-[13px] text-destructive hover:bg-destructive/10 hover:text-destructive">
+              <Trash2 className="h-3.5 w-3.5" /> Delete
+            </Button>
+          )}
         </div>
       </div>
     </header>

@@ -62,6 +62,20 @@ export default function CaseWorkspaceLayout() {
     [data, caseId]
   );
 
+  const handleDelete = useCallback(() => {
+    if (!caseId) return;
+    if (!window.confirm('Are you sure you want to delete this case dossier? All associated documents and analysis will be permanently deleted.')) {
+      return;
+    }
+    apiClient
+      .delete(`/cases/${caseId}`)
+      .then(() => navigate('/cases'))
+      .catch((err) => {
+        console.error('Failed to delete case:', err);
+        alert('Failed to delete case folder. Please try again.');
+      });
+  }, [caseId, navigate]);
+
   if (!caseId) return null;
 
   const outletValue: WorkspaceOutlet = {
@@ -80,7 +94,7 @@ export default function CaseWorkspaceLayout() {
       />
       {data ? (
         <div className="print:hidden">
-          <CaseHeader data={data} onExport={handleExport} />
+          <CaseHeader data={data} onExport={handleExport} onDelete={handleDelete} />
         </div>
       ) : (
         <header className="border-b border-slate-200/80 bg-[#FAF9F6]/85 px-6 pb-5 pt-5 backdrop-blur-md lg:px-10 print:hidden">
