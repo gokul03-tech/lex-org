@@ -75,13 +75,13 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
     # ── LLM Configuration ───────────────────────────────────────
-    LLM_BACKEND: Literal["llama_cpp", "mock", "openai_compatible", "transformers"] = "mock"
-    QWEN_MODEL_PATH: str = ""
-    DEEPSEEK_MODEL_PATH: str = ""
-    LLM_N_CTX: int = 8192
-    LLM_N_THREADS: int = 8
-    LLM_N_GPU_LAYERS: int = 0
-    LLM_TEMPERATURE: float = 0.1
+    LLM_BACKEND: Literal["llama_cpp", "mock", "openai_compatible", "transformers"] = "llama_cpp"
+    QWEN_MODEL_PATH: str = "/home/gokul/Downloads/final-year-project/models/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
+    DEEPSEEK_MODEL_PATH: str = "/home/gokul/Downloads/final-year-project/models/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
+    LLM_N_CTX: int = 4096
+    LLM_N_THREADS: int = 4
+    LLM_N_GPU_LAYERS: int = 15
+    LLM_TEMPERATURE: float = 0.0
     LLM_MAX_TOKENS: int = 2048
 
     # OpenAI-compatible API configurations (vLLM / Ollama)

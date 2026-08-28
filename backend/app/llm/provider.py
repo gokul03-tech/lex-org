@@ -124,7 +124,10 @@ def get_llm_provider(model_type: str = "qwen") -> LLMProvider:
     if settings.LLM_BACKEND == "llama_cpp":
         from app.llm.llama_cpp_provider import LlamaCppProvider
 
-        model_path = settings.QWEN_MODEL_PATH if model_type == "qwen" else settings.DEEPSEEK_MODEL_PATH
+        model_path = (
+            settings.QWEN_MODEL_PATH if model_type == "qwen"
+            else (settings.DEEPSEEK_MODEL_PATH or settings.QWEN_MODEL_PATH)
+        )
         if not model_path:
             # No GGUF configured for this slot: load local HF weights instead
             # (e.g. an AWQ model stored under MODELS_DIR) via transformers.

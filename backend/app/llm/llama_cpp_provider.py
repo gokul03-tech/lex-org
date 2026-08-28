@@ -29,14 +29,34 @@ def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers:
             return _shared_llamas[key]
         from llama_cpp import Llama
 
-        logger.info(f"Loading GGUF model from {model_path}")
-        model = Llama(
-            model_path=model_path,
-            n_ctx=n_ctx,
-            n_threads=n_threads,
-            n_gpu_layers=n_gpu_layers,
-            verbose=False,
-        )
+        logger.info(f"Loading GGUF model from {model_path} (n_gpu_layers={n_gpu_layers}, n_ctx={n_ctx})")
+        try:
+            model = Llama(
+                model_path=model_path,
+                n_ctx=min(n_ctx, 4096),
+                n_threads=n_threads,
+                n_gpu_layers=n_gpu_layers,
+                verbose=False,
+            )
+        except Exception as exc:
+            logger.warning(f"Failed with n_gpu_layers={n_gpu_layers}: {exc}. Retrying with n_gpu_layers=10...")
+            try:
+                model = Llama(
+                    model_path=model_path,
+                    n_ctx=2048,
+                    n_threads=n_threads,
+                    n_gpu_layers=10,
+                    verbose=False,
+                )
+            except Exception as exc2:
+                logger.warning(f"Failed with n_gpu_layers=10: {exc2}. Retrying on CPU (n_gpu_layers=0)...")
+                model = Llama(
+                    model_path=model_path,
+                    n_ctx=2048,
+                    n_threads=n_threads,
+                    n_gpu_layers=0,
+                    verbose=False,
+                )
         _shared_llamas[key] = model
         return model
 
