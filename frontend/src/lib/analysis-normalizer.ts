@@ -204,10 +204,11 @@ function normalizeIssues(legalIssues: any, issuesRaw: any): Issue[] {
     .map((i: any): Issue => {
       if (typeof i === 'string') return { text: i, source: 'ai' };
       const src = String(i.source ?? i.origin ?? '').toLowerCase();
+      const evidence = i.evidence ?? i.quote;
       return {
         text: String(i.text ?? i.issue ?? i.question ?? ''),
-        source: src.includes('doc') || src.includes('fact') ? 'document' : 'ai',
-        evidence: i.evidence ?? i.quote,
+        source: (evidence || src.includes('doc') || src.includes('fact')) ? 'document' : 'ai',
+        evidence: evidence || undefined,
         page: i.page != null ? String(i.page) : undefined,
       };
     })

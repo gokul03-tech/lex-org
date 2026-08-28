@@ -689,14 +689,11 @@ async def get_analysis(
                 "prosecution_label": labels[1]
             }
 
-            # Dynamic Legal Issues
-            from app.agents.presentation_universal import render_issues
-            dyn_issues = render_issues(live_analysis)
-            if dyn_issues:
-                analysis.legal_issues = [
-                    {"issue": iss, "text": iss, "evidence": "Verified from active statutory provisions and factual record."}
-                    for iss in dyn_issues
-                ]
+            # Dynamic Legal Issues with Real Verbatim Document Quotes
+            from app.agents.presentation_universal import extract_grounded_issues
+            grounded_issues = extract_grounded_issues(live_analysis, doc_raw_text)
+            if grounded_issues:
+                analysis.legal_issues = grounded_issues
 
             # Dynamic KG & Trust score
             if live_analysis.get('kg'):
