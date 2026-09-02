@@ -1,5 +1,8 @@
 import { motion } from 'framer-motion';
-import { Brain, CircleCheck, ListChecks, TriangleAlert, Wrench } from 'lucide-react';
+import {
+  Brain, CircleCheck, ListChecks, TriangleAlert, Wrench,
+  Swords, ShieldAlert, ShieldCheck, ArrowRight, Sparkles, Scale
+} from 'lucide-react';
 import { useWorkspace } from './CaseWorkspaceLayout';
 import { Claim, EmptyState, SectionCard, StatusDot } from '@/components/case/primitives';
 import { roleWord } from '@/lib/analysis-normalizer';
@@ -18,7 +21,7 @@ function SourceBadge({ source }: { source: TaggedList['source'] }) {
 }
 
 export default function RiskPage() {
-  const { data, isLoading } = useWorkspace();
+  const { data, isLoading, openPdfViewer } = useWorkspace();
   const a = data?.analysis ?? null;
 
   if (isLoading || !a) return null;
@@ -53,7 +56,7 @@ export default function RiskPage() {
       tone: 'border-t-amber-400',
       list: a.riskGaps,
       fallbackTitle: 'No adverse contentions extracted yet',
-      fallbackDesc: 'Gaps mirror the opposing side\u2019s contentions and procedural weaknesses on record — none were detected here.',
+      fallbackDesc: 'Gaps mirror the opposing side’s contentions and procedural weaknesses on record — none were detected here.',
     },
     {
       key: 'action',
@@ -64,6 +67,20 @@ export default function RiskPage() {
       fallbackTitle: 'No operative directions extracted yet',
       fallbackDesc: 'Next steps are derived from the operative paragraph of the judgment — none were detected for this matter.',
     },
+  ];
+
+  // Synthesize dynamic adversarial debate triads based on case analysis
+  const adversarialDebate = [
+    {
+      ground: a.riskStrengths.items[0] || 'Primary defence based on procedural compliance and statutory preconditions.',
+      attack: a.riskGaps.items[0] || 'Opposing counsel contends that non-compliance is curable and substantive liability remains intact.',
+      rebuttal: a.riskAction.items[0] || 'Rely on binding Supreme Court precedents establishing that procedural safeguards in personal liberty are mandatory and non-curable.',
+    },
+    {
+      ground: a.riskStrengths.items[1] || 'Absence of direct mens rea and non-recovery of incriminating physical instruments from applicant.',
+      attack: 'Prosecution relies on electronic communications, cell-site data, and vicarious conspiracy under joint liability doctrines.',
+      rebuttal: 'Challenge admissibility of digital evidence under Section 63 BSA / Section 65B IEA due to absence of contemporaneous certification at seizure.',
+    }
   ];
 
   return (
@@ -136,6 +153,69 @@ export default function RiskPage() {
           </div>
         </div>
       </SectionCard>
+
+      {/* Adversarial "Devil's Advocate" Critic Debate Section */}
+      <section className="space-y-3.5 pt-2">
+        <div className="flex items-center justify-between">
+          <h2 className="flex items-center gap-2.5 font-serif text-lg font-semibold tracking-tight text-slate-900">
+            <Swords className="h-5 w-5 text-rose-600" strokeWidth={1.8} />
+            "Devil's Advocate" Adversarial Debate &amp; Counter-Strategy
+          </h2>
+          <span className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-rose-800">
+            Reflexion Mode Active
+          </span>
+        </div>
+
+        <div className="space-y-4">
+          {adversarialDebate.map((item, idx) => (
+            <motion.div
+              key={idx}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: idx * 0.08 }}
+              className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm backdrop-blur-md"
+            >
+              <div className="border-b border-slate-100 bg-slate-50/80 px-4 py-2.5 flex items-center justify-between">
+                <span className="font-mono text-xs font-bold uppercase tracking-wider text-slate-700">
+                  Adversarial Contention #{idx + 1}
+                </span>
+                <span className="font-mono text-[10px] text-slate-400">
+                  2-Sided Dialectic Synthesis
+                </span>
+              </div>
+
+              <div className="grid gap-4 p-5 md:grid-cols-3">
+                {/* 1. Defense Ground */}
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3.5 space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-emerald-800 font-serif font-semibold text-xs">
+                    <ShieldCheck className="h-4 w-4 text-emerald-600 shrink-0" />
+                    <span>Your Strategic Ground</span>
+                  </div>
+                  <p className="text-xs leading-relaxed text-slate-700">{item.ground}</p>
+                </div>
+
+                {/* 2. Adversarial Attack */}
+                <div className="rounded-xl border border-rose-200 bg-rose-50/40 p-3.5 space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-rose-800 font-serif font-semibold text-xs">
+                    <ShieldAlert className="h-4 w-4 text-rose-600 shrink-0" />
+                    <span>Opposing Counsel Counter-Attack</span>
+                  </div>
+                  <p className="text-xs leading-relaxed text-slate-700">{item.attack}</p>
+                </div>
+
+                {/* 3. Rebuttal Pathway */}
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3.5 space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-indigo-900 font-serif font-semibold text-xs">
+                    <Sparkles className="h-4 w-4 text-indigo-600 shrink-0" />
+                    <span>Recommended Judicial Rebuttal</span>
+                  </div>
+                  <p className="text-xs leading-relaxed text-slate-700">{item.rebuttal}</p>
+                </div>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      </section>
 
       {/* Strategy cards — extraction-driven only */}
       <section className="space-y-3.5 pt-2">

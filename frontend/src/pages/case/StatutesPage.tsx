@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import { BookOpen, Landmark, ScrollText } from 'lucide-react';
 import { useWorkspace } from './CaseWorkspaceLayout';
 import { EmptyState, SectionCard, StatusDot } from '@/components/case/primitives';
+import { ConcordanceBadge } from '@/components/case/ConcordanceBadge';
 
 export default function StatutesPage() {
   const { data, isLoading } = useWorkspace();
@@ -54,9 +55,12 @@ export default function StatutesPage() {
                 whileHover={{ y: -2 }}
                 className="space-y-2 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md transition hover:border-emerald-300 hover:shadow-md"
               >
-                <span className="inline-block rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 font-mono text-[11px] font-semibold text-emerald-800">
-                  {s.display}
-                </span>
+                <div className="flex items-center justify-between gap-1 flex-wrap">
+                  <span className="inline-block rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 font-mono text-[11px] font-semibold text-emerald-800">
+                    {s.display}
+                  </span>
+                  <ConcordanceBadge actName={s.act || headerActs} sectionNumber={s.num} />
+                </div>
                 <p className="text-xs leading-relaxed text-slate-600">
                   {s.context || 'Statutory provision invoked in the active proceedings.'}
                 </p>

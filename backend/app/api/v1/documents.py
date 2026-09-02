@@ -187,3 +187,57 @@ async def list_documents(
         for doc in docs
     ]
 
+
+@router.get("/{document_id}/file")
+async def get_document_file(
+    document_id: str,
+    current_user_id: str = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stream or download the original uploaded PDF document."""
+    from fastapi.responses import FileResponse
+    result = await db.execute(
+        select(Document).join(Case).where(
+            Document.id == document_id,
+            Case.user_id == current_user_id
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc or not doc.file_path or not os.path.exists(doc.file_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document file not found on disk",
+        )
+    return FileResponse(
+        doc.file_path,
+        media_type=doc.mime_type or "application/pdf",
+        filename=doc.filename,
+    )
+
+
+@router.get("/case/{case_id}/file")
+async def get_case_primary_document_file(
+    case_id: str,
+    current_user_id: str = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the primary PDF document file for a case dossier."""
+    from fastapi.responses import FileResponse
+    result = await db.execute(
+        select(Document).join(Case).where(
+            Document.case_id == case_id,
+            Case.user_id == current_user_id
+        ).order_by(Document.created_at.desc())
+    )
+    doc = result.scalars().first()
+    if not doc or not doc.file_path or not os.path.exists(doc.file_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No document file found for this case",
+        )
+    return FileResponse(
+        doc.file_path,
+        media_type=doc.mime_type or "application/pdf",
+        filename=doc.filename,
+    )
+

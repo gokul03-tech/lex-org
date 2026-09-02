@@ -7,6 +7,7 @@ import { CommandMenu } from '@/components/ui/command-menu';
 import { CaseHeader } from '@/components/case/CaseHeader';
 import { ModuleRail, MODULES } from '@/components/case/ModuleRail';
 import { EmptyState, PageSkeleton } from '@/components/case/primitives';
+import { PdfEvidenceViewer, type ActiveQuoteTarget } from '@/components/case/PdfEvidenceViewer';
 import { useCaseWorkspace } from '@/hooks/useCaseWorkspace';
 import { exportDocx, exportJson } from '@/lib/exporters';
 import apiClient from '@/lib/api';
@@ -18,6 +19,7 @@ export interface WorkspaceOutlet {
   isLoading: boolean;
   refresh: () => void;
   openChat: () => void;
+  openPdfViewer: (target?: ActiveQuoteTarget) => void;
 }
 
 const MODULE_PATHS = ['', 'statutes', 'evidence', 'graph', 'risk'];
@@ -33,8 +35,15 @@ export default function CaseWorkspaceLayout() {
   const { data, isLoading, isError, refetch } = useCaseWorkspace(caseId);
 
   const [chatOpen, setChatOpen] = useState(false);
+  const [pdfTarget, setPdfTarget] = useState<ActiveQuoteTarget | null>(null);
+  const [pdfOpen, setPdfOpen] = useState(false);
+
   const refresh = useCallback(() => refetch(), [refetch]);
   const openChat = useCallback(() => setChatOpen(true), []);
+  const openPdfViewer = useCallback((target?: ActiveQuoteTarget) => {
+    if (target) setPdfTarget(target);
+    setPdfOpen(true);
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -84,6 +93,7 @@ export default function CaseWorkspaceLayout() {
     isLoading,
     refresh,
     openChat,
+    openPdfViewer,
   };
 
   return (
@@ -168,6 +178,15 @@ export default function CaseWorkspaceLayout() {
           </motion.main>
         </div>
       </div>
+
+      {pdfOpen && (
+        <PdfEvidenceViewer
+          caseId={caseId}
+          documentTitle={data?.caseInfo.title || 'Case Document'}
+          target={pdfTarget}
+          onClose={() => setPdfOpen(false)}
+        />
+      )}
 
       <ChatDrawer
         isOpen={chatOpen}
