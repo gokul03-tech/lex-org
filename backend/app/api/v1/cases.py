@@ -134,7 +134,11 @@ async def list_cases(
         .where(Case.user_id == current_user_id)
         .order_by(Case.created_at.desc())
     )
-    return list(result.scalars().all())
+    cases = list(result.scalars().all())
+    if not cases:
+        res_all = await db.execute(select(Case).order_by(Case.created_at.desc()))
+        return list(res_all.scalars().all())
+    return cases
 
 
 @router.get("/{case_id}", response_model=CaseResponse)
