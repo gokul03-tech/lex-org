@@ -18,10 +18,9 @@ interface ModuleRailProps {
   caseId: string;
   analysis: AnalysisModel | null;
   onAskAI: () => void;
-  onExportJson: () => void;
 }
 
-export function ModuleRail({ caseId, analysis, onAskAI, onExportJson }: ModuleRailProps) {
+export function ModuleRail({ caseId, analysis, onAskAI }: ModuleRailProps) {
   const counts: Record<string, number | undefined> = {
     '': analysis?.issues.length,
     statutes: analysis ? analysis.statutes.length + analysis.precedents.length : undefined,
@@ -81,16 +80,9 @@ export function ModuleRail({ caseId, analysis, onAskAI, onExportJson }: ModuleRa
           <MessageSquare className="h-4 w-4 text-violet-600" strokeWidth={1.8} />
           Ask LexOS AI
         </button>
-        <button
-          onClick={onExportJson}
-          className="flex w-full cursor-pointer items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-[13px] font-medium text-slate-600 shadow-xs transition hover:bg-slate-50 hover:text-slate-900"
-        >
-          <Download className="h-3.5 w-3.5" strokeWidth={1.8} />
-          Export JSON
-        </button>
         <Link
           to={`/cases/${caseId}/report`}
-          className="flex w-full items-center gap-2.5 rounded-xl px-3.5 py-2 text-[12px] font-medium text-slate-400 transition hover:text-indigo-700"
+          className="flex w-full items-center gap-2.5 rounded-xl px-3.5 py-2 text-[12px] font-medium text-slate-500 transition hover:text-indigo-700 hover:bg-slate-50"
         >
           <FileText className="h-3.5 w-3.5" strokeWidth={1.8} />
           Compiled Opinion Report

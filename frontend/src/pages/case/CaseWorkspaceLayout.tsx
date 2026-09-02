@@ -9,7 +9,7 @@ import { ModuleRail, MODULES } from '@/components/case/ModuleRail';
 import { EmptyState, PageSkeleton } from '@/components/case/primitives';
 import { PdfEvidenceViewer, type ActiveQuoteTarget } from '@/components/case/PdfEvidenceViewer';
 import { useCaseWorkspace } from '@/hooks/useCaseWorkspace';
-import { exportDocx, exportJson } from '@/lib/exporters';
+import { exportDocx, exportPdf } from '@/lib/exporters';
 import apiClient from '@/lib/api';
 import type { WorkspaceData } from '@/types/case-workspace';
 
@@ -62,11 +62,13 @@ export default function CaseWorkspaceLayout() {
   }, [caseId, navigate]);
 
   const handleExport = useCallback(
-    (format: 'pdf' | 'json' | 'docx') => {
-      if (!caseId) return;
-      if (format === 'json') exportJson(data?.rawAnalysis, caseId);
-      else if (format === 'docx' && data?.analysis) exportDocx(data.analysis, caseId);
-      else window.print();
+    (format: 'pdf' | 'docx') => {
+      if (!caseId || !data?.analysis) return;
+      if (format === 'docx') {
+        exportDocx(data.analysis, caseId);
+      } else {
+        exportPdf(data.analysis, caseId);
+      }
     },
     [data, caseId]
   );
@@ -99,7 +101,7 @@ export default function CaseWorkspaceLayout() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <CommandMenu
-        onExportJson={() => handleExport('json')}
+        onExportDocx={() => handleExport('docx')}
         onExportPdf={() => handleExport('pdf')}
       />
       {data ? (
@@ -146,7 +148,6 @@ export default function CaseWorkspaceLayout() {
                   caseId={caseId}
                   analysis={data?.analysis ?? null}
                   onAskAI={openChat}
-                  onExportJson={() => handleExport('json')}
                 />
               </div>
             </>

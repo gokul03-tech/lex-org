@@ -6,7 +6,7 @@ import type { WorkspaceData } from '@/types/case-workspace';
 
 interface CaseHeaderProps {
   data: WorkspaceData;
-  onExport: (format: 'pdf' | 'json' | 'docx') => void;
+  onExport: (format: 'pdf' | 'docx') => void;
   onDelete?: () => void;
 }
 
@@ -72,14 +72,11 @@ export function CaseHeader({ data, onExport, onDelete }: CaseHeaderProps) {
               <span className="font-mono text-[10px] font-medium uppercase tracking-wider text-slate-500">Trust</span>
             </div>
           )}
-          <Button size="sm" onClick={() => onExport('pdf')} className="h-9 gap-1.5 rounded-lg text-[13px]">
+          <Button size="sm" onClick={() => onExport('pdf')} className="h-9 gap-1.5 rounded-lg text-[13px] bg-indigo-600 hover:bg-indigo-700 text-white">
             <FileText className="h-3.5 w-3.5" /> PDF Brief
           </Button>
-          <Button variant="outline" size="sm" onClick={() => onExport('json')} className="h-9 gap-1.5 rounded-lg text-[13px]">
-            <Download className="h-3.5 w-3.5" /> JSON
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => onExport('docx')} className="h-9 gap-1.5 rounded-lg text-[13px]">
-            <FileType className="h-3.5 w-3.5" /> DOCX
+          <Button variant="outline" size="sm" onClick={() => onExport('docx')} className="h-9 gap-1.5 rounded-lg text-[13px] border-slate-300">
+            <FileType className="h-3.5 w-3.5 text-indigo-600" /> Word DOCX
           </Button>
           {onDelete && (
             <Button variant="outline" size="sm" onClick={onDelete} className="h-9 gap-1.5 rounded-lg text-[13px] text-destructive hover:bg-destructive/10 hover:text-destructive">

@@ -13,13 +13,13 @@ import {
 } from 'lucide-react';
 
 interface CommandMenuProps {
-  onExportJson?: () => void;
+  onExportDocx?: () => void;
   onExportPdf?: () => void;
   onRerunAnalysis?: () => void;
 }
 
 export function CommandMenu({
-  onExportJson,
+  onExportDocx,
   onExportPdf,
   onRerunAnalysis,
 }: CommandMenuProps) {
@@ -61,41 +61,31 @@ export function CommandMenu({
           </kbd>
         </div>
 
-        <Command.List className="max-h-80 overflow-y-auto p-2 text-xs space-y-1">
-          <Command.Empty className="py-6 text-center text-slate-500">
-            No legal records or commands found.
+        <Command.List className="max-h-80 overflow-y-auto p-2">
+          <Command.Empty className="p-4 text-center text-xs text-slate-500 font-mono">
+            No matching case data or commands found.
           </Command.Empty>
 
           <Command.Group heading="Navigation" className="px-2 py-1.5 font-mono text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
             <Command.Item
               onSelect={() => {
-                navigate('/dashboard');
-                setOpen(false);
-              }}
-              className="flex items-center gap-2.5 rounded-xl px-3 py-2 text-slate-700 hover:bg-sky-50 hover:text-sky-800 cursor-pointer transition"
-            >
-              <Scale className="h-4 w-4 text-sky-600" />
-              <span className="font-medium">Dashboard & Case Workspace</span>
-            </Command.Item>
-            <Command.Item
-              onSelect={() => {
                 navigate('/cases');
                 setOpen(false);
               }}
-              className="flex items-center gap-2.5 rounded-xl px-3 py-2 text-slate-700 hover:bg-sky-50 hover:text-sky-800 cursor-pointer transition"
+              className="flex items-center gap-2.5 rounded-xl px-3 py-2 text-slate-700 hover:bg-slate-100 hover:text-slate-900 cursor-pointer transition"
             >
-              <FileText className="h-4 w-4 text-sky-600" />
+              <Scale className="h-4 w-4 text-slate-500" />
               <span className="font-medium">All Case Dossiers</span>
             </Command.Item>
             <Command.Item
               onSelect={() => {
-                navigate('/admin');
+                navigate('/dashboard');
                 setOpen(false);
               }}
-              className="flex items-center gap-2.5 rounded-xl px-3 py-2 text-slate-700 hover:bg-purple-50 hover:text-purple-800 cursor-pointer transition"
+              className="flex items-center gap-2.5 rounded-xl px-3 py-2 text-slate-700 hover:bg-slate-100 hover:text-slate-900 cursor-pointer transition"
             >
-              <Network className="h-4 w-4 text-purple-600" />
-              <span className="font-medium">Knowledge Graph & Ingestion Admin</span>
+              <FileText className="h-4 w-4 text-slate-500" />
+              <span className="font-medium">Operations Dashboard</span>
             </Command.Item>
           </Command.Group>
 
@@ -108,17 +98,17 @@ export function CommandMenu({
               className="flex items-center gap-2.5 rounded-xl px-3 py-2 text-slate-700 hover:bg-emerald-50 hover:text-emerald-800 cursor-pointer transition"
             >
               <Download className="h-4 w-4 text-emerald-600" />
-              <span className="font-medium">Export Judicial Brief (PDF Format)</span>
+              <span className="font-medium">Export Complete Judicial Brief (PDF Format)</span>
             </Command.Item>
             <Command.Item
               onSelect={() => {
-                onExportJson?.();
+                onExportDocx?.();
                 setOpen(false);
               }}
-              className="flex items-center gap-2.5 rounded-xl px-3 py-2 text-slate-700 hover:bg-emerald-50 hover:text-emerald-800 cursor-pointer transition"
+              className="flex items-center gap-2.5 rounded-xl px-3 py-2 text-slate-700 hover:bg-indigo-50 hover:text-indigo-800 cursor-pointer transition"
             >
-              <FileText className="h-4 w-4 text-emerald-600" />
-              <span className="font-medium">Export Grounded Analysis JSON</span>
+              <FileText className="h-4 w-4 text-indigo-600" />
+              <span className="font-medium">Export Complete Case Brief (Word DOCX Format)</span>
             </Command.Item>
             <Command.Item
               onSelect={() => {
