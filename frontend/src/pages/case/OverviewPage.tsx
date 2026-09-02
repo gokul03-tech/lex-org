@@ -4,6 +4,7 @@ import { useWorkspace } from './CaseWorkspaceLayout';
 import { Claim, EmptyState, GridSkeleton, SectionCard, StatusDot } from '@/components/case/primitives';
 import { UploadFlow } from '@/components/case/UploadFlow';
 import { ConcordanceBadge } from '@/components/case/ConcordanceBadge';
+import { JudgeAnalyticsCard } from '@/components/case/JudgeAnalyticsCard';
 import type { MetaField } from '@/types/case-workspace';
 
 /** "Section 482 BNSS" → "Section 482 — BNSS" for display only */
@@ -58,6 +59,9 @@ export default function OverviewPage() {
           )}
         </p>
       </SectionCard>
+
+      {/* Bench Intelligence & Judicial Tendency Widget */}
+      <JudgeAnalyticsCard analysis={a} />
 
       {/* Grounded Metadata Matrix — 12 tiles */}
       <SectionCard>

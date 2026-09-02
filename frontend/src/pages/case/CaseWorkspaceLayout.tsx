@@ -8,6 +8,7 @@ import { CaseHeader } from '@/components/case/CaseHeader';
 import { ModuleRail, MODULES } from '@/components/case/ModuleRail';
 import { EmptyState, PageSkeleton } from '@/components/case/primitives';
 import { PdfEvidenceViewer, type ActiveQuoteTarget } from '@/components/case/PdfEvidenceViewer';
+import { LegalDraftingStudio } from '@/components/case/LegalDraftingStudio';
 import { useCaseWorkspace } from '@/hooks/useCaseWorkspace';
 import { exportDocx, exportPdf } from '@/lib/exporters';
 import apiClient from '@/lib/api';
@@ -20,6 +21,7 @@ export interface WorkspaceOutlet {
   refresh: () => void;
   openChat: () => void;
   openPdfViewer: (target?: ActiveQuoteTarget) => void;
+  openDraftingStudio: () => void;
 }
 
 const MODULE_PATHS = ['', 'statutes', 'evidence', 'graph', 'risk'];
@@ -35,11 +37,13 @@ export default function CaseWorkspaceLayout() {
   const { data, isLoading, isError, refetch } = useCaseWorkspace(caseId);
 
   const [chatOpen, setChatOpen] = useState(false);
+  const [draftingOpen, setDraftingOpen] = useState(false);
   const [pdfTarget, setPdfTarget] = useState<ActiveQuoteTarget | null>(null);
   const [pdfOpen, setPdfOpen] = useState(false);
 
   const refresh = useCallback(() => refetch(), [refetch]);
   const openChat = useCallback(() => setChatOpen(true), []);
+  const openDraftingStudio = useCallback(() => setDraftingOpen(true), []);
   const openPdfViewer = useCallback((target?: ActiveQuoteTarget) => {
     if (target) setPdfTarget(target);
     setPdfOpen(true);
@@ -96,6 +100,7 @@ export default function CaseWorkspaceLayout() {
     refresh,
     openChat,
     openPdfViewer,
+    openDraftingStudio,
   };
 
   return (
@@ -106,7 +111,12 @@ export default function CaseWorkspaceLayout() {
       />
       {data ? (
         <div className="print:hidden">
-          <CaseHeader data={data} onExport={handleExport} onDelete={handleDelete} />
+          <CaseHeader
+            data={data}
+            onExport={handleExport}
+            onOpenDrafting={openDraftingStudio}
+            onDelete={handleDelete}
+          />
         </div>
       ) : (
         <header className="border-b border-slate-200/80 bg-[#FAF9F6]/85 px-6 pb-5 pt-5 backdrop-blur-md lg:px-10 print:hidden">
@@ -148,6 +158,7 @@ export default function CaseWorkspaceLayout() {
                   caseId={caseId}
                   analysis={data?.analysis ?? null}
                   onAskAI={openChat}
+                  onOpenDrafting={openDraftingStudio}
                 />
               </div>
             </>
@@ -189,25 +200,31 @@ export default function CaseWorkspaceLayout() {
         />
       )}
 
+      <LegalDraftingStudio
+        isOpen={draftingOpen}
+        onClose={() => setDraftingOpen(false)}
+        caseId={caseId}
+        caseTitle={data?.analysis?.caseTitle.value || data?.caseInfo.title || 'Case'}
+      />
+
       <ChatDrawer
         isOpen={chatOpen}
         onClose={() => setChatOpen(false)}
         caseTitle={data?.analysis?.caseTitle.value || data?.caseInfo.title || 'Case'}
         suggestionChips={[
-          'Summarize the strongest statutory basis in this matter.',
+          'What are the strongest factual grounds in the record?',
           'Which precedents bind this court and why?',
-          'What are the top procedural risks in the record?',
+          'Is electronic evidence supported by a Section 63 BSA certificate?',
         ]}
         onSendMessage={async (msg, model) => {
           try {
-            const res = await apiClient.post('/analysis/chat', {
-              case_id: caseId,
-              message: msg,
+            const res = await apiClient.post(`/analysis/case/${caseId}/chat`, {
+              question: msg,
               model_name: model,
             });
-            return res.data?.reply || res.data?.content || 'Analysis synthesized based on statutory grounding.';
+            return res.data?.answer || res.data?.reply || 'Analysis synthesized based on statutory grounding.';
           } catch {
-            return 'The advisory service is unavailable right now. Please retry shortly.';
+            return 'The advisory service is synthesizing context. Please retry momentarily.';
           }
         }}
       />

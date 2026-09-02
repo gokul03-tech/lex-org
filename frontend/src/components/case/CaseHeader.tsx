@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ChevronLeft, Scale, Calendar, BookOpen, Download, FileText, FileType, Trash2 } from 'lucide-react';
+import { ChevronLeft, Scale, Calendar, BookOpen, Download, FileText, FileType, Trash2, FileSignature } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { MiniGauge, StatusDot } from './primitives';
 import type { WorkspaceData } from '@/types/case-workspace';
@@ -7,10 +7,11 @@ import type { WorkspaceData } from '@/types/case-workspace';
 interface CaseHeaderProps {
   data: WorkspaceData;
   onExport: (format: 'pdf' | 'docx') => void;
+  onOpenDrafting?: () => void;
   onDelete?: () => void;
 }
 
-export function CaseHeader({ data, onExport, onDelete }: CaseHeaderProps) {
+export function CaseHeader({ data, onExport, onOpenDrafting, onDelete }: CaseHeaderProps) {
   const a = data.analysis;
   const title = a?.caseTitle.value || data.caseInfo.title || 'Case Dossier';
 
@@ -65,12 +66,22 @@ export function CaseHeader({ data, onExport, onDelete }: CaseHeaderProps) {
           )}
         </div>
 
-        <div className="flex shrink-0 items-center gap-2.5">
+        <div className="flex shrink-0 items-center gap-2">
           {a && (
             <div className="mr-1 hidden items-center gap-2 rounded-lg border border-slate-200 bg-white/80 px-2.5 py-1.5 shadow-sm sm:flex">
               <MiniGauge score={a.trustScore} />
               <span className="font-mono text-[10px] font-medium uppercase tracking-wider text-slate-500">Trust</span>
             </div>
+          )}
+          {onOpenDrafting && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onOpenDrafting}
+              className="h-9 gap-1.5 rounded-lg text-[13px] border-violet-300 bg-gradient-to-r from-violet-50 to-indigo-50 text-violet-800 hover:from-violet-100 hover:to-indigo-100 shadow-xs"
+            >
+              <FileSignature className="h-3.5 w-3.5 text-violet-600" /> Draft Pleadings
+            </Button>
           )}
           <Button size="sm" onClick={() => onExport('pdf')} className="h-9 gap-1.5 rounded-lg text-[13px] bg-indigo-600 hover:bg-indigo-700 text-white">
             <FileText className="h-3.5 w-3.5" /> PDF Brief

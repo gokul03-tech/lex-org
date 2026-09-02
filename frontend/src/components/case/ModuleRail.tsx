@@ -1,7 +1,7 @@
 import { Link, NavLink } from 'react-router-dom';
 import {
   LayoutGrid, BookOpen, Users, Network, Brain,
-  MessageSquare, Download, FileText,
+  MessageSquare, Download, FileText, FileSignature
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { AnalysisModel } from '@/types/case-workspace';
@@ -18,9 +18,10 @@ interface ModuleRailProps {
   caseId: string;
   analysis: AnalysisModel | null;
   onAskAI: () => void;
+  onOpenDrafting?: () => void;
 }
 
-export function ModuleRail({ caseId, analysis, onAskAI }: ModuleRailProps) {
+export function ModuleRail({ caseId, analysis, onAskAI, onOpenDrafting }: ModuleRailProps) {
   const counts: Record<string, number | undefined> = {
     '': analysis?.issues.length,
     statutes: analysis ? analysis.statutes.length + analysis.precedents.length : undefined,
@@ -80,6 +81,15 @@ export function ModuleRail({ caseId, analysis, onAskAI }: ModuleRailProps) {
           <MessageSquare className="h-4 w-4 text-violet-600" strokeWidth={1.8} />
           Ask LexOS AI
         </button>
+        {onOpenDrafting && (
+          <button
+            onClick={onOpenDrafting}
+            className="flex w-full cursor-pointer items-center gap-2.5 rounded-xl border border-indigo-200 bg-indigo-50/50 px-3.5 py-2 text-[12.5px] font-semibold text-indigo-900 transition hover:bg-indigo-100/70"
+          >
+            <FileSignature className="h-4 w-4 text-indigo-600" strokeWidth={1.8} />
+            Draft Pleadings
+          </button>
+        )}
         <Link
           to={`/cases/${caseId}/report`}
           className="flex w-full items-center gap-2.5 rounded-xl px-3.5 py-2 text-[12px] font-medium text-slate-500 transition hover:text-indigo-700 hover:bg-slate-50"
