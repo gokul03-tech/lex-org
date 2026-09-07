@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { FileQuestion, Sparkles, Clock, Scale, Quote, FileText, ExternalLink, Search } from 'lucide-react';
+import { FileQuestion, Sparkles, Clock, Scale, Quote, FileText, Search, ScrollText, Landmark, ShieldCheck } from 'lucide-react';
 import { useWorkspace } from './CaseWorkspaceLayout';
 import { Claim, EmptyState, GridSkeleton, SectionCard, StatusDot } from '@/components/case/primitives';
 import { UploadFlow } from '@/components/case/UploadFlow';
@@ -7,16 +7,53 @@ import { ConcordanceBadge } from '@/components/case/ConcordanceBadge';
 import { JudgeAnalyticsCard } from '@/components/case/JudgeAnalyticsCard';
 import type { MetaField } from '@/types/case-workspace';
 
-/** "Section 482 BNSS" → "Section 482 — BNSS" for display only */
-function formatSectionsValue(raw: string): string {
-  return raw
-    .split(',')
-    .map((part) => {
-      const t = part.trim();
-      const m = t.match(/^(Section\s+[\dA-Z()-]+)\s+(.+)$/i);
-      return m ? `${m[1]} — ${m[2]}` : t;
-    })
-    .join(', ');
+/** Parses statutory acts string and splits multiple acts cleanly */
+function parseStatuteList(raw: string): string[] {
+  if (!raw || !raw.trim()) return [];
+  const cleaned = raw.trim();
+  if (cleaned.includes(';')) {
+    return cleaned.split(';').map((s) => s.trim()).filter(Boolean);
+  }
+  // Split on commas that precede another Act name
+  const splitByAct = cleaned.split(/,(?=\s*[A-Z][a-zA-Z\s]+(?:Act|Code|Rules|Order|Constitution|Sanhita))/i);
+  if (splitByAct.length > 1) {
+    return splitByAct.map((s) => s.trim()).filter(Boolean);
+  }
+  return [cleaned];
+}
+
+/** Parses key sections list and cleans up duplicate hyphens like "- -" */
+function parseSectionsList(raw: string): string[] {
+  if (!raw || !raw.trim()) return [];
+  const cleaned = raw.replace(/\s*-\s*-\s*/g, ' — ').replace(/\s*--\s*/g, ' — ').trim();
+  
+  if (cleaned.includes(';')) {
+    return cleaned.split(';').map((s) => s.trim()).filter(Boolean);
+  }
+  // Split on commas that precede "Section" or "Sec." or "Art."
+  const splitSections = cleaned.split(/,(?=\s*(?:Section|Sec\.?|Art\.?|Clause))/i);
+  if (splitSections.length > 1) {
+    return splitSections.map((s) => s.trim()).filter(Boolean);
+  }
+  const commaParts = cleaned.split(',').map((s) => s.trim()).filter(Boolean);
+  if (commaParts.length > 1 && commaParts.every((p) => p.length < 50)) {
+    return commaParts;
+  }
+  return [cleaned];
+}
+
+/** Parses citation list cleanly */
+function parseCitationsList(raw: string): string[] {
+  if (!raw || !raw.trim()) return [];
+  const cleaned = raw.trim();
+  if (cleaned.includes(';')) {
+    return cleaned.split(';').map((s) => s.trim()).filter(Boolean);
+  }
+  const splitCites = cleaned.split(/,(?=\s*(?:AIR|\(\d{4}\)|\d{4}\s+SCC|SCR|\d+\s+ALD|\d+\s+MLJ))/i);
+  if (splitCites.length > 1) {
+    return splitCites.map((s) => s.trim()).filter(Boolean);
+  }
+  return cleaned.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
 export default function OverviewPage() {
@@ -75,31 +112,40 @@ export default function OverviewPage() {
           </span>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 pt-4 sm:grid-cols-2 xl:grid-cols-3">
-          {a.metadataTiles.map((tile, idx) => (
-            <motion.div
-              key={tile.key}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: idx * 0.04 }}
-              className="space-y-1.5 rounded-xl border border-slate-200/70 bg-slate-50/60 p-3.5 transition hover:border-slate-300 hover:bg-white hover:shadow-sm"
-            >
-              <div className="flex items-center justify-between gap-1.5">
-                <span className="truncate font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                  {tile.label}
-                </span>
-                <StatusDot status={tile.field.status} compact />
-              </div>
-              <MetaValue field={tile.field} />
-              {tile.key === 'sections' && (
-                <ConcordanceBadge
-                  actName={a.acts[0] || ''}
-                  sectionNumber={tile.field.value}
-                  className="mt-1"
-                />
-              )}
-            </motion.div>
-          ))}
+        <div className="grid grid-cols-1 gap-3.5 pt-4 sm:grid-cols-2 xl:grid-cols-3">
+          {a.metadataTiles.map((tile, idx) => {
+            const isStatuteOrSection = tile.key === 'acts' || tile.key === 'sections';
+            return (
+              <motion.div
+                key={tile.key}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: idx * 0.04 }}
+                className={`flex flex-col justify-between gap-2.5 rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5 transition hover:border-slate-300 hover:bg-white hover:shadow-sm ${
+                  isStatuteOrSection ? 'min-h-[96px]' : 'min-h-[82px]'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-1.5">
+                  <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                    {tile.label}
+                  </span>
+                  <StatusDot status={tile.field.status} compact />
+                </div>
+
+                <div className="flex-1 flex flex-col justify-center">
+                  <MetaValue tileKey={tile.key} field={tile.field} />
+                </div>
+
+                {tile.key === 'sections' && (
+                  <ConcordanceBadge
+                    actName={a.acts[0] || ''}
+                    sectionNumber={tile.field.value}
+                    className="mt-1"
+                  />
+                )}
+              </motion.div>
+            );
+          })}
         </div>
       </SectionCard>
 
@@ -254,17 +300,80 @@ export default function OverviewPage() {
   );
 }
 
-function MetaValue({ field }: { field: MetaField }) {
-  if (field.status === 'not_found') {
-    return <p className="truncate font-mono text-[11px] italic text-slate-400">Unstated in record</p>;
+function MetaValue({ tileKey, field }: { tileKey: string; field: MetaField }) {
+  if (field.status === 'not_found' || !field.value || field.value === 'null') {
+    return <p className="font-mono text-[11px] italic text-slate-400">Unstated in record</p>;
   }
-  const display =
-    field.value.startsWith('Section') && field.value.includes(',')
-      ? formatSectionsValue(field.value)
-      : field.value;
+
+  // 1. Primary Statute (acts) — rendered as clean, fully visible emerald badges
+  if (tileKey === 'acts') {
+    const acts = parseStatuteList(field.value);
+    return (
+      <div className="flex flex-wrap gap-1.5 pt-0.5">
+        {acts.map((act, i) => (
+          <span
+            key={i}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200/90 bg-emerald-50/90 px-2.5 py-1 font-mono text-[11.5px] font-semibold text-emerald-950 shadow-2xs leading-snug break-words"
+          >
+            <Scale className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+            <span>{act}</span>
+          </span>
+        ))}
+      </div>
+    );
+  }
+
+  // 2. Key Sections (sections) — rendered as clean, fully visible indigo badges
+  if (tileKey === 'sections') {
+    const sections = parseSectionsList(field.value);
+    return (
+      <div className="flex flex-wrap gap-1.5 pt-0.5">
+        {sections.map((sec, i) => (
+          <span
+            key={i}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200/90 bg-indigo-50/90 px-2.5 py-1 font-mono text-[11.5px] font-semibold text-indigo-950 shadow-2xs leading-snug break-words"
+          >
+            <ScrollText className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+            <span>{sec}</span>
+          </span>
+        ))}
+      </div>
+    );
+  }
+
+  // 3. Citations / Report Reference — rendered as clean citation badges
+  if (tileKey === 'citations') {
+    const citations = parseCitationsList(field.value);
+    return (
+      <div className="flex flex-wrap gap-1.5 pt-0.5">
+        {citations.map((cite, i) => (
+          <span
+            key={i}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200/90 bg-white px-2 py-0.5 font-mono text-[11px] font-semibold text-slate-800 shadow-2xs leading-snug break-words"
+          >
+            <Landmark className="h-3 w-3 text-slate-500 shrink-0" />
+            <span>{cite}</span>
+          </span>
+        ))}
+      </div>
+    );
+  }
+
+  // 4. Ingestion Engine / Grounding Verification
+  if (tileKey === 'ingestion_engine') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200/80 bg-sky-50/80 px-2.5 py-1 font-mono text-[11px] font-semibold text-sky-950 shadow-2xs leading-snug break-words">
+        <ShieldCheck className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+        <span>{field.value}</span>
+      </span>
+    );
+  }
+
+  // 5. Default text representation for all other fields (Court, Judges, Petitioner, Respondent, etc.)
   return (
-    <p className="truncate font-mono text-xs font-semibold text-slate-800" title={display}>
-      {display}
+    <p className="font-mono text-xs font-semibold text-slate-800 leading-relaxed break-words">
+      {field.value}
     </p>
   );
 }
+
