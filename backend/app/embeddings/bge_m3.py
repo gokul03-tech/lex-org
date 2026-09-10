@@ -64,6 +64,11 @@ class BGEM3Embedder:
             logger.info(f"Loading BGE-M3 from: {resolved_path}")
             self._model = SentenceTransformer(resolved_path, device=self.device)
 
+            # Run in half precision on CUDA to fit alongside the GGUF LLM
+            # on small (4GB) GPUs (BGE-M3 fp32 ~2.3GB -> fp16 ~1.2GB).
+            if "cuda" in str(self.device):
+                self._model.half()
+
             # `get_embedding_dimension` is the current API name; fall back for
             # older sentence-transformers versions that only expose the old name.
             dim_fn = getattr(self._model, "get_embedding_dimension", None)

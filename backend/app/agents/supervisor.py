@@ -63,6 +63,7 @@ class AgentState(TypedDict, total=False):
     # Confidence Fusion outputs
     agent_confidence: dict[str, float]
     trust_score: float
+    verification: dict[str, Any]
 
     # Explainability outputs
     explanation_graph: dict[str, Any]

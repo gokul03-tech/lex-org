@@ -950,13 +950,29 @@ async def confidence_fusion_agent(state: AgentState) -> AgentState:
         # Blend in evidence and compliance signals
         trust_score = (trust_score * 0.7) + (evidence_score * 0.15) + (compliance_score * 0.10) + (contradiction_score * 0.05)
 
-        # Boost trust score if retrieval found matching records and finished with zero errors
-        if not state.get("errors"):
+        # ── Hallucination verification gate ──
+        from app.verification.hallucination_gate import run_verification
+
+        verification = run_verification(state.get("applicable_sections", []), state.get("precedents", []))
+        state["verification"] = verification
+        hallucinated = verification["hallucination_count"]
+        v_rate = verification["verification_rate"]
+
+        # Grounded trust boost only when the cited law actually verifies
+        if hallucinated == 0 and v_rate >= 0.9:
             if state.get("applicable_sections") and state.get("precedents"):
                 trust_score = max(trust_score, 0.98)
             elif state.get("precedents") or state.get("applicable_sections"):
                 trust_score = max(trust_score, 0.975)
-                
+        elif v_rate >= 0.6:
+            trust_score = max(trust_score, 0.90)
+        else:
+            trust_score = min(trust_score, 0.85)
+
+        if hallucinated:
+            trust_score -= 0.05 * hallucinated
+            logger.warning(f"[ConfidenceFusion] {hallucinated} hallucinated citation(s) detected")
+
         state["trust_score"] = max(0.0, min(1.0, trust_score))
         state["agent_confidence"] = {**confidences, "confidence_fusion": trust_score}
 
@@ -1268,6 +1284,27 @@ async def report_generation_agent(state: AgentState) -> AgentState:
             })
         state["applicable_sections"] = grounded_sections
 
+        # ── Citation verification gate on final grounded output ──
+        from app.verification.hallucination_gate import run_verification
+
+        verification = run_verification(grounded_sections, grounded_precedents)
+        state["verification"] = verification
+        sec_v = {f"{v.get('act', '')}|{v.get('num', '')}": v for v in verification["section_verdicts"]}
+        prec_v = {v.get("case_name"): v for v in verification["precedent_verdicts"]}
+        for s in grounded_sections:
+            verdict = sec_v.get(f"{s.get('act', '')}|{s.get('section_number', '')}")
+            if verdict:
+                s["verified"] = verdict["status"]
+                s["verification_note"] = verdict["reason"]
+        for p in grounded_precedents:
+            verdict = prec_v.get(p.get("case_name") or "")
+            if verdict:
+                p["verified"] = verdict["status"]
+                p["verification_note"] = verdict["reason"]
+        if verification["hallucination_count"]:
+            trust = max(0.0, min(trust, 0.86) - 0.03 * verification["hallucination_count"])
+            state["trust_score"] = trust
+
         # 4. Ground Case Facts
         grounded_facts = []
         if isinstance(facts, dict):
@@ -1319,7 +1356,7 @@ Write a 3-4 sentence executive summary in plain English suitable for an advocate
                 {"title": "Risk Assessment", "content": risk, "order": 9},
                 {"title": "Procedural Compliance", "content": procedural, "order": 10},
                 {"title": "Strategy Recommendation", "content": strategies, "order": 11},
-                {"title": "Trust Score", "content": {"score": trust, "breakdown": confidences}, "order": 12},
+                {"title": "Trust Score", "content": {"score": trust, "breakdown": confidences, "verification": verification}, "order": 12},
                 {"title": "Confidence Scores", "content": confidences, "order": 13},
                 {"title": "Explainability Graph", "content": explanation, "order": 14},
                 {"title": "Knowledge Graph Snapshot", "content": kg, "order": 15},

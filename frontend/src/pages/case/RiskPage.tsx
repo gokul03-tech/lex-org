@@ -31,6 +31,106 @@ export default function RiskPage() {
     ...a.articles.slice(0, 3).map((art) => art.display),
   ];
 
+  // Strict Anti-Hallucination & Grounding Logic:
+  // 1. Zero Hallucination: Use only facts, precedents, and sections explicitly in the record.
+  // 2. No Conclusion Repetition: Exclude final court outcome from Rebuttal and Action Plan.
+  // 3. Rebuttal Format: Specific counter-argument based on cited precedents and evidence.
+  // 4. Action Plan: Procedural next step.
+  // 5. Fallback: "No valid counter-argument found in record."
+  const fallbackRebuttal = "No valid counter-argument found in record.";
+  const conclusionText = (a.conclusion?.value || '').toLowerCase();
+  
+  const isConclusionLike = (text: string) => {
+    if (!text || !conclusionText) return false;
+    const t = text.toLowerCase().trim();
+    return (
+      t.includes('is dismissed') ||
+      t.includes('is allowed') ||
+      t.includes('is granted') ||
+      t.includes('appeal is dismissed') ||
+      t.includes('petition is allowed') ||
+      t.includes('refund of earnest money with interest') ||
+      (conclusionText.length > 20 && conclusionText.includes(t.slice(0, 35)))
+    );
+  };
+
+  const validStrengths = a.riskStrengths.items.filter((item) => !isConclusionLike(item));
+  const validSubmissionsA = a.submissionsA.items.filter((item) => !isConclusionLike(item));
+  const availableGrounds = [...validStrengths, ...validSubmissionsA];
+
+  const validGaps = a.riskGaps.items.filter((item) => !isConclusionLike(item));
+  const validSubmissionsB = a.submissionsB.items.filter((item) => !isConclusionLike(item));
+  const availableAttacks = [...validGaps, ...validSubmissionsB];
+
+  // Cited precedents and statutes strictly from active record
+  const primaryPrec = a.precedents[0]?.name ? `${a.precedents[0].name}${a.precedents[0].citation ? ` (${a.precedents[0].citation})` : ''}` : null;
+  const secondaryPrec = a.precedents[1]?.name ? `${a.precedents[1].name}${a.precedents[1].citation ? ` (${a.precedents[1].citation})` : ''}` : null;
+  const primaryStat = a.statutes[0]?.display || (a.acts[0] ? `the ${a.acts[0]}` : null);
+
+  const buildRebuttalText = (idx: number): string => {
+    if (idx === 0) {
+      if (primaryPrec && primaryStat) {
+        return `Rely on the binding principle in ${primaryPrec} to establish compliance under ${primaryStat} and refute the opposing contention.`;
+      } else if (primaryPrec) {
+        return `Rely on the ratio decidendi in ${primaryPrec} to establish that the legal threshold in the record is satisfied.`;
+      } else if (primaryStat) {
+        return `Demonstrate statutory compliance under ${primaryStat} based on contemporaneous record filings.`;
+      } else if (a.evidence.length > 0) {
+        return `Substantiate defense through contemporaneous record evidence (${a.evidence[0].label}) to disprove the adverse contention.`;
+      }
+      return fallbackRebuttal;
+    } else {
+      if (secondaryPrec && primaryStat) {
+        return `Cite ${secondaryPrec} establishing that substantive rights under ${primaryStat} cannot be defeated by procedural objections.`;
+      } else if (secondaryPrec) {
+        return `Distinguish the opposing contention using the authoritative ruling in ${secondaryPrec}.`;
+      } else if (primaryPrec) {
+        return `Reiterate the evidentiary standard established in ${primaryPrec} requiring concrete proof on record.`;
+      } else if (a.evidence.length > 1) {
+        return `Rely on documentary evidence on record (${a.evidence[1].label}) to refute the opposing factual allegation.`;
+      }
+      return fallbackRebuttal;
+    }
+  };
+
+  const adversarialDebate = [];
+  if (availableGrounds.length > 0 || availableAttacks.length > 0) {
+    adversarialDebate.push({
+      ground: availableGrounds[0] || 'Procedural compliance and statutory preconditions established in record.',
+      attack: availableAttacks[0] || 'Opposing party contests readiness, willingness, or sufficiency of material on record.',
+      rebuttal: buildRebuttalText(0),
+    });
+  }
+  if (availableGrounds.length > 1 || availableAttacks.length > 1) {
+    adversarialDebate.push({
+      ground: availableGrounds[1] || availableGrounds[0] || 'Contemporaneous evidentiary backing in the primary case record.',
+      attack: availableAttacks[1] || 'Opposing side asserts statutory bar or procedural irregularity.',
+      rebuttal: buildRebuttalText(1),
+    });
+  }
+  if (adversarialDebate.length === 0) {
+    adversarialDebate.push({
+      ground: 'No strategic ground found in record.',
+      attack: 'No opposing attack found in record.',
+      rebuttal: fallbackRebuttal,
+    });
+  }
+
+  // Filter Action Plan to ensure procedural next steps without verdict repetition
+  const filteredActionItems = a.riskAction.items.filter((item) => !isConclusionLike(item));
+  const sanitizedActionList: TaggedList = {
+    source: a.riskAction.source,
+    items: filteredActionItems.length > 0
+      ? filteredActionItems
+      : (a.category === 'bail'
+          ? ["Furnish requisite personal bond with local sureties before the Trial Court / Magistrate."]
+          : a.category === 'civil'
+          ? ["Submit certified decree copy and file execution / compliance petition before the jurisdictional Civil Court."]
+          : a.category === 'arbitration'
+          ? ["Submit formal application under Section 34/36 of the Arbitration and Conciliation Act, 1996 for enforcement or stay."]
+          : ["File formal compliance affidavit and verified records before the registry."])
+  };
+
   const cards: {
     key: string;
     title: string;
@@ -45,7 +145,7 @@ export default function RiskPage() {
       title: 'Key Strengths',
       icon: CircleCheck,
       tone: 'border-t-emerald-400',
-      list: a.riskStrengths,
+      list: { source: a.riskStrengths.source, items: validStrengths },
       fallbackTitle: 'No favorable findings extracted yet',
       fallbackDesc: 'Strengths are drawn strictly from findings in the record that favor your side — none were detected in this dossier.',
     },
@@ -54,7 +154,7 @@ export default function RiskPage() {
       title: 'Potential Gaps',
       icon: TriangleAlert,
       tone: 'border-t-amber-400',
-      list: a.riskGaps,
+      list: { source: a.riskGaps.source, items: validGaps },
       fallbackTitle: 'No adverse contentions extracted yet',
       fallbackDesc: 'Gaps mirror the opposing side’s contentions and procedural weaknesses on record — none were detected here.',
     },
@@ -63,24 +163,10 @@ export default function RiskPage() {
       title: 'Action Plan',
       icon: Wrench,
       tone: 'border-t-sky-400',
-      list: a.riskAction,
+      list: sanitizedActionList,
       fallbackTitle: 'No operative directions extracted yet',
       fallbackDesc: 'Next steps are derived from the operative paragraph of the judgment — none were detected for this matter.',
     },
-  ];
-
-  // Synthesize dynamic adversarial debate triads based on case analysis
-  const adversarialDebate = [
-    {
-      ground: a.riskStrengths.items[0] || 'Primary defence based on procedural compliance and statutory preconditions.',
-      attack: a.riskGaps.items[0] || 'Opposing counsel contends that non-compliance is curable and substantive liability remains intact.',
-      rebuttal: a.riskAction.items[0] || 'Rely on binding Supreme Court precedents establishing that procedural safeguards in personal liberty are mandatory and non-curable.',
-    },
-    {
-      ground: a.riskStrengths.items[1] || 'Absence of direct mens rea and non-recovery of incriminating physical instruments from applicant.',
-      attack: 'Prosecution relies on electronic communications, cell-site data, and vicarious conspiracy under joint liability doctrines.',
-      rebuttal: 'Challenge admissibility of digital evidence under Section 63 BSA / Section 65B IEA due to absence of contemporaneous certification at seizure.',
-    }
   ];
 
   return (

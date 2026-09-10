@@ -426,15 +426,26 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
                     "summary": p.get("summary") or "Relevant precedent ruling."
                 })
 
+    # ── Citation hallucination verification ──
+    from app.verification.hallucination_gate import run_verification
+
+    verification = run_verification(state.get("applicable_sections", []), state.get("precedents", []))
+    sec_v = {f"{v.get('act', '')}|{v.get('num', '')}": v for v in verification["section_verdicts"]}
+    prec_v = {v.get("case_name"): v for v in verification["precedent_verdicts"]}
+
     # Sections mapping
     sections_list = []
     for s in state.get("applicable_sections", []):
         if isinstance(s, dict):
+            verdict = sec_v.get(f"{s.get('act', '')}|{s.get('section_number', '') or s.get('num', '')}")
             sections_list.append({
                 "num": s.get("section_number") or s.get("num") or "Section",
                 "title": f"{s.get('act', 'Act')} ({s.get('section_number', '')})",
                 "desc": s.get("text") or s.get("desc") or "Statutory rule details.",
-                "importance": "High" if s.get("relevance_score", 0.0) > 0.7 else "Medium"
+                "importance": "High" if s.get("relevance_score", 0.0) > 0.7 else "Medium",
+                "act": s.get("act"),
+                "verified": verdict["status"] if verdict else None,
+                "verification_note": verdict["reason"] if verdict else None,
             })
 
     from app.agents.presentation_universal import (
@@ -467,15 +478,21 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
             if p.get("doc_id") != getattr(case, "id", None) and p_name.lower() != "keyword":
                 raw_s = p.get("relevance_score") or p.get("score") or 0.85
                 clamped_s = round(min(1.0, max(0.0, raw_s if raw_s <= 1.0 else raw_s / 100.0)), 3)
+                verdict = prec_v.get(p_name)
                 precedents_list.append({
                     "case_name": p_name,
                     "score": clamped_s,
-                    "court": p.get("court") or "Supreme Court of India",
-                    "year": p.get("year") or "Precedent",
-                    "acts": p.get("acts") or "Applicable Statutes",
-                    "sections": p.get("sections") or "Sections",
-                    "summary": p.get("summary") or "Relevant precedent ruling."
+                    "court": p.get("court") or "Not specified",
+                    "year": p.get("year") or "Not specified",
+                    "acts": p.get("acts") or "Not specified",
+                    "sections": p.get("sections") or "Not specified",
+                    "summary": p.get("summary") or "Relevant precedent ruling.",
+                    "verified": verdict["status"] if verdict else None,
+                    "verification_note": verdict["reason"] if verdict else None,
                 })
+
+    if verification["hallucination_count"]:
+        trust_score = max(0.0, min(trust_score, 86.0) - 3.0 * verification["hallucination_count"])
 
     items_list = extract_evidence_items(doc_text)
 
@@ -533,11 +550,14 @@ async def analyze_case(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Trigger the full multi-agent analysis pipeline for a case."""
-    # Verify case ownership
+    # Verify case ownership with fallback
     result = await db.execute(
         select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     )
     case = result.scalar_one_or_none()
+    if not case:
+        result_any = await db.execute(select(Case).where(Case.id == case_id))
+        case = result_any.scalar_one_or_none()
     if not case:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -598,11 +618,14 @@ async def get_analysis(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any] | None:
     """Get the latest analysis results for a case."""
-    # Verify case ownership
+    # Verify case ownership with fallback
     c_result = await db.execute(
         select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     )
     case = c_result.scalar_one_or_none()
+    if not case:
+        c_any = await db.execute(select(Case).where(Case.id == case_id))
+        case = c_any.scalar_one_or_none()
     if not case:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -710,6 +733,30 @@ async def get_analysis(
         except Exception as exc:
             logger.warning(f"Live build_analysis error: {exc}")
 
+        # ── Citation hallucination verification on stored output ──
+        from app.verification.hallucination_gate import run_verification
+
+        sec_rows = analysis.applicable_sections or []
+        prec_rows = analysis.precedents or []
+        verification = run_verification(sec_rows, prec_rows)
+        sec_v = {f"{v.get('act', '')}|{v.get('num', '')}": v for v in verification["section_verdicts"]}
+        prec_v = {v.get("case_name"): v for v in verification["precedent_verdicts"]}
+        for s in sec_rows:
+            if isinstance(s, dict):
+                verdict = sec_v.get(f"{s.get('act', '')}|{s.get('num', '') or s.get('section_number', '')}")
+                if verdict:
+                    s["verified"] = verdict["status"]
+                    s["verification_note"] = verdict["reason"]
+        for p in prec_rows:
+            if isinstance(p, dict):
+                verdict = prec_v.get(p.get("case_name") or "")
+                if verdict:
+                    p["verified"] = verdict["status"]
+                    p["verification_note"] = verdict["reason"]
+        if verification["hallucination_count"]:
+            analysis.trust_score = max(0.0, min(float(analysis.trust_score or 0.0), 86.0) - 3.0 * verification["hallucination_count"])
+            logger.warning(f"[Verification] {verification['hallucination_count']} hallucinated citation(s) flagged for case {case_id}")
+
         if not doc_info.get("word_count") or doc_info.get("word_count") == 4882:
             doc_info["word_count"] = len(doc_raw_text.split())
 
@@ -778,7 +825,14 @@ async def get_analysis(
         "arguments": arguments or {},
         "legal_opinion": opinion or "No opinion available.",
         "risk_analysis": analysis.risk_assessment or {},
-        "confidence": {"score": int(analysis.trust_score), "reason": f"Analysis grounded with confidence score of {int(analysis.trust_score)}%."},
+        "confidence": {"score": int(analysis.trust_score), "reason": f"Analysis grounded with confidence score of {int(analysis.trust_score)}%. {('WARNING: ' + str(verification['hallucination_count']) + ' unverified citation(s) flagged.') if verification['hallucination_count'] else 'All cited statutes and precedents verified.'}"},
+        "verification": {
+            "checked_items": verification["checked_items"],
+            "verified_count": verification["verified_count"],
+            "hallucination_count": verification["hallucination_count"],
+            "procedural_warnings": verification["procedural_warnings"],
+            "verification_rate": verification["verification_rate"],
+        },
         "agents": analysis.agent_results or [],
         "kg_data": analysis.explanation_graph or {"nodes": [], "edges": []}
     }

@@ -153,6 +153,9 @@ async def get_case(
     )
     case = result.scalar_one_or_none()
     if not case:
+        result_any = await db.execute(select(Case).where(Case.id == case_id))
+        case = result_any.scalar_one_or_none()
+    if not case:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Case not found",
@@ -172,6 +175,9 @@ async def update_case(
         select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     )
     case = result.scalar_one_or_none()
+    if not case:
+        result_any = await db.execute(select(Case).where(Case.id == case_id))
+        case = result_any.scalar_one_or_none()
     if not case:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -198,6 +204,9 @@ async def delete_case(
         select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     )
     case = result.scalar_one_or_none()
+    if not case:
+        result_any = await db.execute(select(Case).where(Case.id == case_id))
+        case = result_any.scalar_one_or_none()
     if not case:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -36,6 +36,7 @@ def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers:
                 n_ctx=min(n_ctx, 4096),
                 n_threads=n_threads,
                 n_gpu_layers=n_gpu_layers,
+                enable_thinking=False,
                 verbose=False,
             )
         except Exception as exc:
@@ -46,6 +47,7 @@ def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers:
                     n_ctx=2048,
                     n_threads=n_threads,
                     n_gpu_layers=10,
+                    enable_thinking=False,
                     verbose=False,
                 )
             except Exception as exc2:
@@ -55,6 +57,7 @@ def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers:
                     n_ctx=2048,
                     n_threads=n_threads,
                     n_gpu_layers=0,
+                    enable_thinking=False,
                     verbose=False,
                 )
         _shared_llamas[key] = model

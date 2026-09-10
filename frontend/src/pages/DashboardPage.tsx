@@ -202,7 +202,7 @@ export default function DashboardPage() {
             {cases.slice(0, 4).map((c, idx) => {
               const s = statusMeta(c.status);
               return (
-                <motion.button
+                <motion.div
                   key={c.id}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -256,7 +256,7 @@ export default function DashboardPage() {
                       <ChevronRight className="h-3.5 w-3.5" />
                     </span>
                   </div>
-                </motion.button>
+                </motion.div>
               );
             })}
           </div>

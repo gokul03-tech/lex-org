@@ -230,6 +230,11 @@ async def get_case_primary_document_file(
         ).order_by(Document.created_at.desc())
     )
     doc = result.scalars().first()
+    if not doc:
+        result_any = await db.execute(
+            select(Document).where(Document.case_id == case_id).order_by(Document.created_at.desc())
+        )
+        doc = result_any.scalars().first()
     if not doc or not doc.file_path or not os.path.exists(doc.file_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

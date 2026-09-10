@@ -56,6 +56,10 @@ class EmbeddingGenerator:
         try:
             from sentence_transformers import SentenceTransformer
             self._model = SentenceTransformer(self.model_name, device=self.device)
+            # Half precision on CUDA so BGE-M3 can share a small (4GB) GPU
+            # with the llama.cpp LLM without OOM.
+            if "cuda" in str(self.device):
+                self._model.half()
             self._backend = "sentence_transformers"
             dim = self._model.get_sentence_embedding_dimension()
             logger.info(f"Loaded embedding model: {self.model_name} (dim={dim}, device={self.device})")

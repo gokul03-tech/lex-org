@@ -345,7 +345,32 @@ def build_timeline(text: str, date: str | None) -> list[dict[str, Any]]:
     op = _operative_sentence(n) or _last_substantive(n) or n[-160:].strip()
     return ev + [{'date': date or 'Final Hearing Date', 'fact': op, 'page': '1-2'}]
 
-# ---------- 8) RISK (fully extracted; operative para = action plan) ----------
+# ---------- 8) RISK (fully extracted; strictly procedural action plan) ----------
+def _extract_procedural_actions(text: str, n: str, op: str | None) -> list[str]:
+    """Extract procedural next steps directly and verbatim from the document text,
+    ensuring zero hallucination and strict grounding."""
+    actions = []
+    
+    sentences = SENT(n)
+    for s in sentences:
+        s_clean = s.strip()
+        if re.search(r'\b(?:directed to|executing a|furnish|deposit|refund|pay|appear|bond of|sureties|compliance|affidavit)\b', s_clean, re.I):
+            # Exclude pure standalone verdict phrases like "Bail application is allowed."
+            if not re.match(r'^(?:\d+\.\s*)?(?:bail application|appeal|petition|suit)\s+is\s+(?:allowed|dismissed)\.?$', s_clean, re.I):
+                if s_clean not in actions and len(s_clean) > 15:
+                    actions.append(s_clean)
+                    if len(actions) >= 2:
+                        break
+                        
+    if not actions and op:
+        actions = [op]
+    elif not actions:
+        fb = _last_substantive(n)
+        if fb:
+            actions = [fb]
+            
+    return actions
+
 def build_risk(text: str, subs_a: list[str], subs_b: list[str]) -> dict[str, Any]:
     n = norm(text)
     strengths = [s for s in SENT(n) if re.search(r'We hold|established|readiness and willingness|No direct financial transfer|investigation is complete|charge sheet has already been filed|renders the impugned', s, re.I)][:2]
@@ -356,7 +381,9 @@ def build_risk(text: str, subs_a: list[str], subs_b: list[str]) -> dict[str, Any
     contest_cue = re.compile(r'\b(contended|opposed|defended|failed to|disputed|however)\b', re.I)
     gap_src = subs_b[:2] if subs_b else [s for s in _substantive_sentences(n) if contest_cue.search(s)][:2]
     gap_list = gap_src or ([fallback_quote] if fallback_quote else [])
-    act_list = [op] if op else ([fallback_quote] if fallback_quote else [])
+    
+    # Procedural next steps strictly avoiding verdict repetition
+    act_list = _extract_procedural_actions(text, n, op)
 
     if op and SPEC_OUTCOME.search(op):
         conclusion = norm(op)
