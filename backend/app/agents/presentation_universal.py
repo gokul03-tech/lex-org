@@ -10,7 +10,18 @@ norm = lambda t: re.sub(r'\s+', ' ', t or '').strip()
 nows = lambda t: re.sub(r'[^a-z0-9]', '', (t or '').lower())
 F = lambda v, s: {"value": v, "status": s}
 snap = lambda t, i: t.rfind(' ', 0, max(0, i)) + 1          # word-boundary slice
-SENT = lambda t: re.split(r'(?<=[a-z])\.\s+(?=[A-Z0-9])', t)
+_ABBR_DOT = re.compile(r'\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|No|Sec|Art|Ex|Rs|Adv|APP|Vs|vs|v)\.', re.I)
+_SINGLE_INIT = re.compile(r'\b([A-Z])\.')
+
+def _protect_dots(t: str) -> str:
+    t = _ABBR_DOT.sub(lambda m: m.group(0).replace('.', '<DOT>'), t)
+    return _SINGLE_INIT.sub(r'\1<DOT>', t)
+
+def _restore_dots(s: str) -> str:
+    return s.replace('<DOT>', '.')
+
+def SENT(t: str) -> list[str]:
+    return [_restore_dots(s).strip() for s in re.split(r'(?<=[a-z0-9])\.\s+(?=[A-Z0-9])', _protect_dots(t))]
 JUNK = {'keyword', 'vector', '', 'null', 'none', 'precedent citation'}
 
 safe = lambda m, k, fb=None: (
@@ -223,11 +234,7 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
     return out
 
 def split_sentences(t: str) -> list[str]:
-    # Protect honorifics and initials from premature sentence splitting
-    t = re.sub(r'\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|vs|v|No|Sec|Art|Ex)\.', r'\1<DOT>', t, flags=re.I)
-    t = re.sub(r'\b([A-Z])\.', r'\1<DOT>', t)
-    sentences = re.split(r'(?<=[a-z0-9])\.\s+(?=[A-Z0-9])', t)
-    return [s.replace('<DOT>', '.').strip() for s in sentences]
+    return SENT(t)
 
 SPEC_OUTCOME = re.compile(r'\b(?:allowed|set aside|disposed|dismissed)\b', re.I)
 ANY_OUTCOME = re.compile(r'\b(?:allowed|set aside|disposed|dismissed|directed|quashed|decreed|granted)\b', re.I)
@@ -294,8 +301,15 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
             
         if cur and has_verb and len(s_clean) > 25:
             clean_s = re.sub(r'^\d+\.\s*', '', s_clean)
+            # Never let a State/Prosecution bullet leak into the Applicant/Defense list
+            # (and vice-versa) when a speaker label was glued to the sentence.
+            if cur == 'a':
+                clean_s = re.sub(r'^(?:The\s+)?(?:State|Prosecution|Respondent|Opposite party|APP)\s+', '', clean_s, flags=re.I)
+            else:
+                clean_s = re.sub(r'^(?:The\s+)?(?:Applicant|Petitioner|Appellant|Plaintiff|Defense|Defence|Applicant\'s|Petitioner\'s)\s+', '', clean_s, flags=re.I)
+            clean_s = clean_s.strip()
             target = a if cur == 'a' else b
-            if clean_s not in target:
+            if clean_s and clean_s not in target:
                 target.append(clean_s)
                 
     return a[:3], b[:3]
@@ -325,10 +339,15 @@ def extract_evidence(text: str) -> list[dict[str, Any]]:
         seen.add(label)
         win = n[max(0, m.start()-220):m.end()+220]
         
-        # Clean sentence boundary snippet
+        # Word-aligned snippet window (never cuts mid-word; ellipsis when truncated)
         st = n.rfind('. ', 0, m.start())
         st = st + 2 if st != -1 else 0
-        snip = re.sub(r'^\d+\.\s*', '', n[st:m.end()+160]).strip()
+        raw_end = min(len(n), m.end() + 190)
+        e_pos = n.find(' ', raw_end)
+        end = e_pos if e_pos != -1 else raw_end
+        snip = re.sub(r'^\d+\.\s*', '', n[st:end]).strip()
+        if end < len(n) - 1:
+            snip = snip.rstrip(' .') + ' ...'
         
         items.append({
             'label': label,

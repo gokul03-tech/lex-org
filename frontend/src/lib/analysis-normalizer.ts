@@ -5,7 +5,7 @@ import type {
 
 type Any = Record<string, any>;
 
-const JUNK_LABELS = new Set(['keyword', 'vector']);
+const JUNK_LABELS = new Set(['keyword', 'vector', 'precedent', 'precedent citation', 'court of law', 'none']);
 
 export const cleanTitle = (raw?: string | null): string => {
   if (!raw) return '';
@@ -218,12 +218,24 @@ function normalizeIssues(legalIssues: any, issuesRaw: any): Issue[] {
 function splitSentences(v: any): string[] {
   if (Array.isArray(v)) return v.map((x) => String(x)).filter(Boolean);
   if (typeof v === 'string' && v.trim()) {
-    return v
+    // Protect honorifics/abbreviations so "Ms. Shinde", "D.B.", "v. State" never split
+    const t = String(v)
+      .replace(/\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|No|Sec|Art|Ex|Rs|Adv|APP|Vs|vs|v)\./gi, (m) => m.replace('.', '<DOT>'))
+      .replace(/\b([A-Z])\./g, '$1<DOT>');
+    return t
       .split(/(?<=[.!?])\s+(?=[A-Z"(])/)
-      .map((s) => s.trim())
+      .map((s) => s.replace(/<DOT>/g, '.').trim())
       .filter(Boolean);
   }
   return [];
+}
+
+/** Strip a leading speaker label that contradicts this column's side (e.g. "State" in the Defense column). */
+function stripCrossSidePrefix(items: string[], ownTokens: string[], opposingTokens: string[]): string[] {
+  const re = new RegExp(`^(?:The\\s+)?(?:${opposingTokens.join('|')})\\s+(?=.{15,})`, 'i');
+  return items
+    .map((s) => s.replace(re, '').replace(/^\s+/, ''))
+    .filter(Boolean);
 }
 
 function firstSentence(v: any): string {
@@ -395,8 +407,17 @@ export function normalizeAnalysis({ analysis, caseInfo }: NormalizeInput): Analy
   const sub = analysis.submissions ?? {};
   const args = analysis.arguments ?? {};
   const headings = submissionHeadings(category);
-  const submissionsAItems = splitSentences(sub.a ?? args.prosecution);
-  const submissionsBItems = splitSentences(sub.b ?? args.defense);
+  let submissionsAItems = splitSentences(sub.a ?? args.prosecution);
+  let submissionsBItems = splitSentences(sub.b ?? args.defense);
+  // Column A = petitioner/applicant side for civil/arb/writ, prosecution/state side for bail.
+  // Scrub any cross-side speaker labels that leaked into the wrong column.
+  if (category === 'bail') {
+    submissionsAItems = stripCrossSidePrefix(submissionsAItems, ['State', 'Prosecution', 'APP'], ['Applicant', 'Petitioner', 'Defense', 'Accused']);
+    submissionsBItems = stripCrossSidePrefix(submissionsBItems, ['Applicant', 'Petitioner', 'Defense', 'Accused'], ['State', 'Prosecution', 'APP']);
+  } else {
+    submissionsAItems = stripCrossSidePrefix(submissionsAItems, ['Applicant', 'Petitioner', 'Appellant', 'Plaintiff'], ['State', 'Prosecution', 'Respondent', 'Defendant']);
+    submissionsBItems = stripCrossSidePrefix(submissionsBItems, ['State', 'Prosecution', 'Respondent', 'Defendant'], ['Applicant', 'Petitioner', 'Appellant', 'Plaintiff']);
+  }
 
   const riskRaw: Any = analysis.risk ?? analysis.risk_analysis ?? {};
   const strengthsArr = Array.isArray(riskRaw.strengths) ? riskRaw.strengths : null;

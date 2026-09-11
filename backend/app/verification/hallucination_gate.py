@@ -217,15 +217,26 @@ def validate_precedent(prec: dict[str, Any]) -> dict[str, Any]:
 
     record = _lookup_case(name)
     if record:
+        correction = {
+            "canonical_year": record.get("year"),
+            "canonical_citation": record.get("citation"),
+            "canonical_court": record.get("court"),
+        }
         if citation and record["citation"] in citation:
-            return {"status": "verified", "reason": f"Matches canonical citation {record['citation']}."}
+            verdict = {"status": "verified", "reason": f"Matches canonical citation {record['citation']}."}
+            verdict.update(correction)
+            return verdict
         if record.get("year"):
             try:
                 if year and int(re.sub(r"\D", "", year)) != record["year"]:
-                    return {"status": "invalid", "reason": f"Fabricated year for {name}: real case is from {record['year']} ({record['citation']})."}
+                    verdict = {"status": "invalid", "reason": f"Fabricated year for {name}: real case is from {record['year']} ({record['citation']})."}
+                    verdict.update(correction)
+                    return verdict
             except ValueError:
                 pass
-        return {"status": "invalid", "reason": f"Fabricated citation for {name}: correct record is {record['citation']}."}
+        verdict = {"status": "invalid", "reason": f"Fabricated citation for {name}: correct record is {record['citation']}."}
+        verdict.update(correction)
+        return verdict
 
     m = _SCC_CITE_RE.match(citation)
     if m:

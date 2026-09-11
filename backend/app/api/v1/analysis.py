@@ -479,17 +479,26 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
                 raw_s = p.get("relevance_score") or p.get("score") or 0.85
                 clamped_s = round(min(1.0, max(0.0, raw_s if raw_s <= 1.0 else raw_s / 100.0)), 3)
                 verdict = prec_v.get(p_name)
+                if verdict is not None and verdict.get("canonical_citation"):
+                    p_year = str(verdict.get("canonical_year") or p.get("year") or "Not specified")
+                    p_citation = verdict["canonical_citation"]
+                else:
+                    p_year = p.get("year") or "Not specified"
+                    p_citation = p.get("citation")
                 precedents_list.append({
                     "case_name": p_name,
                     "score": clamped_s,
-                    "court": p.get("court") or "Not specified",
-                    "year": p.get("year") or "Not specified",
+                    "court": (verdict.get("canonical_court") if verdict and verdict.get("canonical_citation") else None) or p.get("court") or "Not specified",
+                    "year": p_year,
+                    "citation": p_citation,
                     "acts": p.get("acts") or "Not specified",
                     "sections": p.get("sections") or "Not specified",
                     "summary": p.get("summary") or "Relevant precedent ruling.",
                     "verified": verdict["status"] if verdict else None,
                     "verification_note": verdict["reason"] if verdict else None,
                 })
+
+    precedents_list = [p for p in precedents_list if (p.get("case_name") or "").lower().strip() not in ("vector", "keyword", "precedent citation", "precedent", "court of law")]
 
     if verification["hallucination_count"]:
         trust_score = max(0.0, min(trust_score, 86.0) - 3.0 * verification["hallucination_count"])
@@ -753,6 +762,12 @@ async def get_analysis(
                 if verdict:
                     p["verified"] = verdict["status"]
                     p["verification_note"] = verdict["reason"]
+                    if verdict.get("canonical_citation"):
+                        p["citation"] = verdict["canonical_citation"]
+                        p["year"] = str(verdict["canonical_year"])
+                        p["court"] = verdict.get("canonical_court") or p.get("court")
+        # Drop placeholder precedents that are not real cases (vector/keyword junk)
+        analysis.precedents = [p for p in prec_rows if isinstance(p, dict) and (p.get("case_name") or '').strip().lower() not in ("vector", "keyword", "precedent citation", "precedent", "court of law")]
         if verification["hallucination_count"]:
             analysis.trust_score = max(0.0, min(float(analysis.trust_score or 0.0), 86.0) - 3.0 * verification["hallucination_count"])
             logger.warning(f"[Verification] {verification['hallucination_count']} hallucinated citation(s) flagged for case {case_id}")

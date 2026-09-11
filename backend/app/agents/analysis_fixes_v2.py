@@ -213,6 +213,8 @@ build_evidence_items = extract_evidence_items
 
 # ================= 5) ARGUMENTS: EXTRACT REAL SUBMISSIONS =================
 def extract_submissions(text: str) -> tuple[list[str], list[str]]:
+    # Protect honorific abbreviations so `[^.]*\.` never terminates at "Ms."
+    text = re.sub(r'\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|No|Sec|Art|Ex|Rs|Adv|APP|Vs|vs|v)\.', lambda m: m.group(0).replace('.', '<DOT>'), text, flags=re.I)
     pros_pats = [
         r'(?:The case of the prosecution is that|She argued that|She further pointed out that|On the other hand, the learned APP|prosecution submitted that)\s*([^.]*\.)',
         r'(?:learned counsel appearing for the respondent|respondent contends that|defence raised by the insurer)\s*([^.]*\.)'
@@ -224,12 +226,12 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
     pros_raw, def_raw = [], []
     for pat in pros_pats:
         for m in re.finditer(pat, text, re.IGNORECASE):
-            s = re.sub(r'\s+', ' ', m.group(0)).strip()
+            s = re.sub(r'\s+', ' ', m.group(0)).replace('<DOT>', '.').strip()
             if s:
                 pros_raw.append(s)
     for pat in def_pats:
         for m in re.finditer(pat, text, re.IGNORECASE):
-            s = re.sub(r'\s+', ' ', m.group(0)).strip()
+            s = re.sub(r'\s+', ' ', m.group(0)).replace('<DOT>', '.').strip()
             if s:
                 def_raw.append(s)
 
@@ -238,7 +240,7 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
     seen_p = set()
     for p in pros_raw:
         clean_p = p.strip()
-        if len(clean_p) > 35 and not clean_p.endswith(('Ms.', 'Mr.', 'APP')):
+        if len(clean_p) > 35:
             norm_key = re.sub(r'[^a-z]', '', clean_p.lower())[:32]
             if norm_key not in seen_p:
                 seen_p.add(norm_key)

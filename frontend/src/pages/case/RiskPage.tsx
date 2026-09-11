@@ -56,11 +56,17 @@ export default function RiskPage() {
 
   const validStrengths = a.riskStrengths.items.filter((item) => !isConclusionLike(item));
   const validSubmissionsA = a.submissionsA.items.filter((item) => !isConclusionLike(item));
-  const availableGrounds = [...validStrengths, ...validSubmissionsA];
+  // Column A is the petitioner/applicant side for civil/arbitration/writ, but the
+  // State/Prosecution side for bail/criminal cases. Pick the user's own side correctly
+  // so the Devil's Advocate boxes never swap (Bug: State argument shown as Defense ground).
+  const ownSide = a.category === 'bail' ? a.submissionsB : a.submissionsA;
+  const opposingSide = a.category === 'bail' ? a.submissionsA : a.submissionsB;
+  const validOwnSubs = ownSide.items.filter((item) => !isConclusionLike(item));
+  const availableGrounds = [...validStrengths, ...validOwnSubs];
 
   const validGaps = a.riskGaps.items.filter((item) => !isConclusionLike(item));
-  const validSubmissionsB = a.submissionsB.items.filter((item) => !isConclusionLike(item));
-  const availableAttacks = [...validGaps, ...validSubmissionsB];
+  const validOppSubs = opposingSide.items.filter((item) => !isConclusionLike(item));
+  const availableAttacks = [...validGaps, ...validOppSubs];
 
   // Cited precedents and statutes strictly from active record
   const primaryPrec = a.precedents[0]?.name ? `${a.precedents[0].name}${a.precedents[0].citation ? ` (${a.precedents[0].citation})` : ''}` : null;
