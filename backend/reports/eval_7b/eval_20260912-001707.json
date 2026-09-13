@@ -1,0 +1,82 @@
+{
+  "generated_at": "2026-09-12 00:17:07",
+  "suites": [
+    {
+      "suite": "E4_reasoning",
+      "passed": true,
+      "metrics": {
+        "irac_avg": 1.0,
+        "outcome_acc": 1.0,
+        "label_acc": 1.0,
+        "duration_s": 0.1
+      },
+      "details": [
+        {
+          "doc": "vikram",
+          "irac": {
+            "issue": true,
+            "rule": true,
+            "application": true,
+            "conclusion": true,
+            "score": 1.0
+          },
+          "predicted_outcome": "allowed",
+          "gold_outcome": "allowed",
+          "outcome_correct": true,
+          "labels_ok": true,
+          "llm_judge": null
+        },
+        {
+          "doc": "ananya",
+          "irac": {
+            "issue": true,
+            "rule": true,
+            "application": true,
+            "conclusion": true,
+            "score": 1.0
+          },
+          "predicted_outcome": "disposed of",
+          "gold_outcome": "disposed of",
+          "outcome_correct": true,
+          "labels_ok": true,
+          "llm_judge": null
+        },
+        {
+          "doc": "apex",
+          "irac": {
+            "issue": true,
+            "rule": true,
+            "application": true,
+            "conclusion": true,
+            "score": 1.0
+          },
+          "predicted_outcome": "partly allowed",
+          "gold_outcome": "partly allowed",
+          "outcome_correct": true,
+          "labels_ok": true,
+          "llm_judge": null
+        },
+        {
+          "doc": "mehta",
+          "irac": {
+            "issue": true,
+            "rule": true,
+            "application": true,
+            "conclusion": true,
+            "score": 1.0
+          },
+          "predicted_outcome": "allowed",
+          "gold_outcome": "allowed",
+          "outcome_correct": true,
+          "labels_ok": true,
+          "llm_judge": null
+        }
+      ]
+    }
+  ],
+  "gates": {
+    "E1_f1_ge_0.90": false,
+    "E2_mrr_ge_0.80": false,
+    "E3_violations_eq_0": false
+  }
+}

@@ -1,0 +1,10 @@
+suite,item,metric,value
+E4_reasoning,_summary,passed,PASS
+E4_reasoning,_summary,irac_avg,1.0
+E4_reasoning,_summary,outcome_acc,1.0
+E4_reasoning,_summary,label_acc,1.0
+E4_reasoning,_summary,duration_s,0.1
+E4_reasoning,vikram,detail,"{""doc"": ""vikram"", ""irac"": {""issue"": true, ""rule"": true, ""application"": true, ""conclusion"": true, ""score"": 1.0}, ""predicted_outcome"": ""allowed"", ""gold_outcome"": ""allowed"", ""outcome_correct"": true, ""labels_ok"": true, ""llm_judge"": null}"
+E4_reasoning,ananya,detail,"{""doc"": ""ananya"", ""irac"": {""issue"": true, ""rule"": true, ""application"": true, ""conclusion"": true, ""score"": 1.0}, ""predicted_outcome"": ""disposed of"", ""gold_outcome"": ""disposed of"", ""outcome_correct"": true, ""labels_ok"": true, ""llm_judge"": null}"
+E4_reasoning,apex,detail,"{""doc"": ""apex"", ""irac"": {""issue"": true, ""rule"": true, ""application"": true, ""conclusion"": true, ""score"": 1.0}, ""predicted_outcome"": ""partly allowed"", ""gold_outcome"": ""partly allowed"", ""outcome_correct"": true, ""labels_ok"": true, ""llm_judge"": null}"
+E4_reasoning,mehta,detail,"{""doc"": ""mehta"", ""irac"": {""issue"": true, ""rule"": true, ""application"": true, ""conclusion"": true, ""score"": 1.0}, ""predicted_outcome"": ""allowed"", ""gold_outcome"": ""allowed"", ""outcome_correct"": true, ""labels_ok"": true, ""llm_judge"": null}"

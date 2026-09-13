@@ -189,7 +189,7 @@ Additional Query: {query}
     except Exception as exc:
         logger.error(f"[CaseUnderstanding] Error: {exc}")
         state["errors"] = state.get("errors", []) + [f"CaseUnderstanding: {exc}"]
-        return _record_completion(state, "case_understanding", 0.0, "case_summary", f"Error: {exc}")
+        return _record_completion(state, "case_understanding", 0.0, "case_summary", "Case understanding could not be completed for this dossier.")
 
 
 # ── Agent 2: Legal Research Agent ──────────────────────────
@@ -767,7 +767,7 @@ Respond with JSON:
     except Exception as exc:
         logger.error(f"[LegalReasoning] Error: {exc}")
         state["errors"] = state.get("errors", []) + [f"LegalReasoning: {exc}"]
-        state["legal_reasoning"] = f"Error during legal reasoning: {exc}"
+        state["legal_reasoning"] = "Legal reasoning could not be completed for this dossier."
         return _record_completion(state, "legal_reasoning", 0.0, "legal_reasoning", state["legal_reasoning"])
 
 

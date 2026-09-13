@@ -175,7 +175,7 @@ def extract_metadata(text: str) -> dict[str, Any]:
 def bind_sections(text: str) -> list[dict[str, Any]]:
     n = norm(text)
     out = []
-    ACT_PAT = r'([A-Z][A-Za-z.\s(),&-]{2,90}?(?:Act|Sanhita|Adhiniyam|Code|Constitution|Regulation)s?(?:\s*\([A-Za-z\s]+\))?(?:,?\s?(?:19|20)\d{2})?|NDPS\s+Act|IT\s+Act|BNS|BNSS|BSA|CPC|CrPC|IPC)'
+    ACT_PAT = r'([A-Z][A-Za-z.\s(),&-]{2,90}?(?:Act|Sanhita|Adhiniyam|Code|Constitution|Regulation)s?(?:\s*\([A-Za-z\s]+\))?(?:,?\s?(?:19|20)\d{2})?|NDPS\s+Act|IT\s+Act|BNSS|BSA|BNS|CPC|CrPC|IPC)'
     
     # 1. Forward pattern: Section X of Act
     for m in re.finditer(r'(?:Sections?|Sec\.?)\s+([0-9A-Za-z(),\s&and/-]+?)\s+(?:of\s+(?:the\s+)?)?' + ACT_PAT, n):
@@ -192,7 +192,7 @@ def bind_sections(text: str) -> list[dict[str, Any]]:
         out.append({'num': f"O.{o_num} R.{r_nums}", 'section_number': f"O.{o_num} R.{r_nums}", 'act': act, 'display': f"Order {o_num} R. {r_nums} — {act}"})
 
     # 3. Direct backward/nearby section match
-    for m in re.finditer(r'Section\s+([0-9]+[A-Za-z]?(?:\([0-9A-Za-z]+\))*)\s+([A-Z]{2,6}\s+Act|BNS|BNSS|BSA|CPC|NDPS\s+Act)', n):
+    for m in re.finditer(r'Section\s+([0-9]+[A-Za-z]?(?:\([0-9A-Za-z]+\))*)\s+([A-Z]{2,6}\s+Act|BNSS|BSA|BNS|CPC|NDPS\s+Act)', n):
         s = m.group(1)
         act = norm_act(m.group(2))
         out.append({'num': s, 'section_number': s, 'act': act, 'display': f"Section {s} — {act}"})
@@ -206,29 +206,44 @@ def bind_sections(text: str) -> list[dict[str, Any]]:
     return list({d['display']: d for d in out}.values())
 
 # ---------- 4) PRECEDENTS (each name ↔ its OWN citation) ----------
+# Citation shapes: "(2011) 1 SCC 694", "[2023] 4 SCR 710", "1994 Supp (1) SCC 92",
+# "1997 (3) SCC 1", "AIR 1954 SC 494", "2024 SCC OnLine SC 2754".  Order matters:
+# the parenthesised/bracketed forms must be tried before the bare-year form so a
+# "1994" inside "… Builders v. DDA (1994) …" never mis-parses as a new citation.
+CIT = r'\([12]\d{3}\)\s?\d+\s?[A-Z.]+\s?\d+|\[[12]\d{3}\]\s?\d+\s?SCR\s?\d+|\d{4}\s?(?:Supp\.?\s*)?\(?\d{1,4}\)?\s?SCC\s?\d+|\d{4}\s?SCC\s+OnLine\s+(?:SC|Del|Bom)|\d{4}\s?\d+\s?[A-Z.]+\s?\d+|AIR\s?[12]\d{3}\s?[A-Z ]+\d+'
+
 def extract_precedents(text: str) -> list[dict[str, Any]]:
     n = norm(text)
     out = []
     seen = set()
-    
+
+    def _clean_name(raw: str) -> str:
+        """Trim numbered-clause/trailing junk a greedy name may have absorbed."""
+        return re.split(r'\s\.\s*\d', raw)[0].strip(' ,;.')
+
+    # Case-name charset excludes digits so "v. State. 4. It was further urged …"
+    # can never swallow the following clause; a numbered-clause period (". 4.")
+    # terminates the name via the lookahead instead of being absorbed.
+    NAME = r'[A-Z][A-Za-z.&\' -]+?(?:\s+(?:v\.?|versus)\s+[A-Z][A-Za-z.&\' -]+?)'
+
     # 1. (Citation) in the case of Name
-    for m in re.finditer(r'(\([12]\d{3}\)\s?\d+\s?[A-Z.]+\s?\d+|\[[12]\d{3}\]\s?\d+\s?SCR\s?\d+|\d{4}\s?\d+\s?SCC\s?\d+|AIR\s?[12]\d{3}\s?[A-Z ]+\d+)\s+in the case of\s+([A-Z][A-Za-z0-9.&\' -]+?\s+(?:v\.?|versus)\s+[A-Z][A-Za-z0-9.&\' -]+?)(?=\s+(?:wherein|regarding|holding|where|which|laid|ruling|reiterat|and the recent)|\s*\([12]\d{3}\)|,\s+and|\.$|\n|,)', n):
+    for m in re.finditer(r'(' + CIT + r')\s+in the case of\s+(' + NAME + r')(?=\s+(?:wherein|regarding|holding|where|which|laid|ruling|reiterat|and the recent)|\s*\([12]\d{3}\)|,\s+and|\.\s*\d|\n,|\n|,)', n):
         cite = m.group(1).strip()
-        name = m.group(2).strip(' ,;.')
+        name = _clean_name(m.group(2))
         norm_k = nows(name)[:15]
         if norm_k not in seen and name.lower() not in JUNK:
             seen.add(norm_k)
-            yr = (re.search(r'(19\d{2}|20\d{2})', cite) or [None, 'Precedent'])[1]
+            yr = (re.search(r'(19\d{2}|20\d{2})', cite) or [None, None])[1]
             out.append({'case_name': name, 'citation': cite, 'year': yr, 'summary': f"Precedent cited for legal principle on this issue."})
-            
+
     # 2. judgment in Name (Citation)
-    for m in re.finditer(r'(?:judgment|decision|ruling|case)\s+in\s+(?:the case of\s+)?([A-Z][A-Za-z0-9.&\' -]+?\s+(?:v\.?|versus)\s+[A-Z][A-Za-z0-9.&\' -]+?)\s*(\([12]\d{3}\)\s?\d+\s?[A-Z.]+\s?\d+|\[[12]\d{3}\]\s?\d+\s?SCR\s?\d+|\d{4}\s?\d+\s?SCC\s?\d+|AIR\s?[12]\d{3}\s?[A-Z ]+\d+)', n):
-        name = m.group(1).strip(' ,;.')
+    for m in re.finditer(r'(?:judgment|decision|ruling|case)\s+in\s+(?:the case of\s+)?(' + NAME + r')\s*(' + CIT + r')', n):
+        name = _clean_name(m.group(1))
         cite = m.group(2).strip()
         norm_k = nows(name)[:15]
         if norm_k not in seen and name.lower() not in JUNK:
             seen.add(norm_k)
-            yr = (re.search(r'(19\d{2}|20\d{2})', cite or '') or [None, 'Precedent'])[1]
+            yr = (re.search(r'(19\d{2}|20\d{2})', cite or '') or [None, None])[1]
             out.append({'case_name': name, 'citation': cite, 'year': yr, 'summary': f"Precedent cited for legal principle on this issue."})
 
     return out
@@ -339,15 +354,15 @@ def extract_evidence(text: str) -> list[dict[str, Any]]:
         seen.add(label)
         win = n[max(0, m.start()-220):m.end()+220]
         
-        # Word-aligned snippet window (never cuts mid-word; ellipsis when truncated)
+        # Word-aligned snippet window — closes on the next sentence boundary so
+        # the quote stays a contiguous substring of the source (no "..." marker
+        # that would break verbatim grounding checks).
         st = n.rfind('. ', 0, m.start())
         st = st + 2 if st != -1 else 0
         raw_end = min(len(n), m.end() + 190)
-        e_pos = n.find(' ', raw_end)
-        end = e_pos if e_pos != -1 else raw_end
+        e_pos = n.find('. ', raw_end)
+        end = e_pos + 2 if e_pos != -1 else raw_end
         snip = re.sub(r'^\d+\.\s*', '', n[st:end]).strip()
-        if end < len(n) - 1:
-            snip = snip.rstrip(' .') + ' ...'
         
         items.append({
             'label': label,

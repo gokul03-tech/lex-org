@@ -1,0 +1,57 @@
+{
+  "generated_at": "2026-09-12 00:13:31",
+  "suites": [
+    {
+      "suite": "E3_grounding",
+      "passed": false,
+      "metrics": {
+        "total_violations": 9,
+        "duration_s": 0.1
+      },
+      "details": [
+        {
+          "doc": "vikram",
+          "violations": [
+            "ungrounded quote: Furthermore, the electronic evidence sought to be relied upon by the p",
+            "ungrounded quote: She further pointed out that bank ledger audits and panchanama dated 2",
+            "ungrounded quote: She further pointed out that bank ledger audits and panchanama dated 2",
+            "ungrounded quote: Merchant, learned Senior Counsel for the applicant, submitted that the"
+          ],
+          "count": 4,
+          "trust": 99
+        },
+        {
+          "doc": "ananya",
+          "violations": [
+            "ungrounded quote: The petitioner has invoked the extraordinary jurisdiction of this Cour"
+          ],
+          "count": 1,
+          "trust": 97
+        },
+        {
+          "doc": "apex",
+          "violations": [
+            "ungrounded quote: Having examined the arbitral record and the award, this Court finds th",
+            "ungrounded quote: He submitted that the Arbitral Tribunal completely ignored contemporan"
+          ],
+          "count": 2,
+          "trust": 97
+        },
+        {
+          "doc": "mehta",
+          "violations": [
+            "ungrounded quote: Having examined the bank statements and balance deposits tendered in e",
+            "ungrounded quote: This appeal arises out of a civil suit for Specific Performance of an "
+          ],
+          "count": 2,
+          "trust": 97
+        }
+      ]
+    }
+  ],
+  "gates": {
+    "E1_f1_ge_0.90": false,
+    "E2_mrr_ge_0.80": false,
+    "E3_violations_eq_0": false
+  }
+}

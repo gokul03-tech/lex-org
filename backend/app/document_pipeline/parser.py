@@ -6,6 +6,7 @@ and python-docx for DOCX files. Falls back gracefully.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -101,13 +102,33 @@ class DocumentParser:
 
         full_text = "\n\n".join(text_pages)
         return {
-            "text": full_text,
-            "pages": text_pages,
+            "text": self._clean_text(full_text),
+            "pages": [self._clean_text(p) for p in text_pages],
             "page_count": len(text_pages),
             "metadata": metadata,
             "format": "pdf",
             "needs_ocr": needs_ocr,
         }
+
+    @staticmethod
+    def _clean_text(text: str) -> str:
+        """Normalize common PDF-extraction mojibake before it reaches the UI.
+
+        Templates frequently encode em/en dashes as a spaced question mark
+        ("fails the standard ? legality, ..."). Fixing this at the parse layer
+        keeps the report text and the grounding source consistent so verbatim
+        checks remain green while the UI stops showing stray "?" glyphs.
+        Ligature glyphs from PDF text extraction are also unwound.
+        """
+        if not text:
+            return text
+        text = re.sub(r"([A-Za-z0-9])\s\?\s(?=[A-Za-z0-9])", r"\1 — ", text)
+        for ligature in ("ﬂ", "ﬃ", "ﬁ", "ﬀ", "œ", "ﬀ"):
+            replacement = {
+                "ﬂ": "fl", "ﬃ": "ffi", "ﬁ": "fi", "ﬀ": "ff", "œ": "oe",
+            }.get(ligature, ligature)
+            text = text.replace(ligature, replacement)
+        return text
 
     def _parse_pdf_with_pdfplumber(self, file_path: Path) -> tuple[list[str], dict]:
         """Fallback PDF parser using pdfplumber."""
@@ -133,8 +154,8 @@ class DocumentParser:
             full_text = "\n".join(para.text for para in doc.paragraphs)
 
             return {
-                "text": full_text,
-                "pages": [full_text],
+                "text": self._clean_text(full_text),
+                "pages": [self._clean_text(full_text)],
                 "page_count": 1,
                 "metadata": {},
                 "format": "docx",
@@ -151,8 +172,8 @@ class DocumentParser:
             text = f.read()
 
         return {
-            "text": text,
-            "pages": [text],
+            "text": self._clean_text(text),
+            "pages": [self._clean_text(text)],
             "page_count": 1,
             "metadata": {},
             "format": "txt",

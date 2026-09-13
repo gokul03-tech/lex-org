@@ -112,7 +112,7 @@ class TransformersProvider(LLMProvider):
             return self._tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
         except Exception as exc:
             logger.error(f"Transformers generate error: {exc}")
-            return f"[LLM Error: {exc}]"
+            return "Model response unavailable for this analysis step."
 
     def generate_structured(
         self,
@@ -202,4 +202,4 @@ class TransformersProvider(LLMProvider):
                 yield new_text
         except Exception as exc:
             logger.error(f"Transformers stream error: {exc}")
-            yield f"[Stream Error: {exc}]"
+            yield "Model response unavailable for this analysis step."

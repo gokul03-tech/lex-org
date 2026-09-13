@@ -70,7 +70,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 return data["choices"][0]["message"]["content"].strip()
         except Exception as exc:
             logger.error(f"OpenAI-compatible generate error: {exc}")
-            return f"[LLM Error: {exc}]"
+            return "Model response unavailable for this analysis step."
 
     def generate_structured(
         self,
@@ -171,4 +171,4 @@ class OpenAICompatibleProvider(LLMProvider):
                             pass
         except Exception as exc:
             logger.error(f"OpenAI-compatible stream error: {exc}")
-            yield f"[Stream Error: {exc}]"
+            yield "Model response unavailable for this analysis step."

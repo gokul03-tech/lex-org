@@ -16,6 +16,16 @@ export const cleanTitle = (raw?: string | null): string => {
     .trim();
 };
 
+/** Normalize party-name casing so "The State Of Maharashtra" and "Union Of India"
+ * render consistently as "State of Maharashtra" and "Union of India". */
+export const cleanPartyName = (raw?: string | null): string =>
+  (raw ?? '')
+    .trim()
+    .replace(/\bThe\s+(?=(?:State|Union|Central|Government)\b)/i, '')
+    .replace(/\s+Of\s+/g, ' of ')
+    .replace(/\s+Ors\.?/g, ' Ors.')
+    .trim();
+
 const asStatus = (v: any): FieldStatus =>
   v === 'extracted' || v === 'inferred' ? v : 'not_found';
 
@@ -335,15 +345,15 @@ export function normalizeAnalysis({ analysis, caseInfo }: NormalizeInput): Analy
       case 'decision_date':
         return meta(docInfo.decision_date ?? docInfo.date ?? analysis.decision_date);
       case 'petitioner':
-        return meta(
+        return meta(cleanPartyName(
           docInfo.petitioner ?? docInfo.applicant ??
           (Array.isArray(docInfo.parties) ? docInfo.parties[0] : null)
-        );
+        ));
       case 'respondent':
-        return meta(
+        return meta(cleanPartyName(
           docInfo.respondent ?? docInfo.accused ??
           (Array.isArray(docInfo.parties) && docInfo.parties.length > 1 ? docInfo.parties[1] : null)
-        );
+        ));
       case 'case_number':
         return meta(docInfo.case_number ?? docInfo.fir_number ?? docInfo.court_matter ?? analysis.case_number);
       case 'acts': {
@@ -378,7 +388,7 @@ export function normalizeAnalysis({ analysis, caseInfo }: NormalizeInput): Analy
   }
 
   const fallbackTitle = cleanTitle(caseInfo.title) || 'Active Case Dossier';
-  const caseTitleMeta = mdRaw.case_title ? meta(mdRaw.case_title, fallbackTitle) : { value: fallbackTitle, status: 'extracted' as FieldStatus };
+  const caseTitleMeta = mdRaw.case_title ? meta(cleanPartyName(mdRaw.case_title), fallbackTitle) : { value: fallbackTitle, status: 'extracted' as FieldStatus };
 
   const courtChip = md.court;
   const dateChip = md.decision_date;
@@ -407,8 +417,15 @@ export function normalizeAnalysis({ analysis, caseInfo }: NormalizeInput): Analy
   const sub = analysis.submissions ?? {};
   const args = analysis.arguments ?? {};
   const headings = submissionHeadings(category);
-  let submissionsAItems = splitSentences(sub.a ?? args.prosecution);
-  let submissionsBItems = splitSentences(sub.b ?? args.defense);
+  // Backend semantics: submissions.a / arguments.defense = first party
+  // (applicant/petitioner/appellant; for bail the accused/defense side),
+  // submissions.b / arguments.prosecution = second party (respondent/state;
+  // for bail the State/Prosecution side). Columns follow the heading convention:
+  // bail → A = State/Prosecution, B = Applicant/Defense; others → A = Petitioner, B = Respondent.
+  const firstParty = sub.a ?? args.defense;
+  const secondParty = sub.b ?? args.prosecution;
+  let submissionsAItems = splitSentences(category === 'bail' ? secondParty : firstParty);
+  let submissionsBItems = splitSentences(category === 'bail' ? firstParty : secondParty);
   // Column A = petitioner/applicant side for civil/arb/writ, prosecution/state side for bail.
   // Scrub any cross-side speaker labels that leaked into the wrong column.
   if (category === 'bail') {

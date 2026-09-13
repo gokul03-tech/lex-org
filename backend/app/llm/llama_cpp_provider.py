@@ -64,6 +64,11 @@ def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers:
         return model
 
 
+# Never surface raw model/exception internals in downstream output that may be
+# rendered in the UI — a safe, static placeholder is used instead.
+UNAVAILABLE_RESPONSE = "Model response unavailable for this analysis step."
+
+
 class LlamaCppProvider(LLMProvider):
     """LLM provider using llama.cpp Python bindings for GGUF quantized models.
 
@@ -142,7 +147,7 @@ class LlamaCppProvider(LLMProvider):
             return result["choices"][0]["text"].strip()
         except Exception as exc:
             logger.error(f"LLM generation error: {exc}")
-            return f"[LLM Error: {exc}]"
+            return UNAVAILABLE_RESPONSE
 
     def generate_structured(
         self,
@@ -231,7 +236,7 @@ class LlamaCppProvider(LLMProvider):
                     yield text
         except Exception as exc:
             logger.error(f"Stream error: {exc}")
-            yield f"[Stream Error: {exc}]"
+            yield UNAVAILABLE_RESPONSE
 
     @staticmethod
     def _simplify_schema(schema: dict[str, Any]) -> dict[str, Any]:

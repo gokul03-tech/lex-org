@@ -1,0 +1,11 @@
+suite,item,metric,value
+E2_retrieval,_summary,passed,PASS
+E2_retrieval,_summary,bm25_only,"{""recall_at_5"": 0.95, ""precision_at_5"": 0.65, ""mrr"": 0.875, ""ndcg_at_10"": 0.9191}"
+E2_retrieval,_summary,vector_only,"{""recall_at_5"": 0.1333, ""precision_at_5"": 0.1, ""mrr"": 0.2479, ""ndcg_at_10"": 0.4687}"
+E2_retrieval,_summary,hybrid_rrf,"{""recall_at_5"": 0.65, ""precision_at_5"": 0.45, ""mrr"": 0.8333, ""ndcg_at_10"": 0.7965}"
+E2_retrieval,_summary,hybrid_rerank,"{""recall_at_5"": 0.5792, ""precision_at_5"": 0.4, ""mrr"": 0.875, ""ndcg_at_10"": 0.8145}"
+E2_retrieval,_summary,primary_recall_at_5,0.5792
+E2_retrieval,_summary,primary_precision_at_5,0.4
+E2_retrieval,_summary,primary_mrr,0.875
+E2_retrieval,_summary,primary_ndcg_at_10,0.8145
+E2_retrieval,_summary,duration_s,5.7

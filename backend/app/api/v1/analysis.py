@@ -202,8 +202,18 @@ def extract_keywords(text: str) -> list[str]:
     return keywords if keywords else ["Judgment", "Appeal", "Defendant", "Petitioner", "Court"]
 
 
+def _stored_doc_text(doc: Document) -> str:
+    """Return stored document text with parse-layer mojibake cleaned at read time.
+
+    Docs ingested before the parser encoding fix keep " ? " in their stored
+    parsed_text; cleaning here keeps old documents consistent without re-ingest.
+    """
+    from app.document_pipeline.parser import DocumentParser
+    return DocumentParser._clean_text(doc.parsed_text or doc.raw_text or "")
+
+
 def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Document) -> tuple[Analysis, Report]:
-    doc_text = doc.parsed_text or doc.raw_text or ""
+    doc_text = _stored_doc_text(doc)
     
     # Extract articles (literal only - no hallucinated fallbacks)
     from app.agents.analysis_fixes import extract_articles, build_evidence_brief
@@ -594,7 +604,7 @@ async def analyze_case(
         documents_list = [
             {
                 "filename": doc.filename,
-                "text": doc.parsed_text or doc.raw_text or "",
+                "text": _stored_doc_text(doc),
                 # Pass stored metadata through so the pipeline keeps page
                 # boundaries for provenance (metadata_ contains "pages").
                 "metadata": doc.metadata_ or {},
@@ -675,7 +685,7 @@ async def get_analysis(
     doc_info = dict(analysis.procedural_status or {})
     if doc and (doc.parsed_text or doc.raw_text):
         from app.agents.presentation_universal import build_analysis
-        doc_raw_text = doc.parsed_text or doc.raw_text or ""
+        doc_raw_text = _stored_doc_text(doc)
         try:
             live_analysis = build_analysis(doc_raw_text)
             live_meta = live_analysis.get('metadata', {})
@@ -894,7 +904,7 @@ async def stream_analysis(
         documents_list = [
             {
                 "filename": doc.filename,
-                "text": doc.parsed_text or doc.raw_text or "",
+                "text": _stored_doc_text(doc),
                 # Pass stored metadata through so the pipeline keeps page
                 # boundaries for provenance (metadata_ contains "pages").
                 "metadata": doc.metadata_ or {},
@@ -961,7 +971,7 @@ async def stream_analysis(
                 
         except Exception as exc:
             logger.error(f"Error executing multi-agent graph stream: {exc}")
-            yield f"data: {json.dumps({'stage': 'completed', 'label': f'Error: {exc}', 'status': 'failed', 'progress': 100})}\n\n"
+            yield f"data: {json.dumps({'stage': 'completed', 'label': 'Analysis could not be completed', 'status': 'failed', 'progress': 100})}\n\n"
 
         # Compile database entries using final state at the very end
         try:
@@ -1070,7 +1080,7 @@ async def chat_about_document(
             d_res = await db.execute(select(Document).where(Document.case_id == case_id))
             docs = d_res.scalars().all()
             for d in docs:
-                parsed_text = d.parsed_text or d.raw_text or ""
+                parsed_text = _stored_doc_text(d)
                 if parsed_text:
                     context_parts.append(f"Uploaded Document: {d.filename}:\n{parsed_text[:3500]}")
 
