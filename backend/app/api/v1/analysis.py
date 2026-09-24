@@ -1085,12 +1085,16 @@ async def chat_about_document(
                     context_parts.append(f"Uploaded Document: {d.filename}:\n{parsed_text[:3500]}")
 
         # Add case analysis context if available
-        if case.analysis_data:
-            analysis_dict = case.analysis_data if isinstance(case.analysis_data, dict) else json.loads(case.analysis_data)
-            if "case_summary" in analysis_dict:
-                context_parts.append(f"Case Facts Summary: {analysis_dict['case_summary']}")
-            if "issues" in analysis_dict:
-                context_parts.append(f"Formulated Issues: {json.dumps(analysis_dict['issues'])}")
+        latest_analysis = case.analyses[-1] if case.analyses else None
+        if latest_analysis is not None:
+            if latest_analysis.agent_results:
+                analysis_dict = latest_analysis.agent_results
+                if "case_summary" in analysis_dict:
+                    context_parts.append(f"Case Facts Summary: {analysis_dict['case_summary']}")
+                if "issues" in analysis_dict:
+                    context_parts.append(f"Formulated Issues: {json.dumps(analysis_dict['issues'])}")
+            if latest_analysis.legal_issues:
+                context_parts.append(f"Formulated Issues: {json.dumps(latest_analysis.legal_issues)}")
 
         context_str = "\n\n---\n\n".join(context_parts) if context_parts else "No specific text excerpts available."
         
@@ -1140,12 +1144,18 @@ async def generate_case_draft(
     if not case:
         raise HTTPException(status_code=404, detail="Case directory not found")
 
-    analysis = case.analysis_data if isinstance(case.analysis_data, dict) else {}
-    if isinstance(case.analysis_data, str):
-        try:
-            analysis = json.loads(case.analysis_data)
-        except Exception:
-            analysis = {}
+    # Case has no analysis_data column — build from the latest Analysis row.
+    latest = case.analyses[-1] if case.analyses else None
+    analysis: dict[str, Any] = {}
+    if latest is not None:
+        risk = latest.risk_assessment if isinstance(latest.risk_assessment, dict) else {}
+        issues = latest.legal_issues if isinstance(latest.legal_issues, list) else []
+        precs = latest.precedents if isinstance(latest.precedents, list) else []
+        analysis = {
+            "case_summary": risk.get("conclusion") or "",
+            "issues": issues,
+            "precedents": precs,
+        }
 
     title = case.title or "Legal Matter"
     summary = analysis.get("case_summary") or case.description or "Facts of the case on record."
@@ -1175,21 +1185,41 @@ Substantial Legal Issues:
 Binding Precedents:
 {precedents_text}
 
-Structure the draft professionally with:
+Structure the draft professionally with (keep each section concise; maximum 4 grounds, each ground 2-3 sentences):
 1. FORMAL COURT HEADER & CAUSE TITLE (Petitioner vs. Respondent)
 2. PRELIMINARY SYNOPSIS
 3. CHRONOLOGICAL STATEMENT OF MATERIAL FACTS
 4. SUBSTANTIAL GROUNDS FOR RELIEF (Grounded in statutory provisions and cited precedents)
 5. PRAYER CLAUSE
-6. ADVOCATE VERIFICATION
+6. ADVOCATE VERIFICATION with DATED line
+
+You MUST end the document with sections 5 (PRAYER CLAUSE) and 6 (ADVOCATE VERIFICATION + DATED line). Do not stop before including them.
 
 Write the draft in formal Indian legal terminology (e.g. 'Most Respectfully Showeth', 'In the Premises aforesaid')."""
 
     try:
         from app.llm.qwen import get_qwen_provider, QWEN_SYSTEM_PROMPT
         provider = get_qwen_provider()
+        # temperature 0.6 avoids greedy repetition loops in the 7B model.
+        # CPU ~5 tok/s: 6144 tokens exceeded any practical client timeout.
+        # 3072 is enough for the constrained 4-ground structure with PRAYER + DATED.
+        # stop sequences end generation as soon as the required tail is written.
+        t0 = time.monotonic()
+        logger.info(f"Draft generation start case={case_id} type={draft_type} max_tokens=3072")
         draft_content = await asyncio.to_thread(
-            provider.generate, prompt, system_prompt=QWEN_SYSTEM_PROMPT, max_tokens=2048
+            provider.generate, prompt, system_prompt=QWEN_SYSTEM_PROMPT,
+            max_tokens=3072, temperature=0.6,
+            stop=[
+                "</s>",
+                "ADVOCATE FOR THE RESPONDENT",
+                "Filed by:\n",  # after verification block
+            ],
+        )
+        elapsed = time.monotonic() - t0
+        logger.info(
+            f"Draft generation done case={case_id} elapsed={elapsed:.1f}s "
+            f"chars={len(draft_content)} has_prayer={'PRAYER' in draft_content.upper()} "
+            f"has_dated={'DATED' in draft_content.upper()}"
         )
     except Exception as exc:
         logger.warning(f"LLM draft generation fallback: {exc}")

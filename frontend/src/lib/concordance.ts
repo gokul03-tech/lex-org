@@ -208,20 +208,21 @@ export function findConcordance(actName?: string | null, sectionNumber?: string 
   const act = (actName || '').toUpperCase();
   const sec = sectionNumber.replace(/Section|Sec\.?|u\/s/gi, '').trim();
 
+  // Only return a mapping when the act is explicitly known — never
+  // cross-check other maps (that produced false "BNS" badges on e.g. BSA).
   if (act.includes('IPC') || act.includes('PENAL')) {
     return CONCORDANCE_MAP.IPC[sec] ?? null;
   }
   if (act.includes('CRPC') || act.includes('CRIMINAL PROCEDURE')) {
     return CONCORDANCE_MAP.CRPC[sec] ?? null;
   }
-  if (act.includes('EVIDENCE') || act.includes('IEA')) {
+  if (act.includes('EVIDENCE') || act.includes('IEA') || act.includes('SAKSHYA')) {
     return CONCORDANCE_MAP.IEA[sec] ?? null;
   }
-
-  // Cross check if section exists uniquely in any map
-  if (CONCORDANCE_MAP.IPC[sec]) return CONCORDANCE_MAP.IPC[sec];
-  if (CONCORDANCE_MAP.CRPC[sec]) return CONCORDANCE_MAP.CRPC[sec];
-  if (CONCORDANCE_MAP.IEA[sec]) return CONCORDANCE_MAP.IEA[sec];
+  // Already-new codes — no concordance badge needed.
+  if (act.includes('BNS') || act.includes('BNSS') || act.includes('BSA')) {
+    return null;
+  }
 
   return null;
 }

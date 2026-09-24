@@ -11,15 +11,23 @@ import type { MetaField } from '@/types/case-workspace';
 function parseStatuteList(raw: string): string[] {
   if (!raw || !raw.trim()) return [];
   const cleaned = raw.trim();
+  let parts: string[];
   if (cleaned.includes(';')) {
-    return cleaned.split(';').map((s) => s.trim()).filter(Boolean);
+    parts = cleaned.split(';').map((s) => s.trim()).filter(Boolean);
+  } else {
+    // Split on commas that precede another Act name
+    const splitByAct = cleaned.split(/,(?=\s*[A-Z][a-zA-Z\s]+(?:Act|Code|Rules|Order|Constitution|Sanhita))/i);
+    parts = splitByAct.length > 1 ? splitByAct.map((s) => s.trim()).filter(Boolean) : [cleaned];
   }
-  // Split on commas that precede another Act name
-  const splitByAct = cleaned.split(/,(?=\s*[A-Z][a-zA-Z\s]+(?:Act|Code|Rules|Order|Constitution|Sanhita))/i);
-  if (splitByAct.length > 1) {
-    return splitByAct.map((s) => s.trim()).filter(Boolean);
-  }
-  return [cleaned];
+  // Collapse duplicates introduced by casing / "The " / punctuation variants
+  const canon = (s: string) => s.toLowerCase().replace(/\bthe\s+/g, '').replace(/[^a-z0-9]/g, '');
+  const seen = new Set<string>();
+  return parts.filter((p) => {
+    const key = canon(p);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /** Parses key sections list and cleans up duplicate hyphens like "- -" */

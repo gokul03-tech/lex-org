@@ -120,43 +120,124 @@ def extract_metadata(text: str) -> dict[str, Any]:
     
     court_clean = extract_court_name(head, text)
     
-    tl = next((l for l in lines[:8] if re.search(r'\b(?:vs\.?|v\.|versus)\b', l, re.I)), None)
-    if tl:
-        parts = re.split(r'\s+(?:vs\.?|v\.|versus)\s+', tl, maxsplit=1, flags=re.I)
-        pet = norm(parts[0])
-        pet = re.sub(r'^(?:IN THE [A-Z\s,]+COURT[A-Z\s,]*|SUPREME COURT OF INDIA)\s*', '', pet, flags=re.I).strip()
-        resp = norm(parts[1]) if len(parts) > 1 else None
-        resp = re.sub(r'\s*(?:\.\.\.)?\s*on\s+\d{1,2}.*$', '', resp or '').strip()
-    else:
-        pet, resp = None, None
+    BAD_SEP_ONLY = re.compile(r'^(?:versus|vs\.?|v\.?)$', re.I)
+    pet, resp = None, None
+    for i, l in enumerate(lines[:12]):
+        if BAD_SEP_ONLY.match(l.strip()):
+            if i > 0 and i + 1 < len(lines):
+                stitch = f"{lines[i - 1]} versus {lines[i + 1]}"
+                parts = re.split(r'\s+(?:vs\.?|v\.|versus)\s+', stitch, maxsplit=1, flags=re.I)
+                if len(parts) == 2 and parts[0].strip() and parts[1].strip() \
+                        and not BAD_SEP_ONLY.match(parts[0].strip()) \
+                        and not BAD_SEP_ONLY.match(parts[1].strip()):
+                    pet = norm(parts[0])
+                    resp = norm(parts[1])
+                    break
+            continue
+        if not re.search(r'\b(?:vs\.?|v\.|versus)\b', l, re.I):
+            continue
+        parts = re.split(r'\s+(?:vs\.?|v\.|versus)\s+', l, maxsplit=1, flags=re.I)
+        if len(parts) == 2 and parts[0].strip() and parts[1].strip() \
+                and not BAD_SEP_ONLY.match(parts[0].strip()) \
+                and not BAD_SEP_ONLY.match(parts[1].strip()):
+            pet = norm(parts[0])
+            pet = re.sub(r'^(?:IN THE [A-Z\s,]+COURT[A-Z\s,]*|SUPREME COURT OF INDIA)\s*', '', pet, flags=re.I).strip()
+            resp = norm(parts[1])
+            resp = re.sub(r'\s*(?:\.\.\.)?\s*on\s+\d{1,2}.*$', '', resp or '').strip()
+            if not BAD_SEP_ONLY.match(pet or '') and not BAD_SEP_ONLY.match(resp or ''):
+                break
+            pet, resp = None, None
+    if pet and BAD_SEP_ONLY.match(pet):
+        pet = None
+    if resp and BAD_SEP_ONLY.match(resp):
+        resp = None
+    if pet:
+        pet = re.sub(r'\s*\.\.\.\s*(?:Appellant|Petitioner|Plaintiff|Applicant)s?\s*$', '', pet, flags=re.I).strip() or pet
+    if resp:
+        resp = re.sub(r'\s*\.\.\.\s*(?:Respondent|Defendant)s?\s*$', '', resp, flags=re.I).strip() or resp
 
-    dm = re.search(r'(?:\.\.\.\s*on|on|dated|decided on)\s+(\d{1,2})[ ,.-]+([A-Z][a-z]+)[ ,.-]+(\d{4})', head, re.I) or \
-         re.search(r'(\d{1,2})[ ,]+([A-Z][a-z]+)[ ,]+(\d{4})', head)
+    # Prefer signature-block date (last 500 chars), then header date; accept ALL-CAPS months
+    MONTH = r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
+    DMY = rf'(\d{{1,2}})(?:st|nd|rd|th)?[ ,.\-]+({MONTH})[ ,.\-]+(\d{{4}})'
+    tail500 = text[-500:] if len(text) > 500 else text
+    dm = re.search(DMY, tail500, re.I) or \
+         re.search(rf'(?:\.\.\.\s*on|on|dated|decided on)\s+{DMY}', head, re.I) or \
+         re.search(DMY, head, re.I)
          
     cites = re.findall(r'\(\d{4}\)\s?\d+\s?[A-Z]+\s?\d+|AIR\s?\d{4}\s?[A-Z ]+\d+|\[\d{4}\]\s?\d+\s?SCR\s?\d+|\d{4}\s?Cri\s?LJ\s?\d+', n.split('JUDGMENT')[0], re.I)
     case_no = next((m.group(1) for p in PATS if (m := re.search(p, n))), None)
     
     judges: list[str] = []
     def _clean_j(raw_j: str) -> str:
-        c = re.sub(r'\b(Hon[\'’]?ble|Justice|Mr\.|Mrs\.|Ms\.|CJI)\b', '', raw_j, flags=re.I)
-        c = re.sub(r',?\s*\b(?:J\.|CJI|Judge|J)\b', '', c, flags=re.I)
-        return norm(c).strip(' ,;.')
+        c = raw_j
+        for _ in range(3):
+            prev = c
+            c = re.sub(
+                r"(?:\bHon['’]?ble\s+|\bMr\.|\bMrs\.|\bMs\.|\bDr\.|\bJustice\s+"
+                r"|\bCJI\b|\bJudge\b|\bJ\.|\bJ\b)",
+                '', c, flags=re.I,
+            )
+            c = re.sub(r',?\s*\b(?:J\.|CJI|Judge|J)\b\.?$', '', c, flags=re.I)
+            c = norm(c).strip(' ,;.')
+            if c == prev:
+                break
+        return c
+
+    def _ok_j(j_clean: str) -> bool:
+        if not j_clean or len(j_clean) < 3:
+            return False
+        packed = re.sub(r'[\s.]+', '', j_clean).lower()
+        if any(j2 and re.sub(r'[\s.]+', '', j2).lower() == packed for j2 in judges):
+            return False
+        if j_clean in ('J.', 'CJI', 'Justice') or re.fullmatch(r'(?:[A-Z]\.?){1,4}', j_clean):
+            return False
+        if 'judgment' in packed or 'judgement' in packed:
+            return False
+        if any(k in j_clean.lower() for k in ('judgment', 'judgement', 'court', 'order', 'state', 'bench', 'author', 'versus', "hon'ble", 'honble')):
+            return False
+        tokens = [t for t in re.split(r'[\s.]+', j_clean) if t]
+        if tokens and all(len(t) <= 2 for t in tokens):
+            return False
+        # Reject spaced-letter fragments ("J U D G M E N T ...")
+        if re.search(r'(?:\b[A-Z]\b\s*){3,}', j_clean):
+            return False
+        return True
 
     for tag in ('Author', 'Bench', 'Coram', 'Judges'):
-        am = re.search(tag + r':\s*([^\n]+)', head, re.I)
+        am = re.search(tag + r':\s*([^\n]+)', text, re.I)
         if am:
-            for b_seg in re.split(r'\band\b|&|;', am.group(1)):
+            for b_seg in re.split(r'\band\b|&|;|,(?=\s*[A-Z])', am.group(1)):
                 b_clean = _clean_j(b_seg)
-                if b_clean and b_clean not in judges and len(b_clean) > 3 and not any(k in b_clean.lower() for k in ['judgment', 'court', 'order', 'state']):
+                if _ok_j(b_clean):
                     judges.append(b_clean)
 
-    found_j = re.findall(r'(?:^|\n)\s*([A-Z][A-Za-z.\s\'-]+?),\s*(?:J\.|CJI)', head)
-    for j in found_j:
+    # Signature-block judges in last 2000 chars: "...........J. [NAME]" / "NAME, CJI"
+    sig = text[-2000:] if len(text) > 2000 else text
+    for j in re.findall(r'\[([A-Z][A-Za-z.\s\'-]+)\]', sig):
         j_clean = _clean_j(j)
-        if j_clean and j_clean not in judges and len(j_clean) > 3 and not any(k in j_clean.lower() for k in ['judgment', 'court', 'order', 'state', 'bench', 'author']):
+        if _ok_j(j_clean):
+            judges.append(j_clean)
+    for j in re.findall(r'(?:^|\n)\s*([A-Z][A-Za-z. \'\-]+?),\s*(?:J\.|CJI)', text):
+        j_clean = _clean_j(j)
+        if _ok_j(j_clean):
+            judges.append(j_clean)
+    # Header bench line: "HON'BLE MR. JUSTICE D.Y. CHANDRACHUD, CJI HON'BLE MR. JUSTICE B.R. GAVAI HON'BLE MS. JUSTICE B.V. NAGARATHNA"
+    for j in re.findall(r"JUSTICE\s+([A-Z][A-Za-z.\s'-]+?)(?:,\s*(?:CJI|J\b)|\s+HON'BLE|\s*$|\n)", head):
+        j_clean = _clean_j(j)
+        if _ok_j(j_clean):
             judges.append(j_clean)
 
-    judges_list = list(dict.fromkeys(j for j in judges if j not in ('J.', 'CJI', 'Justice')))
+    judges_list = list(dict.fromkeys(j.strip(' ,;.') for j in judges if j and len(j.strip()) > 2))
+    # Final packed-key dedupe: "MR. D.Y. CHANDRACHUD" == "D.Y. CHANDRACHUD"
+    _seen_j: set[str] = set()
+    _deduped: list[str] = []
+    for j in judges_list:
+        _pk = re.sub(r'[\s.]+', '', j).lower()
+        if _pk in _seen_j:
+            continue
+        _seen_j.add(_pk)
+        _deduped.append(j)
+    judges_list = _deduped
     title_str = f"{pet} vs {resp}" if pet and resp else (pet or "Legal Matter Dossier")
 
     return {
@@ -216,6 +297,7 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
     n = norm(text)
     out = []
     seen = set()
+    key_list: list[str] = []
 
     def _clean_name(raw: str) -> str:
         """Trim numbered-clause/trailing junk a greedy name may have absorbed."""
@@ -226,25 +308,67 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
     # terminates the name via the lookahead instead of being absorbed.
     NAME = r'[A-Z][A-Za-z.&\' -]+?(?:\s+(?:v\.?|versus)\s+[A-Z][A-Za-z.&\' -]+?)'
 
+    # The judgment's own title line (e.g. "State of Maharashtra v. X") must never
+    # be captured as a cited precedent. Snapshot the first "X v. Y" in the header.
+    hm = re.search(NAME, n[:600])
+    title_nows = nows(re.sub(r'\s+', ' ', hm.group(0)).strip())[:15] if hm else ""
+
+    def _append(raw_name: str, cite: str) -> None:
+        name = _clean_name(raw_name)
+        norm_k = nows(name)[:15]
+        if (not norm_k or norm_k in seen or norm_k == title_nows
+                or len(name) < 6 or len(name) > 70 or name.lower() in JUNK):
+            return
+        # Reject generic cause-title placeholders like "Appellant v. Respondent".
+        if re.fullmatch(
+            r'(?:the\s+)?(?:appellant|applicant|petitioner|plaintiff|accused'
+            r'|respondent|defendant|prosecution|state)\s+(?:vs\.?|versus|v\.?|and|&)'
+            r'\s+(?:the\s+)?(?:appellant|applicant|petitioner|plaintiff|accused'
+            r'|respondent|defendant|prosecution|state)',
+            name, re.IGNORECASE):
+            return
+        # Reject prose that a greedy name match swallowed: "… v. Union of India were
+        # reiterated is not a precedent", etc.
+        if re.search(r'\b(?:were|was|held|is\b|not\b|that\b|wherein|reiterat|observed'
+                     r'|submitted|contended|case|judgment)\b', name, re.IGNORECASE):
+            return
+        # Prefix-superset dedup: "Anvar P.V. v. P.K" vs "Anvar P.V. v. P.K. Basheer"
+        # are the same case (a period-initials match truncated the fuller name) —
+        # keep only the fullest form.
+        for i, ek in enumerate(key_list):
+            if min(len(ek), len(norm_k)) >= 8 and (ek.startswith(norm_k) or norm_k.startswith(ek)):
+                if len(name) > len(out[i]['case_name']):
+                    yr = (re.search(r'(19\d{2}|20\d{2})', cite) or [None, None])[1]
+                    out[i] = {'case_name': name, 'citation': cite or out[i].get('citation', ''),
+                              'year': yr or out[i].get('year'),
+                              'summary': f"Precedent cited for legal principle on this issue."}
+                    key_list[i] = norm_k
+                return
+        seen.add(norm_k)
+        key_list.append(norm_k)
+        yr = (re.search(r'(19\d{2}|20\d{2})', cite) or [None, None])[1]
+        out.append({'case_name': name, 'citation': cite, 'year': yr,
+                    'summary': f"Precedent cited for legal principle on this issue."})
+
     # 1. (Citation) in the case of Name
     for m in re.finditer(r'(' + CIT + r')\s+in the case of\s+(' + NAME + r')(?=\s+(?:wherein|regarding|holding|where|which|laid|ruling|reiterat|and the recent)|\s*\([12]\d{3}\)|,\s+and|\.\s*\d|\n,|\n|,)', n):
-        cite = m.group(1).strip()
-        name = _clean_name(m.group(2))
-        norm_k = nows(name)[:15]
-        if norm_k not in seen and name.lower() not in JUNK:
-            seen.add(norm_k)
-            yr = (re.search(r'(19\d{2}|20\d{2})', cite) or [None, None])[1]
-            out.append({'case_name': name, 'citation': cite, 'year': yr, 'summary': f"Precedent cited for legal principle on this issue."})
+        _append(m.group(2), m.group(1).strip())
 
     # 2. judgment in Name (Citation)
     for m in re.finditer(r'(?:judgment|decision|ruling|case)\s+in\s+(?:the case of\s+)?(' + NAME + r')\s*(' + CIT + r')', n):
-        name = _clean_name(m.group(1))
-        cite = m.group(2).strip()
-        norm_k = nows(name)[:15]
-        if norm_k not in seen and name.lower() not in JUNK:
-            seen.add(norm_k)
-            yr = (re.search(r'(19\d{2}|20\d{2})', cite or '') or [None, None])[1]
-            out.append({'case_name': name, 'citation': cite, 'year': yr, 'summary': f"Precedent cited for legal principle on this issue."})
+        _append(m.group(1), m.group(2).strip())
+
+    # 3. Bare "Name v. Name, (Citation)" references (headnote citation lists and
+    #    "reported in" entries) — previously missed, making Missing Precedents intermittent
+    for m in re.finditer(r'(?<![A-Za-z0-9,])(' + NAME + r')\s*,\s*(' + CIT + r')', n):
+        _append(m.group(1), m.group(2).strip())
+
+    # 4. Citation-less analytical references: "in the case of Name v. Name", "Name v. Name, …"
+    for m in re.finditer(
+        r'\b(?:in\s+|relying on\s+|following\s+|per\s+)?'
+        r'(?:the case (?:of|in) |the decision (?:of|in) |the judgment in |the ruling in )?'
+        r'(' + NAME + r')(?=$|\s*[,;.])', n):
+        _append(m.group(1), "")
 
     return out
 
@@ -258,15 +382,53 @@ AGREE_LINE = re.compile(r'-\s*I agree', re.I)
 def _substantive_sentences(n: str, min_len: int = 60) -> list[str]:
     return [s.strip() for s in SENT(n) if len(s.strip()) >= min_len and not AGREE_LINE.search(s)]
 
+_SIG_BLOCK = re.compile(
+    r'(?:\.{10,}\s*J\.?|CHIEF JUSTICE OF INDIA|JUSTICE OF INDIA|\[?\s*[A-Z][A-Za-z.\s]+\]?\s*$'
+    r'|NEW DELHI\s+\d{1,2}\s+[A-Z]{3,9}\s+\d{4})',
+    re.I,
+)
+
+def _strip_signature(text: str) -> str:
+    """Drop judge signature/date tail so it never leaks into conclusion/timeline."""
+    if not text:
+        return text
+    m = _SIG_BLOCK.search(text[-800:])
+    if m and m.start() > 0:
+        return text[: max(0, len(text) - 800) + m.start()]
+    # Fallback: cut at last "......J." style line
+    m2 = re.search(r'\n\s*\. {5,}J\.', text)
+    if m2:
+        return text[: m2.start()]
+    return text
+
+def _conclusion_section(text: str) -> str:
+    """Prefer the court's CONCLUSION AND ORDER (or equivalent) section over text tail."""
+    if not text:
+        return text
+    m = re.search(
+        r'(?:CONCLUSION AND ORDER|CONCLUSION & ORDER|CONCLUSION|ORDER AND DISPOSITION|OPERATIVE PART|IN THE RESULT)\s*\n',
+        text, re.I,
+    )
+    if m:
+        section = text[m.end():]
+        # Cut at signature block inside/after the section
+        section = _strip_signature(section)
+        return section[:3000]
+    return _strip_signature(text)
+
 def _operative_sentence(n: str) -> str | None:
-    """Last outcome-bearing sentence; spec verbs (allowed/dismissed/...) win over 'directed'."""
-    sents = [s.strip() for s in SENT(n[-600:]) if s.strip()]
-    for s in reversed(sents):
-        if SPEC_OUTCOME.search(s):
-            return s
-    for s in reversed(sents):
-        if ANY_OUTCOME.search(s):
-            return s
+    """Outcome-bearing sentence from CONCLUSION section first, else body tail."""
+    concl = norm(_conclusion_section(n))
+    for sents in (
+        [s.strip() for s in SENT(concl) if s.strip()],
+        [s.strip() for s in SENT(n[-600:]) if s.strip()],
+    ):
+        for s in reversed(sents):
+            if SPEC_OUTCOME.search(s):
+                return s
+        for s in reversed(sents):
+            if ANY_OUTCOME.search(s):
+                return s
     for s in reversed(_substantive_sentences(n)):
         if ANY_OUTCOME.search(s):
             return s
@@ -290,6 +452,33 @@ def map_outcome_verb(sentence: str) -> str | None:
     return None
 
 # ---------- 5) SUBMISSIONS (counsel attribution, category labels) ----------
+_SPEAKER_VERB = (r'(?:submit(?:s|ted|ting)?|contend(?:s|ed|ing)?|argue(?:s|d|ing)?'
+                 r'|oppose(?:s|d|ing)?|defend(?:s|ed|ing)?|assert(?:s|ed|ing)?'
+                 r'|maintain(?:s|ed|ing)?|urge(?:s|d|ing)?|resist(?:s|ed|ing)?'
+                 r'|invoke(?:s|d|ing)?|reli(?:ed|es|ying)|point(?:s|ed|ing)?\s+out'
+                 r'|demonstrat(?:e|es|ed|ing)|plead(?:s|ed|ing)?|sought|seek(?:s|ing)?)')
+
+def _strip_speaker(sentence: str, tokens: str) -> str:
+    """Strip a leading party-speaker phrase ("The learned State (APP) contended that …"
+    or "It was further urged by the learned APP that …") from a submission sentence
+    so only the actual point survives the column split."""
+    verb = _SPEAKER_VERB
+    active = (r'^(?:the\s+)?(?:learned\s+)?(?:' + tokens + r')'
+              r'(?:\s+(?:(?:of|through|by)\s+)?[A-Z][A-Za-z.\'-]{2,30}'
+              r'(?:\s+[A-Z][A-Za-z.\'-]{2,30}){0,2})?'
+              r'(?:\s*[,(]*\s*)?(?:further\s+)?'
+              + verb + r'\b(?:\s+that\b)?')
+    passive = (r'^it\s+was\s+(?:further\s+)?' + verb + r'\s+by\s+'
+               r'(?:the\s+)?(?:learned\s+)?(?:' + tokens + r')'
+               r'(?:\s+(?:(?:of|through|by)\s+)?[A-Z][A-Za-z.\'-]{2,30}'
+               r'(?:\s+[A-Z][A-Za-z.\'-]{2,30}){0,2})??'
+               r'(?:\s*[,(]*\s*)?(?:that\b)?')
+    for pat in (active, passive):
+        m = re.match(pat, sentence, re.IGNORECASE)
+        if m:
+            return sentence[m.end():].lstrip()
+    return sentence
+
 def extract_submissions(text: str) -> tuple[list[str], list[str]]:
     n = norm(text)
     a, b = [], []
@@ -306,7 +495,13 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
         if re.search(r'\b(?:We have heard|We hold|In our considered view|The petition is|Bail is allowed|Award is set aside)\b', s_clean, re.I):
             cur = None
             continue
-            
+        # Court-framed issues are not counsel submissions
+        if re.match(r'^Issue\s+[IVXLC]+\b', s_clean, re.I) or \
+           re.search(r'\bWe frame the following issues\b', s_clean, re.I) or \
+           re.match(r'^(?:CONCLUSION AND ORDER|ORDER AND DIRECTIONS)\b', s_clean, re.I):
+            cur = None
+            continue
+
         has_verb = bool(VERBS.search(s_clean))
         
         if PAT_B_START.search(s_clean):
@@ -318,10 +513,18 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
             clean_s = re.sub(r'^\d+\.\s*', '', s_clean)
             # Never let a State/Prosecution bullet leak into the Applicant/Defense list
             # (and vice-versa) when a speaker label was glued to the sentence.
+            # Strip the leading party speaker phrase (incl. honorifics and the verb +
+            # optional "that") so only the actual point remains.
             if cur == 'a':
-                clean_s = re.sub(r'^(?:The\s+)?(?:State|Prosecution|Respondent|Opposite party|APP)\s+', '', clean_s, flags=re.I)
+                clean_s = _strip_speaker(
+                    clean_s,
+                    r'Applicant|Petitioner|Appellant|Plaintiff|Defense|Defence|Accused|Applicant\'s|Petitioner\'s'
+                )
             else:
-                clean_s = re.sub(r'^(?:The\s+)?(?:Applicant|Petitioner|Appellant|Plaintiff|Defense|Defence|Applicant\'s|Petitioner\'s)\s+', '', clean_s, flags=re.I)
+                clean_s = _strip_speaker(
+                    clean_s,
+                    r'State(?:\s*\(?APP\)?)?|Prosecution|Respondent(?:/State)?|Opposite\s+Party|APP|A\.P\.P\.|Public\s+Prosecutor'
+                )
             clean_s = clean_s.strip()
             target = a if cur == 'a' else b
             if clean_s and clean_s not in target:
@@ -373,10 +576,32 @@ def extract_evidence(text: str) -> list[dict[str, Any]]:
 
 # ---------- 7) TIMELINE + OUTCOME ----------
 def build_timeline(text: str, date: str | None) -> list[dict[str, Any]]:
-    n = norm(text)
+    body = _strip_signature(text or '')
+    n = norm(body)
+    def _bad_fact(fact: str) -> bool:
+        if not fact or len(fact) < 20:
+            return True
+        if re.search(r'\bJ\s*U\s*D\s*G\s*M\s*E\s*N\s*T\b|HON[\'’]?BLE\s+MR\.|CHIEF JUSTICE OF INDIA|\bJUSTICE\b', fact, re.I):
+            return True
+        if re.match(r'^(?:IN THE SUPREME|CRIMINAL APPEAL|NO\.\s*\d)', fact, re.I):
+            return True
+        return False
+
     ev = [{'date': m.group(0), 'fact': n[snap(n, m.start()-140):m.end()+140], 'page': '1-2'}
           for m in re.finditer(r'\d{2}-\d{2}-\d{4}', n)]
+    for m in re.finditer(
+        r'\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b',
+        n, re.I,
+    ):
+        fact = n[snap(n, m.start()-140):m.end()+140]
+        if _SIG_BLOCK.search(fact) or _bad_fact(fact):
+            continue
+        ev.append({'date': m.group(0), 'fact': fact, 'page': '1-2'})
+    # Keep only date events with usable facts
+    ev = [e for e in ev if not _bad_fact(e['fact'])]
     op = _operative_sentence(n) or _last_substantive(n) or n[-160:].strip()
+    if op and (_SIG_BLOCK.search(op) or _bad_fact(op) or re.match(r'^(?:[A-Z][A-Za-z.\s]{0,40},\s*(?:CJI|J)|NEW DELHI)', op, re.I) or len(op) < 20):
+        op = _operative_sentence(n) or 'Final judgment delivered.'
     return ev + [{'date': date or 'Final Hearing Date', 'fact': op, 'page': '1-2'}]
 
 # ---------- 8) RISK (fully extracted; strictly procedural action plan) ----------
@@ -388,12 +613,15 @@ def _extract_procedural_actions(text: str, n: str, op: str | None) -> list[str]:
     sentences = SENT(n)
     for s in sentences:
         s_clean = s.strip()
-        if re.search(r'\b(?:directed to|executing a|furnish|deposit|refund|pay|appear|bond of|sureties|compliance|affidavit)\b', s_clean, re.I):
+        # Never surface court-framed issues / headings as next steps
+        if re.match(r'^(?:Issue\s+[IVXLC]+|We frame the following|CONCLUSION AND ORDER|ORDER AND DIRECTIONS)\b', s_clean, re.I):
+            continue
+        if re.search(r'\b(?:directed to|executing a|furnish|deposit|refund|pay|appear|bond of|sureties|compliance|affidavit|transmit a copy|notify|dispose)\b', s_clean, re.I):
             # Exclude pure standalone verdict phrases like "Bail application is allowed."
             if not re.match(r'^(?:\d+\.\s*)?(?:bail application|appeal|petition|suit)\s+is\s+(?:allowed|dismissed)\.?$', s_clean, re.I):
                 if s_clean not in actions and len(s_clean) > 15:
                     actions.append(s_clean)
-                    if len(actions) >= 2:
+                    if len(actions) >= 3:
                         break
                         
     if not actions and op:
@@ -406,21 +634,52 @@ def _extract_procedural_actions(text: str, n: str, op: str | None) -> list[str]:
     return actions
 
 def build_risk(text: str, subs_a: list[str], subs_b: list[str]) -> dict[str, Any]:
-    n = norm(text)
+    body = _strip_signature(text)
+    n = norm(body)
+    concl_block = _conclusion_section(text) or n
     strengths = [s for s in SENT(n) if re.search(r'We hold|established|readiness and willingness|No direct financial transfer|investigation is complete|charge sheet has already been filed|renders the impugned', s, re.I)][:2]
-    op = _operative_sentence(n)
-    fallback_quote = _last_substantive(n) or n[-160:].strip()
+    op = _operative_sentence(norm(concl_block)) or _operative_sentence(n)
+    fallback_quote = _last_substantive(norm(concl_block)) or _last_substantive(n) or n[-160:].strip()
 
     str_list = strengths or (subs_a[:1] if subs_a else ([fallback_quote] if fallback_quote else []))
     contest_cue = re.compile(r'\b(contended|opposed|defended|failed to|disputed|however)\b', re.I)
     gap_src = subs_b[:2] if subs_b else [s for s in _substantive_sentences(n) if contest_cue.search(s)][:2]
     gap_list = gap_src or ([fallback_quote] if fallback_quote else [])
-    
-    # Procedural next steps strictly avoiding verdict repetition
+
+    # Procedural next steps: prefer CONCLUSION AND ORDER clauses, then whole doc
     act_list = _extract_procedural_actions(text, n, op)
+    if concl_block:
+        acts_c = _extract_procedural_actions(concl_block, norm(concl_block), None)
+        merged = acts_c + [a for a in act_list if a not in acts_c]
+        act_list = merged[:4]
+    # Drop any residual framing / submission noise from the action plan
+    def _trim_action(a: str) -> str:
+        a = re.sub(r'^\s*(?:\d+\.\s*|\(?(?:i{1,3}|iv|v|vi{0,3}|ix|x)\)\s*)+', '', a).strip()
+        a = re.split(r'\s+\(?(?:ii|iii|iv|v|vi|vii|viii|ix|x)\)\s+', a, maxsplit=1, flags=re.I)[0].strip()
+        return a if len(a) <= 360 else a[:357].rstrip() + '…'
+
+    act_list = [
+        _trim_action(a) for a in act_list
+        if not re.search(r'\bWe frame the following issues\b|\bIssue\s+[IVXLC]+\b|\bsubmitted\b|\bcontended\b', a, re.I)
+    ]
+    act_list = [a for a in act_list if a]
+    # de-dupe
+    _seen_a: set[str] = set()
+    _uniq_a: list[str] = []
+    for a in act_list:
+        if a in _seen_a:
+            continue
+        _seen_a.add(a)
+        _uniq_a.append(a)
+    act_list = _uniq_a[:4]
+    if not act_list and op:
+        act_list = [op]
 
     if op and SPEC_OUTCOME.search(op):
         conclusion = norm(op)
+        conclusion = re.split(r'\s+\(?(?:ii|iii|iv|v|vi|vii|viii|ix|x)\)\s+', conclusion, maxsplit=1, flags=re.I)[0].strip()
+        if len(conclusion) > 420:
+            conclusion = conclusion[:417].rstrip() + '…'
     elif op:
         subject_m = re.search(r'\bthe\s+([a-z][a-z\s]{3,60}?(?:petition|appeal|application|suit|award))\b', op.lower())
         verb = map_outcome_verb(op) or 'allowed'
@@ -428,6 +687,15 @@ def build_risk(text: str, subs_a: list[str], subs_b: list[str]) -> dict[str, Any
         conclusion = f"{subject.capitalize()} is {verb}."
     else:
         conclusion = fallback_quote
+
+    # Reject signature-block leakage as conclusion/action
+    if re.match(r'^(?:\.{3,}|\[?A|NEW DELHI|Dated\b)', conclusion, re.I) or len(conclusion) < 15:
+        if op and SPEC_OUTCOME.search(op):
+            conclusion = norm(op)
+        elif concl_block:
+            first = next((s.strip() for s in SENT(norm(concl_block)) if len(s.strip()) > 30), None)
+            if first:
+                conclusion = first
 
     return {
         'strengths': str_list,
@@ -455,6 +723,19 @@ def build_kg(*args: Any, **kwargs: Any) -> dict[str, Any]:
 
         def add(t: str, l: str):
             if not l or l.lower() in JUNK: return None
+            # Canonical key for judges so "HON'BLE MR. JUSTICE D.Y. CHANDRACHUD"
+            # and "D.Y. CHANDRACHUD" never become two nodes.
+            key_label = l
+            if t == 'Judge':
+                key_label = re.sub(r'\b(?:Hon[\'’]?ble|Mr\.|Mrs\.|Ms\.|Justice|CJI|J\.|J)\b', '', l, flags=re.I)
+                key_label = re.sub(r',?\s*\b(?:CJI|J\.|J)\b\.?$', '', key_label, flags=re.I)
+                key_label = re.sub(r'\s+', ' ', key_label).strip(' ,;.')
+                if not key_label or re.search(r'(?:\b[A-Z]\b\s*){3,}', key_label):
+                    return None
+                packed = re.sub(r'[\s.]+', '', key_label).lower()
+                if 'judgment' in packed or 'judgement' in packed:
+                    return None
+                l = key_label
             node_id = f"{t}|{l}"
             if node_id not in seen:
                 seen.add(node_id)
@@ -512,6 +793,16 @@ def build_kg(*args: Any, **kwargs: Any) -> dict[str, Any]:
 
     def add(t: str, l: str):
         if not l or l.lower() in JUNK: return None
+        if t == 'Judge':
+            key_label = re.sub(r'\b(?:Hon[\'’]?ble|Mr\.|Mrs\.|Ms\.|Justice|CJI|J\.|J)\b', '', l, flags=re.I)
+            key_label = re.sub(r',?\s*\b(?:CJI|J\.|J)\b\.?$', '', key_label, flags=re.I)
+            key_label = re.sub(r'\s+', ' ', key_label).strip(' ,;.')
+            if not key_label or re.search(r'(?:\b[A-Z]\b\s*){3,}', key_label):
+                return None
+            packed = re.sub(r'[\s.]+', '', key_label).lower()
+            if 'judgment' in packed or 'judgement' in packed:
+                return None
+            l = key_label
         node_id = f"{t}|{l}"
         if node_id not in seen:
             seen.add(node_id)
@@ -577,8 +868,62 @@ def gate(report: dict[str, Any], text: str) -> dict[str, Any]:
     return report
 
 # ---------- 10) LEGACY & GROUNDED ISSUES HELPERS ----------
+def _court_framed_issues(text: str) -> list[dict[str, Any]]:
+    """Extract issues the court itself framed (Issue I: ..., Issue II: ...)."""
+    if not text:
+        return []
+    n = norm(_strip_signature(text))
+    results: list[dict[str, Any]] = []
+    # Multi-line: "Issue I: Whether ... \n Issue II: Whether ..."
+    pat = re.compile(
+        r'(Issue\s+[IVXLC]+)\s*:\s*(.+?)(?=\n\s*Issue\s+[IVXLC]+\s*:|\n\s*\d+\.\s+[A-Z]|\Z)',
+        re.S | re.I,
+    )
+    for m in pat.finditer(text):
+        label = m.group(1).strip()
+        body = re.sub(r'\s+', ' ', m.group(2)).strip()
+        body = re.split(r'\n\s*\n', body)[0].strip()
+        # Keep the issue statement; cut at signature / next heading if glued
+        body = re.split(r'\n(?:\.{5,}|…{3,})', body)[0].strip()
+        if not body or len(body) < 15:
+            continue
+        # Prefer a nearby verbatim sentence as evidence
+        quote = None
+        for s in split_sentences(n):
+            if len(s) > 40 and any(tok.lower() in s.lower() for tok in re.findall(r'[A-Za-z]{6,}', body)[:4]):
+                quote = re.sub(r'^\d+\.\s*', '', s).strip()
+                break
+        if not quote:
+            quote = body
+        results.append({
+            'issue': f"{label}: {body}",
+            'text': f"{label}: {body}",
+            'evidence': quote if quote in n or len(quote) < 400 else body,
+            'source': 'document',
+            'page': '1-2',
+        })
+    # Deduplicate by issue text, prefer the longer first occurrence of each roman numeral
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for item in results:
+        key = item['text'].split(':')[0].upper()
+        if key in seen:
+            continue
+        # If we already have a fuller statement for this numeral, skip the short heading-only one
+        if any(o['text'].split(':')[0].upper() == key and len(o['text']) >= len(item['text']) for o in out):
+            continue
+        out = [o for o in out if o['text'].split(':')[0].upper() != key or len(o['text']) >= len(item['text'])]
+        seen.add(key)
+        out.append(item)
+    return out[:6]
+
 def extract_grounded_issues(r: dict[str, Any], text: str) -> list[dict[str, Any]]:
     """Extract grounded legal issues paired with real verbatim quotes from this specific document."""
+    # Prefer issues the court itself framed — these are the strongest grounding.
+    court_issues = _court_framed_issues(text)
+    if court_issues:
+        return court_issues
+
     m = r.get('metadata') or {}
     pet = safe(m, 'petitioner', 'the petitioner')
     resp = safe(m, 'respondent', 'the respondent')
@@ -682,7 +1027,13 @@ def extract_grounded_issues(r: dict[str, Any], text: str) -> list[dict[str, Any]
 
     return results
 
-def render_issues(r: dict[str, Any]) -> list[str]:
+def render_issues(r: dict[str, Any], text: str | None = None) -> list[str]:
+    # Prefer issues the court itself framed in this document.
+    if text:
+        court = _court_framed_issues(text)
+        if court:
+            return [item['text'] for item in court]
+
     m = r.get('metadata') or {}
     iss: list[str] = []
     pet = safe(m, 'petitioner', 'the petitioner')
@@ -711,8 +1062,23 @@ def render_issues(r: dict[str, Any]) -> list[str]:
 def render_conclusion(r: dict[str, Any], text: str) -> str:
     m = r.get('metadata') or {}
     pet = safe(m, 'petitioner', 'the petitioner')
-    tail = text[-700:] if len(text) > 700 else text
+    # Prefer the court's own CONCLUSION/ORDER block over the raw text tail
+    # (text tail is usually the judge signature block: "......J. [NAME]").
+    stripped = _strip_signature(text)
+    conclusion_src = _conclusion_section(text) or stripped[-700:]
+    if not conclusion_src:
+        conclusion_src = stripped[-700:] if len(stripped) > 700 else stripped
 
+    # Prefer a precise operative sentence from the conclusion block first.
+    op = _operative_sentence(norm(conclusion_src)) or _operative_sentence(norm(stripped))
+    if op and (SPEC_OUTCOME.search(op) or ANY_OUTCOME.search(op)):
+        cleaned = re.sub(r'^\s*(?:\d+\.\s*|\(?(?:i{1,3}|iv|v|vi{0,3}|ix|x)\)\s*)+', '', op).strip()
+        # Cut at the next numbered sub-clause — keep only the lead operative sentence(s)
+        cleaned = re.split(r'\s+\(?(?:ii|iii|iv|v|vi|vii|viii|ix|x)\)\s+', cleaned, maxsplit=1, flags=re.I)[0].strip()
+        if cleaned and not re.match(r'^(?:\.{3,}|NEW DELHI|Dated\b)', cleaned, re.I):
+            return cleaned if len(cleaned) <= 420 else cleaned[:417].rstrip() + '…'
+
+    tail = conclusion_src
     if re.search(r'partly allowed', tail, re.I):
         return f"Petition partly allowed in favour of {pet}."
     if re.search(r'\b(bail application is allowed|bail is allowed|admitted to bail)\b', tail, re.I):
@@ -723,6 +1089,9 @@ def render_conclusion(r: dict[str, Any], text: str) -> str:
         return f"Writ petition disposed of with directions; relief granted to {pet}."
     if 'dismissed' in tail.lower():
         return "Appeal dismissed; conviction and sentence upheld."
+
+    if op:
+        return norm(op)
     return "Relief granted per operative directions of the judgment."
 
 def render_chips(r: dict[str, Any]) -> list[str]:

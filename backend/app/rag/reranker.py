@@ -53,7 +53,7 @@ def _get_shared_cross_encoder(model_name: str):
             from sentence_transformers import CrossEncoder
             resolved = _resolve_model_path(model_name)
             logger.info(f"Loading CrossEncoder model: {resolved}")
-            model = CrossEncoder(resolved)
+            model = CrossEncoder(resolved, device="cpu")
             _shared_models[model_name] = model
             return model
         except Exception as exc:

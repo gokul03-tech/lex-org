@@ -10,6 +10,45 @@ import re
 from typing import Any
 
 
+# Strip courtroom honorifics / roles so "HON'BLE MR. JUSTICE D.Y. CHANDRACHUD"
+# and "D.Y. CHANDRACHUD, CJI" collapse to the same canonical judge node.
+# Note: no \b after titles that end with '.' — that would fail before a space.
+_HONORIFIC = re.compile(
+    r"(?:\bHon['’]?ble\s+|\bMr\.|\bMrs\.|\bMs\.|\bDr\.|\bJustice\s+|\bShri\s+|\bSmt\.?\s+"
+    r"|\bCJI\b|\bJudge\b|\bJ\.|\bJ\b)",
+    re.IGNORECASE,
+)
+_TRAILING_ROLE = re.compile(r",?\s*\b(?:CJI|Judge|J\.|J)\b\.?\s*$", re.IGNORECASE)
+_PRESIDING_CUE = re.compile(
+    r"(?:Bench|Coram|Before|Author|Hon['’]?ble\s+(?:Mr\.|Ms\.|Mrs\.)?\s+Justice|"
+    r",\s*(?:CJI|J\.))",
+    re.IGNORECASE,
+)
+
+
+def normalize_person_name(raw: str) -> str:
+    """Canonical form for PERSON entities so fragmented spellings merge."""
+    name = re.sub(r"\s+", " ", (raw or "").strip())
+    # Apply twice: second pass catches titles left after the first strip
+    # (e.g. "HON'BLE MR. JUSTICE D.Y." → "MR. D.Y." → "D.Y.").
+    for _ in range(3):
+        prev = name
+        name = _HONORIFIC.sub("", name)
+        name = _TRAILING_ROLE.sub("", name)
+        name = re.sub(r"\s+", " ", name).strip(" ,;.")
+        if name == prev:
+            break
+    # Reject leftover spaced-letter fragments ("J U D G M E N T")
+    if re.search(r"(?:\b[A-Z]\b\s*){3,}", name):
+        return ""
+    packed = re.sub(r"[\s.]+", "", name).lower()
+    if "judgment" in packed or "judgement" in packed:
+        return ""
+    if len(name) < 3:
+        return ""
+    return name
+
+
 class LegalEntityExtractor:
     """Extracts legal entities from case document text.
 
@@ -79,6 +118,12 @@ class LegalEntityExtractor:
                 r"stay|restoration|possession|specific performance)[\s\w,]*)",
                 re.IGNORECASE,
             ),
+            # Signature / bench lines: "...........J. [D.Y. CHANDRACHUD]" / "NAME, CJI"
+            "judge": re.compile(
+                r"\[([A-Z][A-Za-z.\s'\-]+)\]"
+                r"|(?:^|\n)\s*([A-Z][A-Za-z. '\-]+?),\s*(?:CJI|J\.|J\b)",
+                re.MULTILINE,
+            ),
         }
 
     def extract(self, text: str) -> dict[str, Any]:
@@ -95,6 +140,7 @@ class LegalEntityExtractor:
 
         entities: dict[str, list[dict[str, Any]]] = {
             "persons": [],
+            "judges": [],
             "organizations": [],
             "dates": [],
             "locations": [],
@@ -106,16 +152,42 @@ class LegalEntityExtractor:
             "legal_issues": [],
         }
 
-        # spaCy NER extraction
+        # spaCy NER extraction — normalize PERSON names so signature-block
+        # spellings ("HON'BLE MR. JUSTICE D.Y. CHANDRACHUD") and body mentions
+        # ("D.Y. CHANDRACHUD") merge into one node later.
+        seen_persons: set[str] = set()
         for ent in doc.ents:
             if ent.label_ == "PERSON":
-                entities["persons"].append({"name": ent.text, "span": (ent.start_char, ent.end_char)})
+                canonical = normalize_person_name(ent.text)
+                if not canonical or canonical.lower() in seen_persons:
+                    continue
+                seen_persons.add(canonical.lower())
+                entities["persons"].append({
+                    "name": canonical,
+                    "raw": ent.text,
+                    "span": (ent.start_char, ent.end_char),
+                })
             elif ent.label_ in ("ORG", "GPE"):
                 entities["organizations"].append({"name": ent.text, "span": (ent.start_char, ent.end_char)})
             elif ent.label_ == "DATE":
                 entities["dates"].append({"value": ent.text, "span": (ent.start_char, ent.end_char)})
             elif ent.label_ in ("GPE", "LOC"):
                 entities["locations"].append({"name": ent.text, "span": (ent.start_char, ent.end_char)})
+
+        # Regex-based presiding judges (signature block / bench line) — highest precision
+        seen_judges: set[str] = set()
+        for match in self._patterns["judge"].finditer(text):
+            raw = match.group(1) or match.group(2) or ""
+            canonical = normalize_person_name(raw)
+            if not canonical or canonical.lower() in seen_judges:
+                continue
+            # Require a nearby bench/role cue when not using bracket form
+            if match.group(1) is None and not _PRESIDING_CUE.search(
+                text[max(0, match.start() - 40): match.end() + 40]
+            ):
+                continue
+            seen_judges.add(canonical.lower())
+            entities["judges"].append({"name": canonical, "raw": raw.strip()})
 
         # Regex-based extraction
         for match in self._patterns["section_citation"].finditer(text):

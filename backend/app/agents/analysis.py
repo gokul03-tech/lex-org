@@ -298,7 +298,7 @@ async def legal_research_agent(state: AgentState) -> AgentState:
                         "relevance_score": result.get("score", 0.0),
                     })
                     if act_name and act_name != "Unknown Act":
-                        acts.append(act_name)
+                        acts.append(norm_act(act_name))
 
         # Also extract sections and acts directly cited in the uploaded case document(s)
         from app.agents.analysis_fixes_v2 import (
@@ -307,7 +307,11 @@ async def legal_research_agent(state: AgentState) -> AgentState:
             extract_cited_precedents,
             extract_articles,
             similarity_pct,
+            norm_act,
         )
+
+        def _act_key(name: str) -> str:
+            return re.sub(r'[^a-z0-9]', '', name.lower().replace('the ', ''))
 
         doc_text_full = " ".join((d.get("text") or d.get("content") or "") for d in docs)
         category = state.get("case_category", "criminal")
@@ -364,7 +368,7 @@ async def legal_research_agent(state: AgentState) -> AgentState:
                 unique_sections.append(s)
 
         state["applicable_sections"] = unique_sections[:12]
-        state["applicable_acts"] = list(set(acts))[:10]
+        state["applicable_acts"] = list({_act_key(a): a for a in acts if a}.values())[:10]
         state["precedents"] = all_precedents[:7]
 
         confidence = 0.98 if (unique_sections and all_precedents) else (0.975 if all_precedents else (0.85 if unique_sections else 0.40))
@@ -1172,7 +1176,13 @@ async def report_generation_agent(state: AgentState) -> AgentState:
             'category': case_category
         }
 
-        rendered_iss_list = render_issues(r_ctx)
+        # Prefer court-framed issues from the full document when available.
+        from app.agents.presentation_universal import _court_framed_issues
+        court_iss = _court_framed_issues(doc_text_full)
+        if court_iss:
+            rendered_iss_list = [str(i.get('text') or i.get('issue') or '') for i in court_iss if i.get('text') or i.get('issue')]
+        else:
+            rendered_iss_list = render_issues(r_ctx, doc_text_full)
         grounded_issues = []
         for q_str in rendered_iss_list:
             sec_m = re.search(r'(?:Section|Sec\.)\s*(\d+(?:\([a-z0-9]+\))*)', q_str, re.I)

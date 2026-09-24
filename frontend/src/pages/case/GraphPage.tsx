@@ -71,7 +71,7 @@ export default function GraphPage() {
       return {
         id: n.id,
         position: pos,
-        data: { label: n.label.length > 42 ? `${n.label.slice(0, 40)}…` : n.label },
+        data: { label: n.label.length > 56 ? `${n.label.slice(0, 54)}…` : n.label },
         style: {
           background: s.bg,
           border: `2px solid ${isMatch ? '#4338CA' : s.color}`,

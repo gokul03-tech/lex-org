@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from typing import Any
 
 from loguru import logger
@@ -33,7 +34,7 @@ def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers:
         try:
             model = Llama(
                 model_path=model_path,
-                n_ctx=min(n_ctx, 4096),
+                n_ctx=min(n_ctx, 8192),
                 n_threads=n_threads,
                 n_gpu_layers=n_gpu_layers,
                 enable_thinking=False,
@@ -115,6 +116,24 @@ class LlamaCppProvider(LLMProvider):
             self._load_model()
         return self._model is not None
 
+    def _cap_max_tokens(self, full_prompt: str, requested: int) -> int:
+        """Clamp max_tokens so prompt + output fit in the context window.
+
+        Requesting more than n_ctx - prompt_len makes llama.cpp truncate the
+        generation mid-stream (cut JSON / cut analysis text).
+        """
+        try:
+            n_ctx = self._model.n_ctx()
+        except Exception:
+                n_ctx=min(self.n_ctx, 8192)
+        try:
+            prompt_len = len(
+                self._model.tokenize(full_prompt.encode("utf-8"), add_bos=True)
+            )
+        except Exception:
+            prompt_len = n_ctx // 2
+        return max(128, min(requested, n_ctx - prompt_len - 16))
+
     def generate(
         self,
         prompt: str,
@@ -135,16 +154,24 @@ class LlamaCppProvider(LLMProvider):
             )
 
         full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
-
+        capped = self._cap_max_tokens(full_prompt, max_tokens)
+        t0 = time.monotonic()
         try:
             result = self._model.create_completion(
                 prompt=full_prompt,
-                max_tokens=max_tokens,
+                max_tokens=capped,
                 temperature=temperature,
                 stop=stop or [],
                 echo=False,
+                repeat_penalty=1.1,
             )
-            return result["choices"][0]["text"].strip()
+            text = result["choices"][0]["text"].strip()
+            dt = time.monotonic() - t0
+            logger.info(
+                f"LLM generate done elapsed={dt:.1f}s max_tokens={capped} "
+                f"chars={len(text)} speed~{max(1, len(text)//4)/max(dt,0.1):.1f} tok/s"
+            )
+            return text
         except Exception as exc:
             logger.error(f"LLM generation error: {exc}")
             return UNAVAILABLE_RESPONSE
@@ -176,9 +203,10 @@ class LlamaCppProvider(LLMProvider):
         try:
             # Try grammar-constrained generation
             schema_str = json.dumps(output_schema)
+            grammar_prompt = f"{system_prompt}\n\n{json_instruction}"
             result = self._model.create_completion(
-                prompt=f"{system_prompt}\n\n{json_instruction}",
-                max_tokens=4096,
+                prompt=grammar_prompt,
+                max_tokens=self._cap_max_tokens(grammar_prompt, 4096),
                 temperature=temperature,
                 grammar=json.dumps(
                     {
@@ -226,7 +254,7 @@ class LlamaCppProvider(LLMProvider):
         try:
             stream = self._model.create_completion(
                 prompt=full_prompt,
-                max_tokens=max_tokens,
+                max_tokens=self._cap_max_tokens(full_prompt, max_tokens),
                 temperature=temperature,
                 stream=True,
             )

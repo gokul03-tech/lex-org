@@ -42,7 +42,7 @@ export function Claim({
   const hasProvenance = page || quote || confidence != null;
   if (!hasProvenance) return <span className={className}>{children}</span>;
   const tip = [
-    quote ? `"${quote.length > 160 ? quote.slice(0, 160) + '…' : quote}"` : null,
+    quote ? `"${quote}"` : null,
     page ? `Page ${page}` : null,
     confidence != null ? `Confidence ${confidence}%` : null,
   ].filter(Boolean).join(' · ');

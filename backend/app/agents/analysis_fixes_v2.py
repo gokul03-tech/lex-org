@@ -119,30 +119,22 @@ def snippet_for_section(text: str, sec: str, chunks: list[tuple[int, str]]) -> t
 
 # ================= 3) REAL CITED PRECEDENTS (NO SELF-CITATIONS) =================
 def extract_cited_precedents(text: str) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    seen = set()
-    pat = (r'(?:reported in\s+((?:\(\d{4}\)\s?\d+\s?[A-Za-z0-9\s]+\s?\d+|\d{4}\s?Cri\s?LJ\s?\d+|'
-           r'\d{4}\s?\(\d+\)\s?Bom\s?CR\s?\d+|AIR\s?\d{4}\s?[A-Z]+\s?\d+|\[\d{4}\]\s?\d+\s?SCR\s?\d+))?\s*(?:in the case of\s+)?)?'
-           r'([A-Z][A-Za-z0-9.&\-,\s]{2,70}?\s+v\.?\s+[A-Z][A-Za-z0-9.&\-,\s]{2,70}?(?:\s[A-Z]\.[A-Za-z]+)?)(?:\.|\,|\n|\;|\(|\:)')
-    
-    # Exclude title line from precedent scanning
-    body = text.split("JUDGMENT", 1)[-1] if "JUDGMENT" in text else text
+    """Extract cited precedents from the headnote AND body of the judgment.
 
-    for m in re.finditer(pat, body):
-        raw_name = re.sub(r'\s+', ' ', m.group(2)).strip()
-        if "advocate" in raw_name.lower() or "counsel" in raw_name.lower() or "judicature" in raw_name.lower():
-            continue
-        key = re.sub(r'[^a-z]', '', raw_name.lower())[:18]
-        if not key or key in seen or len(raw_name) < 6:
-            continue
-        seen.add(key)
-        cit = (m.group(1) or '').strip()
-        yr = re.search(r'(19\d{2}|20\d{2})', cit)
-        year_str = yr.group(1) if yr else '2014'
+    Delegates to the canonical, conservative extractor in presentation_universal
+    (title-excluded, prose-guarded), then decorates with the legacy agent fields
+    (court / relevance score / summary) expected by the research pipeline.
+    """
+    from app.agents.presentation_universal import extract_precedents
+
+    out: list[dict[str, Any]] = []
+    for p in extract_precedents(text):
+        cit = p.get('citation') or f"Judicial Precedent ({p.get('case_name', '').split()[0]})"
+        yr = p.get('year') or '2014'
         out.append({
-            'case_name': raw_name,
-            'citation': cit or f"Judicial Precedent ({raw_name.split()[0]})",
-            'year': year_str,
+            'case_name': p['case_name'],
+            'citation': cit,
+            'year': yr,
             'court': 'Supreme Court of India' if any(k in cit for k in ['SCC', 'SCR', 'SCALE']) else 'High Court',
             'relevance_score': 0.88,
             'score': 0.88,

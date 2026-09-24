@@ -111,10 +111,13 @@ const tagged = (items: string[], hasExplicitSource: boolean): TaggedList =>
 function normalizeStatutes(sections: any, statutes: any): StatuteItem[] {
   const out: StatuteItem[] = [];
   const seen = new Set<string>();
+  // Canonical dedup key: case-insensitive, punctuation/whitespace stripped, "the " dropped,
+  // so "NDPS Act, 1985", "The NDPS Act 1985" and "NDPS Act 1985" collapse to a single chip.
+  const canon = (s: string) => s.toLowerCase().replace(/\bthe\s+/g, '').replace(/[^a-z0-9]/g, '');
   const push = (num: string, act: string, context?: string) => {
     if (!num && !act) return;
     const display = num && act ? `Section ${num.replace(/^Section\s+/i, '')} — ${act}` : num || act;
-    const key = display.toLowerCase();
+    const key = canon(display);
     if (seen.has(key)) return;
     seen.add(key);
     out.push({ num, act, display, context });
@@ -214,11 +217,21 @@ function normalizeIssues(legalIssues: any, issuesRaw: any): Issue[] {
     .map((i: any): Issue => {
       if (typeof i === 'string') return { text: i, source: 'ai' };
       const src = String(i.source ?? i.origin ?? '').toLowerCase();
-      const evidence = i.evidence ?? i.quote;
+      const rawEvidence = i.evidence ?? i.quote;
+      // Evidence must be a real non-empty quote (not a placeholder / object)
+      const evidence =
+        typeof rawEvidence === 'string' && rawEvidence.trim().length > 20
+          ? rawEvidence.trim()
+          : undefined;
+      const isDoc =
+        Boolean(evidence) ||
+        src.includes('doc') ||
+        src.includes('fact') ||
+        src.includes('uploaded');
       return {
-        text: String(i.text ?? i.issue ?? i.question ?? ''),
-        source: (evidence || src.includes('doc') || src.includes('fact')) ? 'document' : 'ai',
-        evidence: evidence || undefined,
+        text: String(i.text ?? i.issue ?? i.question ?? '').trim(),
+        source: isDoc ? 'document' : 'ai',
+        evidence,
         page: i.page != null ? String(i.page) : undefined,
       };
     })
@@ -242,10 +255,17 @@ function splitSentences(v: any): string[] {
 
 /** Strip a leading speaker label that contradicts this column's side (e.g. "State" in the Defense column). */
 function stripCrossSidePrefix(items: string[], ownTokens: string[], opposingTokens: string[]): string[] {
-  const re = new RegExp(`^(?:The\\s+)?(?:${opposingTokens.join('|')})\\s+(?=.{15,})`, 'i');
-  return items
-    .map((s) => s.replace(re, '').replace(/^\s+/, ''))
-    .filter(Boolean);
+  // Handle "The learned APP", "State (APP)", "State of Maharashtra" speaker headlines,
+  // plus the plain tokens, before whatever the party actually said/contended.
+  const alt = opposingTokens.join('|');
+  const re = new RegExp(
+    `^(?:The\\s+)?(?:learned\\s+)?(?:${alt})` +
+      `(?:\\s*\\([^)]*\\))?` + // "(APP)" tag
+      `(?:\\s+(?:of|through)\\s+[A-Za-z. ]+?)?` + // "State of Maharashtra"
+      `\\s*(?:,|:|;)?\\s+(?=.{15,})`,
+    'i'
+  );
+  return items.map((s) => s.replace(re, '').replace(/^\s+/, '')).filter(Boolean);
 }
 
 function firstSentence(v: any): string {
@@ -393,12 +413,17 @@ export function normalizeAnalysis({ analysis, caseInfo }: NormalizeInput): Analy
   const courtChip = md.court;
   const dateChip = md.decision_date;
 
-  const actsList: string[] = Array.isArray(analysis.acts)
-    ? analysis.acts.map((a: any) => (typeof a === 'string' ? a : String(a.act ?? a.name ?? ''))).filter(Boolean)
-    : toList(docInfo.acts);
-
   // Dynamic statutes header from detected acts only — never hardcoded
-  const headerActs = actsList.length ? actsList : Array.from(new Set(normalizeStatutes(analysis.sections, analysis.statutes).map((s) => s.act).filter(Boolean)));
+  const canonAct = (s: string) => s.toLowerCase().replace(/\bthe\s+/g, '').replace(/[^a-z0-9]/g, '');
+  const dedupActs = (arr: string[]) => {
+    const seen = new Set<string>();
+    return arr.filter((a) => (a && !seen.has(canonAct(a)) ? (seen.add(canonAct(a)), true) : false));
+  };
+  const actsList: string[] = dedupActs(Array.isArray(analysis.acts)
+    ? analysis.acts.map((a: any) => (typeof a === 'string' ? a : String(a.act ?? a.name ?? ''))).filter(Boolean)
+    : toList(docInfo.acts));
+
+  const headerActs = actsList.length ? actsList : dedupActs(Array.from(new Set(normalizeStatutes(analysis.sections, analysis.statutes).map((s) => s.act).filter(Boolean))));
 
   const selfCitation = md.citations.status !== 'not_found' ? md.citations.value.split(',')[0] ?? '' : '';
   const precedents = normalizePrecedents(analysis.precedents, caseTitleMeta.value, selfCitation);
