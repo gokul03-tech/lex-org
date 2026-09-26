@@ -251,7 +251,7 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
     if not valid_pros:
         valid_pros = ["Prosecution / Respondent contends allegations and statutory provisions warrant strict judicial enforcement."]
     if not valid_def:
-        valid_def = ["Applicant / Petitioner submits lack of mens rea and non-compliance with mandatory procedural safeguards."]
+        valid_def = ["Applicant / Petitioner submits non-compliance with mandatory procedural safeguards."]
     return valid_pros[:4], valid_def[:4]
 
 

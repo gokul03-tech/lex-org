@@ -887,6 +887,10 @@ def _court_framed_issues(text: str) -> list[dict[str, Any]]:
         body = re.split(r'\n(?:\.{5,}|…{3,})', body)[0].strip()
         if not body or len(body) < 15:
             continue
+        # Skip procedural/duplicate issues
+        body_lower = body.lower()
+        if any(skip in body_lower for skip in ['whether the court', 'whether the appeal', 'whether the petition']):
+            continue
         # Prefer a nearby verbatim sentence as evidence
         quote = None
         for s in split_sentences(n):
@@ -915,7 +919,8 @@ def _court_framed_issues(text: str) -> list[dict[str, Any]]:
         out = [o for o in out if o['text'].split(':')[0].upper() != key or len(o['text']) >= len(item['text'])]
         seen.add(key)
         out.append(item)
-    return out[:6]
+    # Limit to 4 issues for bail/criminal cases to avoid overwhelming the user
+    return out[:4]
 
 def extract_grounded_issues(r: dict[str, Any], text: str) -> list[dict[str, Any]]:
     """Extract grounded legal issues paired with real verbatim quotes from this specific document."""
@@ -959,8 +964,11 @@ def extract_grounded_issues(r: dict[str, Any], text: str) -> list[dict[str, Any]
 
     results: list[dict[str, Any]] = []
     used_quotes: set[str] = set()
+    max_issues = 4  # Limit total issues to 4
 
     for s in sections:
+        if len(results) >= max_issues:
+            break
         sec_str = str(s.get('section_number') if isinstance(s, dict) else s)
         act_str = s.get('act') if isinstance(s, dict) else section_acts.get(sec_str, 'the Act')
         issue_title = f"Whether the statutory requirements of Section {sec_str} ({act_str}) are satisfied on the facts."
@@ -986,6 +994,8 @@ def extract_grounded_issues(r: dict[str, Any], text: str) -> list[dict[str, Any]
             })
 
     for a in articles:
+        if len(results) >= max_issues:
+            break
         issue_title = f"Whether the impugned action violates Article {a} of the Constitution of India."
         quote = find_best_quote(art_num=str(a), keywords=['proportionality', 'fundamental rights', 'Article ' + str(a)])
         if quote and quote not in used_quotes:
@@ -999,19 +1009,20 @@ def extract_grounded_issues(r: dict[str, Any], text: str) -> list[dict[str, Any]
             })
 
     if category in ('criminal', 'criminal_bail', 'criminal_trial') and not any('procedural' in str(x.get('issue', '')).lower() for x in results):
-        proc_quote = find_best_quote(keywords=[
-            'investigation is complete', 'charge sheet has already been filed',
-            'mandatory statutory certification', 'without compliance',
-            'panchanama', 'seizure memo', 'recovery'
-        ])
-        if proc_quote:
-            results.append({
-                "issue": "Whether mandatory procedural safeguards under applicable criminal codes were complied with during investigation.",
-                "text": "Whether mandatory procedural safeguards under applicable criminal codes were complied with during investigation.",
-                "evidence": proc_quote,
-                "source": "document",
-                "page": "1-2"
-            })
+        if len(results) < max_issues:
+            proc_quote = find_best_quote(keywords=[
+                'investigation is complete', 'charge sheet has already been filed',
+                'mandatory statutory certification', 'without compliance',
+                'panchanama', 'seizure memo', 'recovery'
+            ])
+            if proc_quote:
+                results.append({
+                    "issue": "Whether mandatory procedural safeguards under applicable criminal codes were complied with during investigation.",
+                    "text": "Whether mandatory procedural safeguards under applicable criminal codes were complied with during investigation.",
+                    "evidence": proc_quote,
+                    "source": "document",
+                    "page": "1-2"
+                })
 
     if not results:
         sa = r.get('submissions', {}).get('a', [])
@@ -1025,7 +1036,7 @@ def extract_grounded_issues(r: dict[str, Any], text: str) -> list[dict[str, Any]
             "page": "1-2"
         })
 
-    return results
+    return results[:max_issues]
 
 def render_issues(r: dict[str, Any], text: str | None = None) -> list[str]:
     # Prefer issues the court itself framed in this document.
@@ -1042,22 +1053,28 @@ def render_issues(r: dict[str, Any], text: str | None = None) -> list[str]:
     section_acts = r.get('section_acts') or {}
     articles = r.get('articles') or []
     category = r.get('category') or 'criminal_bail'
+    max_issues = 4
 
     for s in sections:
+        if len(iss) >= max_issues:
+            break
         sec_str = str(s.get('section_number') if isinstance(s, dict) else s)
         act_str = s.get('act') if isinstance(s, dict) else section_acts.get(sec_str, 'the Act')
         iss.append(f"Whether the statutory requirements of Section {sec_str} ({act_str}) are satisfied on the facts.")
 
     for a in articles:
+        if len(iss) >= max_issues:
+            break
         iss.append(f"Whether the impugned action violates Article {a} of the Constitution of India.")
 
     if not iss:
         iss.append(f"Whether the claims of {pet} are legally sustainable against {resp}.")
 
     if category in ('criminal', 'criminal_bail', 'criminal_trial') and not any('procedural' in str(x).lower() for x in iss):
-        iss.append("Whether mandatory procedural safeguards under applicable criminal codes were complied with during investigation.")
+        if len(iss) < max_issues:
+            iss.append("Whether mandatory procedural safeguards under applicable criminal codes were complied with during investigation.")
 
-    return iss
+    return iss[:max_issues]
 
 def render_conclusion(r: dict[str, Any], text: str) -> str:
     m = r.get('metadata') or {}

@@ -2,20 +2,66 @@
 
 Extracts structured metadata including title, date, parties,
 courts, and document type from legal document text.
+Uses LLM-based extraction for critical fields (parties, date, judges)
+to ensure accuracy across all document formats.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 from typing import Any
 
+from app.llm.provider import get_llm_provider
+
+
+METADATA_EXTRACTION_PROMPT = """
+You are a legal metadata extractor. Read the HEADER of the provided legal document and extract the following exactly as written:
+
+1. Case Name: Format as "Petitioner Name vs Respondent Name". Do NOT use the word "VERSUS" as a name.
+2. Petitioner/Applicant Name: The party before the word VERSUS (or before "vs" in High Court cases).
+3. Respondent/Defense Name: The party after the word VERSUS (or after "vs" in High Court cases).
+4. Court Name: Extract the full court name.
+5. Judge(s)/Bench Name: Extract ALL judges listed, separated by commas. Do not stop after the first judge.
+6. Decision Date: Look for the date at the very END of the judgment (signature block area). Format: DD Month YYYY. Do NOT use dates from appeal numbers or citations.
+7. Case/FIR Number: Extract if present, otherwise "Unstated in record".
+
+OUTPUT STRICT JSON ONLY.
+"""
 
 class LegalMetadataExtractor:
     """Extract structured metadata from legal document text with strict grounding and inference rules."""
 
     def __init__(self) -> None:
         pass
+
+    def _extract_metadata_via_llm(self, text: str) -> dict[str, Any]:
+        """Use LLM to extract metadata from document header."""
+        try:
+            provider = get_llm_provider("qwen")
+            # Use first 4000 chars which typically contain the header with parties, court, judges
+            header_text = text[:4000]
+            
+            prompt = f"{METADATA_EXTRACTION_PROMPT}\n\nDOCUMENT HEADER:\n{header_text}\n\nOUTPUT JSON:"
+            
+            response = provider.generate(
+                prompt=prompt,
+                system_prompt="You are a precise legal metadata extractor. Output only valid JSON.",
+                max_tokens=1024,
+                temperature=0.0,
+                stop=None
+            )
+            
+            # Try to parse JSON from response
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                parsed = json.loads(json_match.group(0))
+                return parsed
+        except Exception as e:
+            # Silently fall back to regex extraction
+            pass
+        return {}
 
     def extract(self, text: str, filename: str = "") -> dict[str, Any]:
         """Extract all metadata from legal text following Master Grounding Rules.
@@ -32,23 +78,42 @@ class LegalMetadataExtractor:
         full_sample = text[:35000]
         word_count = len(text.split()) if text else 0
 
-        # 1. Case Title & Parties (Rule 8 Title Fallback)
-        title_res = self._extract_title_and_parties(text, filename)
-        case_title = title_res["case_title"]
-        petitioner = title_res["petitioner"]
-        respondent = title_res["respondent"]
+        # Try LLM-based extraction first for critical fields
+        llm_metadata = self._extract_metadata_via_llm(text)
+        
+        # 1. Case Title & Parties (Rule 8 Title Fallback) - use LLM result if available
+        if llm_metadata.get("Petitioner/Applicant Name") and llm_metadata.get("Respondent/Defense Name"):
+            petitioner = {"value": llm_metadata["Petitioner/Applicant Name"], "status": "extracted"}
+            respondent = {"value": llm_metadata["Respondent/Defense Name"], "status": "extracted"}
+            case_title = f"{llm_metadata['Petitioner/Applicant Name']} vs {llm_metadata['Respondent/Defense Name']}"
+            case_title_meta = {"value": case_title, "status": "extracted"}
+        else:
+            title_res = self._extract_title_and_parties(text, filename)
+            case_title = title_res["case_title"]
+            case_title_meta = title_res["case_title"]
+            petitioner = title_res["petitioner"]
+            respondent = title_res["respondent"]
 
         # 2. Citations
         citations = self._extract_citations(head)
 
         # 3. Court (Explicit + Reporter Inferences)
-        court_res = self._extract_court_with_inference(head, citations)
+        if llm_metadata.get("Court Name"):
+            court_res = {"value": llm_metadata["Court Name"], "status": "extracted"}
+        else:
+            court_res = self._extract_court_with_inference(head, citations)
 
-        # 4. Decision Date
-        date_res = self._extract_decision_date(head)
+        # 4. Decision Date - use LLM if available
+        if llm_metadata.get("Decision Date"):
+            date_res = {"value": llm_metadata["Decision Date"], "status": "extracted"}
+        else:
+            date_res = self._extract_decision_date(head)
 
-        # 5. Presiding Judges (Header + Concurring Tail Judges)
-        judges_res = self._extract_judges(head, tail)
+        # 5. Presiding Judges - use LLM if available
+        if llm_metadata.get("Judge(s)/Bench Name"):
+            judges_res = {"value": llm_metadata["Judge(s)/Bench Name"], "status": "extracted"}
+        else:
+            judges_res = self._extract_judges(head, tail)
 
         # 6. Court Matter & Filing Number
         matter_res = self._extract_court_matter(head)
@@ -62,8 +127,8 @@ class LegalMetadataExtractor:
 
         metadata: dict[str, Any] = {
             "filename": filename,
-            "title": case_title,
-            "case_title": case_title,
+            "title": case_title_meta,
+            "case_title": case_title_meta,
             "court": court_res,
             "jurisdiction": {"value": "India", "status": "extracted"},
             "document_type": {"value": self._detect_document_type(head, filename), "status": "extracted"},

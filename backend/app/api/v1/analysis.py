@@ -1157,10 +1157,31 @@ async def generate_case_draft(
             "precedents": precs,
         }
 
+    # Get document metadata (petitioner, respondent, court, decision_date, etc.)
+    doc_meta: dict[str, Any] = {}
+    if case.documents:
+        latest_doc = case.documents[-1]
+        if latest_doc and isinstance(latest_doc.metadata_, dict):
+            doc_meta = latest_doc.metadata_
+
     title = case.title or "Legal Matter"
     summary = analysis.get("case_summary") or case.description or "Facts of the case on record."
     issues = analysis.get("issues") or []
     precedents = analysis.get("precedents") or []
+
+    # Helper to extract string from metadata value (handles {"value": ..., "status": ...} or raw string)
+    def _meta_val(meta: dict, key: str, default: str) -> str:
+        v = meta.get(key, default)
+        if isinstance(v, dict):
+            return str(v.get("value", default))
+        return str(v)
+
+    # Real case parties and metadata
+    petitioner = _meta_val(doc_meta, "petitioner", "the Petitioner")
+    respondent = _meta_val(doc_meta, "respondent", "the Respondent")
+    court = _meta_val(doc_meta, "court", case.court_name or "the Hon'ble Court")
+    decision_date = _meta_val(doc_meta, "decision_date", (case.filing_date.strftime("%d-%m-%Y") if case.filing_date else date.today().strftime("%d-%m-%Y")))
+    case_number = _meta_val(doc_meta, "case_number", case.case_number or "N/A")
     
     issues_text = "\n".join([f"- {i.get('issue', str(i)) if isinstance(i, dict) else str(i)}" for i in issues]) or "Substantial question of statutory compliance."
     precedents_text = "\n".join([f"- {p.get('case_name', '')} ({p.get('citation', '')}): {p.get('summary', '')}" for p in precedents if isinstance(p, dict)])
@@ -1175,28 +1196,48 @@ async def generate_case_draft(
     heading = draft_title_map.get(draft_type, "FORMAL LEGAL SUBMISSION BEFORE THE HON'BLE HIGH COURT")
 
     prompt = f"""You are a Senior High Court Advocate. Draft a formal, courtroom-ready Indian legal document: {heading}.
-
-Case Title: {title}
-Case Summary: {summary}
-
-Substantial Legal Issues:
-{issues_text}
-
-Binding Precedents:
-{precedents_text}
-
-Structure the draft professionally with (keep each section concise; maximum 4 grounds, each ground 2-3 sentences):
-1. FORMAL COURT HEADER & CAUSE TITLE (Petitioner vs. Respondent)
-2. PRELIMINARY SYNOPSIS
-3. CHRONOLOGICAL STATEMENT OF MATERIAL FACTS
-4. SUBSTANTIAL GROUNDS FOR RELIEF (Grounded in statutory provisions and cited precedents)
-5. PRAYER CLAUSE
-6. ADVOCATE VERIFICATION with DATED line
-
-You MUST end the document with sections 5 (PRAYER CLAUSE) and 6 (ADVOCATE VERIFICATION + DATED line). Do not stop before including them.
-
-Write the draft in formal Indian legal terminology (e.g. 'Most Respectfully Showeth', 'In the Premises aforesaid')."""
-
+    
+    Case Title: {title}
+    Case Number: {case_number}
+    Court: {court}
+    Petitioner: {petitioner}
+    Respondent: {respondent}
+    Decision Date: {decision_date}
+    
+    Case Summary: {summary}
+    
+    Substantial Legal Issues:
+    {issues_text}
+    
+    Binding Precedents:
+    {precedents_text}
+    
+    CRITICAL FORMATTING RULES:
+    - NEVER use square brackets [ ] or placeholder text like "[To be filled]", "[Date]", "[Court Name]", "[Advocate Name]", "[Advocate's Name]", "[Bar Council]", "[Registration]"
+    - ALWAYS use the actual values provided above
+    - The DATED line must be exactly: "DATED: {decision_date}" (no brackets, no extra text)
+    - The ADVOCATE line must be exactly: "ADVOCATE FOR {petitioner.upper()}" (no brackets, no name, no bar number)
+    - DO NOT add any lines after the ADVOCATE line
+    - The Court header must use the actual court name: "{court}"
+    - The Cause Title must be: "{petitioner} vs. {respondent}"
+    - The Case Number must be: "{case_number}"
+    
+    Structure the draft professionally with (keep each section concise; maximum 4 grounds, each ground 2-3 sentences):
+    1. FORMAL COURT HEADER & CAUSE TITLE ({petitioner} vs. {respondent})
+    2. PRELIMINARY SYNOPSIS
+    3. CHRONOLOGICAL STATEMENT OF MATERIAL FACTS
+    4. SUBSTANTIAL GROUNDS FOR RELIEF (Grounded in statutory provisions and cited precedents)
+    5. PRAYER CLAUSE
+    6. ADVOCATE VERIFICATION with DATED line
+    
+    You MUST end the document with sections 5 (PRAYER CLAUSE) and 6 (ADVOCATE VERIFICATION + DATED line). Do not stop before including them.
+    
+    Write the draft in formal Indian legal terminology (e.g. 'Most Respectfully Showeth', 'In the Premises aforesaid').
+    Include the actual Petitioner/Respondent names, Court name, Case Number, and Decision Date in the header.
+    The DATED line must show the actual decision date: {decision_date}.
+    The ADVOCATE line must show the actual Petitioner name.
+    NO BRACKETS. NO PLACEHOLDERS. USE REAL VALUES ONLY."""
+    
     try:
         from app.llm.qwen import get_qwen_provider, QWEN_SYSTEM_PROMPT
         provider = get_qwen_provider()
@@ -1208,11 +1249,14 @@ Write the draft in formal Indian legal terminology (e.g. 'Most Respectfully Show
         logger.info(f"Draft generation start case={case_id} type={draft_type} max_tokens=3072")
         draft_content = await asyncio.to_thread(
             provider.generate, prompt, system_prompt=QWEN_SYSTEM_PROMPT,
-            max_tokens=3072, temperature=0.6,
+            max_tokens=1500, temperature=0.6,
             stop=[
-                "</s>",
+                "```",
                 "ADVOCATE FOR THE RESPONDENT",
-                "Filed by:\n",  # after verification block
+                "Filed by:\n",
+                "[Advocate",
+                "[Bar Council",
+                "END OF DOCUMENT",
             ],
         )
         elapsed = time.monotonic() - t0
@@ -1223,17 +1267,25 @@ Write the draft in formal Indian legal terminology (e.g. 'Most Respectfully Show
         )
     except Exception as exc:
         logger.warning(f"LLM draft generation fallback: {exc}")
-        draft_content = f"""IN THE HON'BLE HIGH COURT OF JUDICATURE
+        draft_content = f"""IN THE {court.upper()}
 
 IN THE MATTER OF:
 {title}
+CASE NO.: {case_number}
 
 {heading}
+
+BETWEEN:
+{petitioner}                                    ... PETITIONER / APPLICANT
+
+VERSUS
+
+{respondent}                                    ... RESPONDENT
 
 MOST RESPECTFULLY SHOWETH:
 
 1. PRELIMINARY SYNOPSIS:
-The present submission is filed to place on record the substantial legal and factual grounds arising out of the case records.
+The present submission is filed on behalf of {petitioner} to place on record the substantial legal and factual grounds arising out of the case records.
 
 2. STATEMENT OF FACTS:
 {summary}
@@ -1249,8 +1301,8 @@ B. Issues on Record:
 5. PRAYER:
 In the premises aforesaid, it is most respectfully prayed that this Hon'ble Court may be pleased to grant the appropriate relief as prayed for in the interest of justice.
 
-ADVOCATE FOR PETITIONER / APPLICANT
-DATED: {date.today().strftime('%d-%m-%Y')}"""
+ADVOCATE FOR {petitioner.upper()}
+DATED: {decision_date}"""
 
     return {
         "heading": heading,
