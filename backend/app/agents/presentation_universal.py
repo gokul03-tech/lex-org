@@ -10,12 +10,21 @@ norm = lambda t: re.sub(r'\s+', ' ', t or '').strip()
 nows = lambda t: re.sub(r'[^a-z0-9]', '', (t or '').lower())
 F = lambda v, s: {"value": v, "status": s}
 snap = lambda t, i: t.rfind(' ', 0, max(0, i)) + 1          # word-boundary slice
-_ABBR_DOT = re.compile(r'\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|No|Sec|Art|Ex|Rs|Adv|APP|Vs|vs|v)\.', re.I)
-_SINGLE_INIT = re.compile(r'\b([A-Z])\.')
+# Expanded abbreviation list to protect more legal/formal abbreviations
+# Match abbreviations WITH their trailing dots - use alternation without word boundaries
+_ABBR_DOT = re.compile(
+    r'(?:Mr\.|Mrs\.|Ms\.|Dr\.|Prof\.|Sr\.|Jr\.|No\.|Sec\.|Art\.|Ex\.|Rs\.|Adv\.|APP\.|Vs\.|vs\.|v\.)',
+    re.I
+)
+# Match single capital initial followed by dot, but only when preceded by space or start of string
+_SINGLE_INIT = re.compile(r'(?:^|\s)([A-Z])\.')
 
 def _protect_dots(t: str) -> str:
+    # First pass: protect known abbreviations with dots
     t = _ABBR_DOT.sub(lambda m: m.group(0).replace('.', '<DOT>'), t)
-    return _SINGLE_INIT.sub(r'\1<DOT>', t)
+    # Protect single initials like "A. B. Smith" -> "A<DOT> B<DOT> Smith"
+    t = _SINGLE_INIT.sub(lambda m: m.group(0).replace('.', '<DOT>'), t)
+    return t
 
 def _restore_dots(s: str) -> str:
     return s.replace('<DOT>', '.')
@@ -279,12 +288,33 @@ def bind_sections(text: str) -> list[dict[str, Any]]:
         out.append({'num': s, 'section_number': s, 'act': act, 'display': f"Section {s} — {act}"})
 
     # 4. Constitutional Articles
+    seen_articles: set[str] = set()
     for m in re.finditer(r'Article\s+([0-9]+[A-Za-z]?(?:\([0-9A-Za-z]+\))*)', n):
         a_num = m.group(1)
+        # Normalize article number for deduplication (e.g., "14" and "14(1)" are different)
+        norm_num = a_num.upper()
+        if norm_num in seen_articles:
+            continue
+        seen_articles.add(norm_num)
         act = 'Constitution of India'
         out.append({'num': f"Art. {a_num}", 'section_number': a_num, 'act': act, 'display': f"Article {a_num} — {act}"})
-
-    return list({d['display']: d for d in out}.values())
+    
+    # Deduplicate by normalized section/article identifier
+    # Normalize: remove "Section"/"Art." prefix, normalize act name
+    def _norm_key(d: dict) -> str:
+        num = str(d.get('section_number', '')).upper().replace('ART.', '').replace('ART', '').strip()
+        act = str(d.get('act', '')).upper()
+        return f"{num}|{act}"
+    
+    seen_keys: set[str] = set()
+    deduped: list[dict] = []
+    for d in out:
+        key = _norm_key(d)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            deduped.append(d)
+    
+    return deduped
 
 # ---------- 4) PRECEDENTS (each name ↔ its OWN citation) ----------
 # Citation shapes: "(2011) 1 SCC 694", "[2023] 4 SCR 710", "1994 Supp (1) SCC 92",
@@ -351,7 +381,11 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
                     'summary': f"Precedent cited for legal principle on this issue."})
 
     # 1. (Citation) in the case of Name
-    for m in re.finditer(r'(' + CIT + r')\s+in the case of\s+(' + NAME + r')(?=\s+(?:wherein|regarding|holding|where|which|laid|ruling|reiterat|and the recent)|\s*\([12]\d{3}\)|,\s+and|\.\s*\d|\n,|\n|,)', n):
+    for m in re.finditer(r'(' + CIT + r')\s+in the case of\s+(' + NAME + r')(?=\s+(?:wherein|regarding|holding|where|which|laid|ruling|reiterat|and the recent)|\s*\([12]\d{3}\)|,\s+and|\.\s*\d|\n,|\n|,|$)', n):
+        _append(m.group(2), m.group(1).strip())
+
+    # 1b. (Citation) in the case of Name — broader match for long narratives
+    for m in re.finditer(r'(' + CIT + r')\s+in the case of\s+(' + NAME + r')', n):
         _append(m.group(2), m.group(1).strip())
 
     # 2. judgment in Name (Citation)
@@ -369,6 +403,16 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
         r'(?:the case (?:of|in) |the decision (?:of|in) |the judgment in |the ruling in )?'
         r'(' + NAME + r')(?=$|\s*[,;.])', n):
         _append(m.group(1), "")
+
+    # 5. "in the case of Name v. Name (Citation)" - explicit parenthetical citation
+    for m in re.finditer(r'in the case of\s+(' + NAME + r')\s*\(' + CIT + r'\)', n):
+        _append(m.group(1), m.group(2).strip())
+
+    # 6. "(YEAR) VOLUME REPORTER PAGE in the case of Name" - long-form citation style
+    # e.g., "(2016) 7 SCC 353 in the case of Modern Dental College"
+    CIT_LONG = r'\([12]\d{3}\)\s+\d+\s+[A-Z]+\s+\d+\s+in the case of\s+' + NAME
+    for m in re.finditer(CIT_LONG, n):
+        _append(m.group(1), m.group(0).strip())
 
     return out
 
@@ -483,53 +527,89 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
     n = norm(text)
     a, b = [], []
     cur = None
+    cur_points = []  # Accumulate multi-point submissions for current speaker
     
     PAT_A_START = re.compile(r'\b(?:counsel (?:for|appearing for|on behalf of) (?:the )?(?:applicant|petitioner|appellant|plaintiff)|the (?:applicant|petitioner|appellant|plaintiff) (?:has invoked|contends|submitted|argued|pleaded))\b', re.I)
     PAT_B_START = re.compile(r'\b(?:(?:on the other hand|per contra|in opposition|opposed).*?(?:learned APP|state|respondent|prosecution|counsel)|counsel (?:for|appearing for|on behalf of) (?:the )?(?:respondent|state|prosecution|vendor|defendant|nhai|union of india)|learned (?:app|asg|solicitor general|standing counsel)|the (?:respondent|state|prosecution|vendor|defendant)(?:/vendor)? (?:contended|opposed|argued|defended|invoked)|the respondent/vendor)\b', re.I)
     VERBS = re.compile(r'\b(?:submitted|contended|argued|relied|pointed|defended|opposed|demonstrated|pleaded|urged|resisted|invoked)\b', re.I)
+    # Roman numeral list items: (i), (ii), (iii), (iv), (v), etc.
+    ROMAN_NUMERAL = re.compile(r'^\(\s*[ivxlcdm]+\s*\)\s*', re.I)
+    # Numbered list items: 1., 2., 3., etc.
+    NUMBERED_ITEM = re.compile(r'^\d+\.\s+', re.I)
     
     for s in split_sentences(n):
         s_clean = s.strip()
         if ' vs ' in s_clean or ' versus ' in s_clean or s_clean.startswith('Bench:'):
             continue
         if re.search(r'\b(?:We have heard|We hold|In our considered view|The petition is|Bail is allowed|Award is set aside)\b', s_clean, re.I):
+            # Flush any accumulated points for previous speaker before switching
+            if cur == 'a' and cur_points:
+                a.append(' '.join(cur_points))
+                cur_points = []
+            elif cur == 'b' and cur_points:
+                b.append(' '.join(cur_points))
+                cur_points = []
             cur = None
             continue
         # Court-framed issues are not counsel submissions
         if re.match(r'^Issue\s+[IVXLC]+\b', s_clean, re.I) or \
            re.search(r'\bWe frame the following issues\b', s_clean, re.I) or \
            re.match(r'^(?:CONCLUSION AND ORDER|ORDER AND DIRECTIONS)\b', s_clean, re.I):
+            if cur == 'a' and cur_points:
+                a.append(' '.join(cur_points))
+                cur_points = []
+            elif cur == 'b' and cur_points:
+                b.append(' '.join(cur_points))
+                cur_points = []
             cur = None
             continue
 
         has_verb = bool(VERBS.search(s_clean))
         
+        # Check for roman numeral list items (i), (ii), (iii), etc.
+        roman_match = ROMAN_NUMERAL.match(s_clean)
+        # Check for numbered items 1., 2., etc.
+        numbered_match = NUMBERED_ITEM.match(s_clean)
+        is_list_item = bool(roman_match or numbered_match)
+        
+        # Detect speaker start
         if PAT_B_START.search(s_clean):
+            # Flush previous speaker's points
+            if cur == 'a' and cur_points:
+                a.append(' '.join(cur_points))
+                cur_points = []
+            elif cur == 'b' and cur_points:
+                b.append(' '.join(cur_points))
+                cur_points = []
             cur = 'b'
-        elif PAT_A_START.search(s_clean):
-            cur = 'a'
-            
-        if cur and has_verb and len(s_clean) > 25:
+            # Start new point list with this sentence (if it has content beyond the marker)
             clean_s = re.sub(r'^\d+\.\s*', '', s_clean)
-            # Never let a State/Prosecution bullet leak into the Applicant/Defense list
-            # (and vice-versa) when a speaker label was glued to the sentence.
-            # Strip the leading party speaker phrase (incl. honorifics and the verb +
-            # optional "that") so only the actual point remains.
-            if cur == 'a':
-                clean_s = _strip_speaker(
-                    clean_s,
-                    r'Applicant|Petitioner|Appellant|Plaintiff|Defense|Defence|Accused|Applicant\'s|Petitioner\'s'
-                )
-            else:
-                clean_s = _strip_speaker(
-                    clean_s,
-                    r'State(?:\s*\(?APP\)?)?|Prosecution|Respondent(?:/State)?|Opposite\s+Party|APP|A\.P\.P\.|Public\s+Prosecutor'
-                )
-            clean_s = clean_s.strip()
-            target = a if cur == 'a' else b
-            if clean_s and clean_s not in target:
-                target.append(clean_s)
-                
+            if clean_s.strip() and (has_verb or is_list_item):
+                cur_points = [clean_s]
+        elif PAT_A_START.search(s_clean):
+            # Flush previous speaker's points
+            if cur == 'a' and cur_points:
+                a.append(' '.join(cur_points))
+                cur_points = []
+            elif cur == 'b' and cur_points:
+                b.append(' '.join(cur_points))
+                cur_points = []
+            cur = 'a'
+            clean_s = re.sub(r'^\d+\.\s*', '', s_clean)
+            if clean_s.strip() and (has_verb or is_list_item):
+                cur_points = [clean_s]
+        elif cur and (has_verb or is_list_item):
+            # Continuation of current speaker's points (including list items)
+            clean_s = re.sub(r'^\d+\.\s*', '', s_clean)
+            if clean_s.strip():
+                cur_points.append(clean_s)
+        
+    # Flush any remaining points
+    if cur == 'a' and cur_points:
+        a.append(' '.join(cur_points))
+    elif cur == 'b' and cur_points:
+        b.append(' '.join(cur_points))
+        
     return a[:3], b[:3]
 
 # ---------- 6) EVIDENCE (per-item reliability, word-aligned) ----------
@@ -607,7 +687,8 @@ def build_timeline(text: str, date: str | None) -> list[dict[str, Any]]:
 # ---------- 8) RISK (fully extracted; strictly procedural action plan) ----------
 def _extract_procedural_actions(text: str, n: str, op: str | None) -> list[str]:
     """Extract procedural next steps directly and verbatim from the document text,
-    ensuring zero hallucination and strict grounding."""
+    ensuring zero hallucination and strict grounding. Only captures actual
+    procedural directives (directions, orders, mandates), not legal reasoning."""
     actions = []
     
     sentences = SENT(n)
@@ -616,13 +697,16 @@ def _extract_procedural_actions(text: str, n: str, op: str | None) -> list[str]:
         # Never surface court-framed issues / headings as next steps
         if re.match(r'^(?:Issue\s+[IVXLC]+|We frame the following|CONCLUSION AND ORDER|ORDER AND DIRECTIONS)\b', s_clean, re.I):
             continue
-        if re.search(r'\b(?:directed to|executing a|furnish|deposit|refund|pay|appear|bond of|sureties|compliance|affidavit|transmit a copy|notify|dispose)\b', s_clean, re.I):
+        # Only match actual procedural directives with strong directive verbs
+        if re.search(r'\b(?:directed to|ordered to|shall furnish|shall deposit|shall refund|shall pay|shall appear|shall execute|shall file|shall submit|shall comply|shall furnish|shall deposit|shall pay|shall appear|shall execute|shall submit|shall surrender|shall appear|shall report|shall deposit|shall refund|shall pay|shall produce|shall disclose|shall provide|shall maintain|shall preserve|shall not|shall cease|shall desist|shall refrain)\b', s_clean, re.I):
             # Exclude pure standalone verdict phrases like "Bail application is allowed."
             if not re.match(r'^(?:\d+\.\s*)?(?:bail application|appeal|petition|suit)\s+is\s+(?:allowed|dismissed)\.?$', s_clean, re.I):
-                if s_clean not in actions and len(s_clean) > 15:
-                    actions.append(s_clean)
-                    if len(actions) >= 3:
-                        break
+                # Also exclude legal reasoning/precedent citations
+                if not re.search(r'\b(?:relied on|cited|precedent|case of|in the case of|as held in|as observed in|according to|pursuant to|under|section|article)\b', s_clean, re.I):
+                    if s_clean not in actions and len(s_clean) > 15:
+                        actions.append(s_clean)
+                        if len(actions) >= 3:
+                            break
                         
     if not actions and op:
         actions = [op]
@@ -637,11 +721,33 @@ def build_risk(text: str, subs_a: list[str], subs_b: list[str]) -> dict[str, Any
     body = _strip_signature(text)
     n = norm(body)
     concl_block = _conclusion_section(text) or n
-    strengths = [s for s in SENT(n) if re.search(r'We hold|established|readiness and willingness|No direct financial transfer|investigation is complete|charge sheet has already been filed|renders the impugned', s, re.I)][:2]
+    
+# Extract strengths from COURT'S FAVORABLE FINDINGS in CONCLUSION AND ORDER section (not procedural closings)
+    # Use ONLY the conclusion block, not the full document
+    favorable_patterns = [
+        (r'We hold|We find|Court finds|Court holds|It is established|It is proved|proved beyond doubt|established beyond doubt', "Court's favorable finding on merits"),
+        (r'charge\s*sheet (?:has already been )?filed|investigation is complete', "Investigation complete; charge sheet filed — no risk of evidence tampering."),
+        (r'No direct financial transfer has been traced|no share of fraud proceeds', "No direct financial transfer traced to the petitioner's accounts."),
+        (r'custodial interrogation.*concluded|custodial interrogation.*completed', "Custodial interrogation of the petitioner is complete."),
+        (r'Seizure proved by consistent official testimony|Panchanama typed on the spot', "Seizure proved by consistent official witness testimonies."),
+        (r'Documentary correspondence.*contradicts', "Contemporaneous documentary correspondence supports the claim."),
+        (r'proportionality test.*satisfied|proportionality.*satisfied', "Statutory measure satisfies proportionality test."),
+        (r'no mens rea|absence of mens rea|no criminal intent', "Absence of mens rea established for the petitioner."),
+    ]
+    
+    # Search ONLY in conclusion block for strengths (court's favorable findings)
+    strengths = []
+    for pattern, strength_text in favorable_patterns:
+        if re.search(pattern, concl_block, re.I):
+            strengths.append(strength_text)
+    
+    if not strengths:
+        strengths.append("Pleadings and documentary record prima facie favor the petitioner.")
+
     op = _operative_sentence(norm(concl_block)) or _operative_sentence(n)
     fallback_quote = _last_substantive(norm(concl_block)) or _last_substantive(n) or n[-160:].strip()
 
-    str_list = strengths or (subs_a[:1] if subs_a else ([fallback_quote] if fallback_quote else []))
+    str_list = strengths[:2]  # Limit to top 2
     contest_cue = re.compile(r'\b(contended|opposed|defended|failed to|disputed|however)\b', re.I)
     gap_src = subs_b[:2] if subs_b else [s for s in _substantive_sentences(n) if contest_cue.search(s)][:2]
     gap_list = gap_src or ([fallback_quote] if fallback_quote else [])
@@ -652,6 +758,7 @@ def build_risk(text: str, subs_a: list[str], subs_b: list[str]) -> dict[str, Any
         acts_c = _extract_procedural_actions(concl_block, norm(concl_block), None)
         merged = acts_c + [a for a in act_list if a not in acts_c]
         act_list = merged[:4]
+    
     # Drop any residual framing / submission noise from the action plan
     def _trim_action(a: str) -> str:
         a = re.sub(r'^\s*(?:\d+\.\s*|\(?(?:i{1,3}|iv|v|vi{0,3}|ix|x)\)\s*)+', '', a).strip()
@@ -716,7 +823,13 @@ def build_kg(*args: Any, **kwargs: Any) -> dict[str, Any]:
         evi = r.get('evidence') or []
         
         case_title = safe(meta, 'case_title', 'Case')
-        clean_title = re.sub(r'\s+(?:\.\.\.\s*on|on|\.\.\.)\s+\d{1,2}.*$', '', case_title).strip()
+        # Ensure central node uses "Petitioner vs Respondent" format, not just raw title
+        pet = safe(meta, 'petitioner', '')
+        resp = safe(meta, 'respondent', '')
+        if pet and resp:
+            clean_title = f"{pet} vs {resp}"
+        else:
+            clean_title = re.sub(r'\s+(?:\.\.\.\s*on|on|\.\.\.)\s+\d{1,2}.*$', '', case_title).strip()
         nodes = [{'id': 'case', 'type': 'Case', 'label': clean_title}]
         edges = []
         seen = {'case'}
@@ -727,8 +840,10 @@ def build_kg(*args: Any, **kwargs: Any) -> dict[str, Any]:
             # and "D.Y. CHANDRACHUD" never become two nodes.
             key_label = l
             if t == 'Judge':
-                key_label = re.sub(r'\b(?:Hon[\'’]?ble|Mr\.|Mrs\.|Ms\.|Justice|CJI|J\.|J)\b', '', l, flags=re.I)
-                key_label = re.sub(r',?\s*\b(?:CJI|J\.|J)\b\.?$', '', key_label, flags=re.I)
+                # Remove honorifics and titles
+                key_label = re.sub(r'\b(?:Hon[\'’]?ble|Mr\.|Mrs\.|Ms\.|Dr\.|Justice|Shri|Smt\.?|CJI|Judge|J\.|J)\b', '', l, flags=re.I)
+                # Remove trailing role suffixes
+                key_label = re.sub(r',?\s*\b(?:CJI|Judge|J\.|J)\b\.?\s*$', '', key_label, flags=re.I)
                 key_label = re.sub(r'\s+', ' ', key_label).strip(' ,;.')
                 if not key_label or re.search(r'(?:\b[A-Z]\b\s*){3,}', key_label):
                     return None
@@ -742,12 +857,14 @@ def build_kg(*args: Any, **kwargs: Any) -> dict[str, Any]:
                 nodes.append({'id': node_id, 'type': t, 'label': l})
             return node_id
 
+        # Central case node connects to parties
         for k in ('petitioner', 'respondent'):
             v = safe(meta, k)
             if v and v != "Not found in document":
                 e = add('Party', v)
                 if e: edges.append({'source': 'case', 'target': e, 'type': 'INVOLVES', 'label': 'involves'})
 
+        # Judges - use the canonical normalization
         for j in (safe(meta, 'presiding_judges') or safe(meta, 'judges') or []):
             if j and j != "Not found in document":
                 e = add('Judge', j)
@@ -786,7 +903,13 @@ def build_kg(*args: Any, **kwargs: Any) -> dict[str, Any]:
     evi = args[3] if len(args) > 3 else kwargs.get('evi', [])
 
     case_title = safe(meta, 'case_title', 'Case')
-    clean_title = re.sub(r'\s+(?:\.\.\.\s*on|on|\.\.\.)\s+\d{1,2}.*$', '', case_title).strip()
+    # Ensure central node uses "Petitioner vs Respondent" format
+    pet = safe(meta, 'petitioner', '')
+    resp = safe(meta, 'respondent', '')
+    if pet and resp:
+        clean_title = f"{pet} vs {resp}"
+    else:
+        clean_title = re.sub(r'\s+(?:\.\.\.\s*on|on|\.\.\.)\s+\d{1,2}.*$', '', case_title).strip()
     nodes = [{'id': 'case', 'type': 'Case', 'label': clean_title}]
     edges = []
     seen = {'case'}
@@ -794,8 +917,8 @@ def build_kg(*args: Any, **kwargs: Any) -> dict[str, Any]:
     def add(t: str, l: str):
         if not l or l.lower() in JUNK: return None
         if t == 'Judge':
-            key_label = re.sub(r'\b(?:Hon[\'’]?ble|Mr\.|Mrs\.|Ms\.|Justice|CJI|J\.|J)\b', '', l, flags=re.I)
-            key_label = re.sub(r',?\s*\b(?:CJI|J\.|J)\b\.?$', '', key_label, flags=re.I)
+            key_label = re.sub(r'\b(?:Hon[\'’]?ble|Mr\.|Mrs\.|Ms\.|Dr\.|Justice|Shri|Smt\.?|CJI|Judge|J\.|J)\b', '', l, flags=re.I)
+            key_label = re.sub(r',?\s*\b(?:CJI|Judge|J\.|J)\b\.?\s*$', '', key_label, flags=re.I)
             key_label = re.sub(r'\s+', ' ', key_label).strip(' ,;.')
             if not key_label or re.search(r'(?:\b[A-Z]\b\s*){3,}', key_label):
                 return None
@@ -817,6 +940,7 @@ def build_kg(*args: Any, **kwargs: Any) -> dict[str, Any]:
 
     for j in (safe(meta, 'judges') or safe(meta, 'presiding_judges') or []):
         e = add('Judge', j)
+        if e: edges.append({'source': 'case', 'target': e, 'type': 'DECIDED_BY', 'label': 'decided_by'})
         if e: edges.append({'source': 'case', 'target': e, 'type': 'DECIDED_BY', 'label': 'decided_by'})
 
     court_val = safe(meta, 'court')
@@ -876,7 +1000,7 @@ def _court_framed_issues(text: str) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     # Multi-line: "Issue I: Whether ... \n Issue II: Whether ..."
     pat = re.compile(
-        r'(Issue\s+[IVXLC]+)\s*:\s*(.+?)(?=\n\s*Issue\s+[IVXLC]+\s*:|\n\s*\d+\.\s+[A-Z]|\Z)',
+        r'(Issue\s+[IVXLC]+)\s*:\s*(.+?)(?=\n\s*Issue\s+[IVXLC]+\s*:|\n\s*\n\s*[A-Z]|\n\s*(?:[A-Z][A-Z\s]{2,}:|ANALYSIS|REASONING|JUDGMENT|ORDER|DECISION|CONCLUSION|BACKGROUND|FACTS|PROCEDURAL|ISSUES?\s+FRAMED)\b|\Z)',
         re.S | re.I,
     )
     for m in pat.finditer(text):
@@ -923,158 +1047,29 @@ def _court_framed_issues(text: str) -> list[dict[str, Any]]:
     return out[:4]
 
 def extract_grounded_issues(r: dict[str, Any], text: str) -> list[dict[str, Any]]:
-    """Extract grounded legal issues paired with real verbatim quotes from this specific document."""
-    # Prefer issues the court itself framed — these are the strongest grounding.
+    """Extract grounded legal issues paired with real verbatim quotes from this specific document.
+    
+    Only uses court-framed issues (Issue I, Issue II, etc.) explicitly stated by the court.
+    Does NOT fall back to section-based issue generation which creates fake issues.
+    """
+    # Use ONLY court-framed issues - no fallback to section-based issue generation
     court_issues = _court_framed_issues(text)
     if court_issues:
         return court_issues
-
-    m = r.get('metadata') or {}
-    pet = safe(m, 'petitioner', 'the petitioner')
-    resp = safe(m, 'respondent', 'the respondent')
-    sections = r.get('sections') or []
-    section_acts = r.get('section_acts') or {}
-    articles = r.get('articles') or []
-    category = r.get('category') or 'criminal_bail'
     
-    n = norm(text)
-    sents = split_sentences(n)
-    
-    def find_best_quote(sec_num: str | None = None, art_num: str | None = None, keywords: list[str] | None = None) -> str | None:
-        if sec_num:
-            for s in sents:
-                if re.search(r'\b(?:Section|Sec\.?|u/s)\s+' + re.escape(sec_num) + r'\b', s, re.I) and len(s) > 25:
-                    clean = re.sub(r'^\d+\.\s*', '', s).strip()
-                    if not clean.startswith('Bench:') and ' vs ' not in clean[:30]:
-                        return clean
-        if art_num:
-            for s in sents:
-                if re.search(r'\bArticle\s+' + re.escape(art_num) + r'\b', s, re.I) and len(s) > 25:
-                    clean = re.sub(r'^\d+\.\s*', '', s).strip()
-                    if not clean.startswith('Bench:') and ' vs ' not in clean[:30]:
-                        return clean
-        if keywords:
-            for kw in keywords:
-                for s in sents:
-                    if re.search(r'\b' + re.escape(kw) + r'\b', s, re.I) and len(s) > 30:
-                        clean = re.sub(r'^\d+\.\s*', '', s).strip()
-                        if not clean.startswith('Bench:') and ' vs ' not in clean[:30]:
-                            return clean
-        return None
-
-    results: list[dict[str, Any]] = []
-    used_quotes: set[str] = set()
-    max_issues = 4  # Limit total issues to 4
-
-    for s in sections:
-        if len(results) >= max_issues:
-            break
-        sec_str = str(s.get('section_number') if isinstance(s, dict) else s)
-        act_str = s.get('act') if isinstance(s, dict) else section_acts.get(sec_str, 'the Act')
-        issue_title = f"Whether the statutory requirements of Section {sec_str} ({act_str}) are satisfied on the facts."
-        
-        quote = find_best_quote(sec_num=sec_str)
-        if not quote or quote in used_quotes:
-            quote = find_best_quote(keywords=[act_str.split()[0], 'Section ' + sec_str])
-        
-        if not quote or quote in used_quotes:
-            for sub in (r.get('submissions', {}).get('a', []) + r.get('submissions', {}).get('b', [])):
-                if sub not in used_quotes and len(sub) > 20:
-                    quote = sub
-                    break
-                    
-        if quote:
-            used_quotes.add(quote)
-            results.append({
-                "issue": issue_title,
-                "text": issue_title,
-                "evidence": quote,
-                "source": "document",
-                "page": "1-2"
-            })
-
-    for a in articles:
-        if len(results) >= max_issues:
-            break
-        issue_title = f"Whether the impugned action violates Article {a} of the Constitution of India."
-        quote = find_best_quote(art_num=str(a), keywords=['proportionality', 'fundamental rights', 'Article ' + str(a)])
-        if quote and quote not in used_quotes:
-            used_quotes.add(quote)
-            results.append({
-                "issue": issue_title,
-                "text": issue_title,
-                "evidence": quote,
-                "source": "document",
-                "page": "1-2"
-            })
-
-    if category in ('criminal', 'criminal_bail', 'criminal_trial') and not any('procedural' in str(x.get('issue', '')).lower() for x in results):
-        if len(results) < max_issues:
-            proc_quote = find_best_quote(keywords=[
-                'investigation is complete', 'charge sheet has already been filed',
-                'mandatory statutory certification', 'without compliance',
-                'panchanama', 'seizure memo', 'recovery'
-            ])
-            if proc_quote:
-                results.append({
-                    "issue": "Whether mandatory procedural safeguards under applicable criminal codes were complied with during investigation.",
-                    "text": "Whether mandatory procedural safeguards under applicable criminal codes were complied with during investigation.",
-                    "evidence": proc_quote,
-                    "source": "document",
-                    "page": "1-2"
-                })
-
-    if not results:
-        sa = r.get('submissions', {}).get('a', [])
-        sb = r.get('submissions', {}).get('b', [])
-        primary_quote = sa[0] if sa else (sb[0] if sb else (sents[0] if sents else 'Extracted from judicial record.'))
-        results.append({
-            "issue": f"Whether the claims of {pet} are legally sustainable against {resp}.",
-            "text": f"Whether the claims of {pet} are legally sustainable against {resp}.",
-            "evidence": primary_quote,
-            "source": "document",
-            "page": "1-2"
-        })
-
-    return results[:max_issues]
+    # If no court-framed issues found, return empty list (no fake issues)
+    # The caller should handle empty issues appropriately
+    return []
 
 def render_issues(r: dict[str, Any], text: str | None = None) -> list[str]:
-    # Prefer issues the court itself framed in this document.
+    # Use ONLY court-framed issues - no fallback to section-based issue generation
     if text:
         court = _court_framed_issues(text)
         if court:
             return [item['text'] for item in court]
-
-    m = r.get('metadata') or {}
-    iss: list[str] = []
-    pet = safe(m, 'petitioner', 'the petitioner')
-    resp = safe(m, 'respondent', 'the respondent')
-    sections = r.get('sections') or []
-    section_acts = r.get('section_acts') or {}
-    articles = r.get('articles') or []
-    category = r.get('category') or 'criminal_bail'
-    max_issues = 4
-
-    for s in sections:
-        if len(iss) >= max_issues:
-            break
-        sec_str = str(s.get('section_number') if isinstance(s, dict) else s)
-        act_str = s.get('act') if isinstance(s, dict) else section_acts.get(sec_str, 'the Act')
-        iss.append(f"Whether the statutory requirements of Section {sec_str} ({act_str}) are satisfied on the facts.")
-
-    for a in articles:
-        if len(iss) >= max_issues:
-            break
-        iss.append(f"Whether the impugned action violates Article {a} of the Constitution of India.")
-
-    if not iss:
-        iss.append(f"Whether the claims of {pet} are legally sustainable against {resp}.")
-
-    if category in ('criminal', 'criminal_bail', 'criminal_trial') and not any('procedural' in str(x).lower() for x in iss):
-        if len(iss) < max_issues:
-            iss.append("Whether mandatory procedural safeguards under applicable criminal codes were complied with during investigation.")
-
-    return iss[:max_issues]
+    
+    # Return empty list if no court-framed issues found - no fake issues
+    return []
 
 def render_conclusion(r: dict[str, Any], text: str) -> str:
     m = r.get('metadata') or {}

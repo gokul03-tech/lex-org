@@ -208,20 +208,26 @@ export function findConcordance(actName?: string | null, sectionNumber?: string 
   const act = (actName || '').toUpperCase();
   const sec = sectionNumber.replace(/Section|Sec\.?|u\/s/gi, '').trim();
 
-  // Only return a mapping when the act is explicitly known — never
+  // Check for NEW codes first — no concordance badge needed for already-new codes
+  const isNewCode = act.includes('BNS') || act.includes('BNSS') || act.includes('BSA') ||
+                    act.includes('BHARATIYA NYAYA') || act.includes('BHARATIYA NAGARIK') ||
+                    act.includes('BHARATIYA SAKSHYA') || act.includes('SAKSHYA ADHINIYAM') ||
+                    act.includes('NAGARIK SURAKSHA') || act.includes('NYAYA SANHITA');
+
+  if (isNewCode) {
+    return null;
+  }
+
+  // Only return a mapping when the OLD act is explicitly known — never
   // cross-check other maps (that produced false "BNS" badges on e.g. BSA).
-  if (act.includes('IPC') || act.includes('PENAL')) {
+  if (act.includes('IPC') || act.includes('PENAL') || act.includes('INDIAN PENAL')) {
     return CONCORDANCE_MAP.IPC[sec] ?? null;
   }
-  if (act.includes('CRPC') || act.includes('CRIMINAL PROCEDURE')) {
+  if (act.includes('CRPC') || act.includes('CRIMINAL PROCEDURE') || act.includes('CODE OF CRIMINAL')) {
     return CONCORDANCE_MAP.CRPC[sec] ?? null;
   }
   if (act.includes('EVIDENCE') || act.includes('IEA') || act.includes('SAKSHYA')) {
     return CONCORDANCE_MAP.IEA[sec] ?? null;
-  }
-  // Already-new codes — no concordance badge needed.
-  if (act.includes('BNS') || act.includes('BNSS') || act.includes('BSA')) {
-    return null;
   }
 
   return null;

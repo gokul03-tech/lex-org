@@ -299,8 +299,8 @@ class ReportGenerator:
 <body>
     <h1>LexOrch-KG Legal Advisory Report</h1>
     <div class="meta">
-        <p>Case ID: {report.get('meta', {}).get('case_id', 'N/A')}</p>
-        <p>Generated: {report.get('meta', {}).get('generated_at', 'N/A')}</p>
+        <p>Case ID: {report.get('meta', {}).get('case_id', 'Not available')}</p>
+        <p>Generated: {report.get('meta', {}).get('generated_at', 'Not available')}</p>
     </div>
     {sections_html}
     <div class="disclaimer">

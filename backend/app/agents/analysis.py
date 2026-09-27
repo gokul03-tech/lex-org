@@ -10,12 +10,175 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from typing import Any
 
 from loguru import logger
 
 from app.agents.supervisor import AgentState
+
+
+# ── Extraction prompts ──────────────────────────────────────
+# Kept at module scope so the rules are auditable in one place and cannot drift
+# per call site. Each prompt encodes a grounding rule the pipeline was previously
+# violating: the LLM was inventing issues, counsel arguments and strategy text
+# because nothing told it not to.
+
+ISSUE_EXTRACTION_PROMPT = """
+You are extracting the LEGAL ISSUES framed by the judge in this judgment.
+
+CRITICAL RULES:
+1. DO NOT create an issue for every section mentioned. Sections are laws; Issues are questions the judge must answer.
+2. Look for explicit issue-framing language such as:
+   - "We frame the following issues for our consideration:"
+   - "The issues that arise are:"
+   - "Issue I:", "Issue II:", etc.
+3. Extract ONLY the questions the court is deciding.
+4. If the document explicitly numbers the issues, extract them exactly as numbered.
+5. Do NOT include counsel submissions, factual matrix paragraphs, or "ANALYSIS AND REASONING" headers in the issue text.
+
+OUTPUT: Return a numbered list of the exact issues framed by the court.
+"""
+
+COUNSEL_EXTRACTION_PROMPT = """
+Extract counsel submissions from the legal document.
+
+RULES:
+1. Look for paragraphs starting with "Mr. [Name], learned Senior Counsel..." or "Per contra, Mr. [Name]...".
+2. Extract the actual numbered arguments `(i)`, `(ii)`, `(iii)`, `(iv)` that follow these names.
+3. If the specific name of the counsel is not mentioned, DO NOT use generic fallback text like "Petitioner contends allegations warrant relief." Instead, summarize the actual legal arguments made on behalf of each side based on the text.
+4. Ensure strict separation between Prosecution/Respondent arguments and Defense/Appellant arguments.
+5. Do NOT include the court's framed issues in counsel submissions.
+
+OUTPUT:
+- Petitioner/Defense Submissions: [actual numbered arguments]
+- Respondent/Prosecution Submissions: [actual numbered arguments]
+"""
+
+STRATEGY_PROMPT = """
+You are analyzing a legal case for adversarial debate and strategy.
+
+STRICT GROUNDING RULES:
+1. ONLY use facts, statutory sections, and legal terminology EXPLICITLY present in the provided case context. NEVER import generic legal terms (e.g., 'mens rea', 'vicarious conspiracy') unless they appear in the source text.
+2. NEVER output UI error messages like "No sufficiently relevant precedent found" or "(N/A)".
+
+EXTRACTION RULES:
+- Strategic Ground: Extract the actual arguments made by the Appellant/Petitioner (look for "Mr. [Name] submitted..."). Do NOT use procedural closing lines like "Pending interlocutory applications...".
+- Key Strengths: Extract substantive favorable findings made by the Court (look for "We are of the view that...", "The circular fails..."). Do NOT use generic fallbacks.
+- Action Plan: Extract ONLY direct procedural orders/directions from the Court (look for "The Registry is directed...", "The appellants shall..."). Do NOT include legal reasoning or precedent citations.
+
+OUTPUT FORMAT:
+- Strategic Ground: [Appellant's actual arguments]
+- Opposing Counsel: [Respondant's actual arguments]
+- Judicial Rebuttal: [Generate based on cited precedents ONLY]
+- Action Plan: [List of actionable procedural steps]
+"""
+
+
+# ── Statute normalisation ───────────────────────────────────
+# UI error strings the LLM is known to emit; never let them reach the report.
+_PLACEHOLDER_VALUES = {
+    "", "n/a", "na", "none", "null", "not available", "not specified",
+    "not mentioned", "unknown", "no sufficiently relevant precedent found",
+    "not applicable", "unstated in record",
+}
+
+# "Section 63", "S.63", "sec 63(1)(b)", "u/s 63" -> "63" / "63(1)(b)"
+_STATUTE_NUM_RE = re.compile(r'\d+(?:\s*\(\s*\d+\s*\))*')
+_STATUTE_ACT_RE = re.compile(
+    r'\b(?:of|under|under\s+the)\s+(?:the\s+)?'
+    r'([A-Z][A-Za-z0-9.\s(){},–-]{2,80}?(?:Act|Sanhita|Adhiniyam|Code|Constitution))'
+)
+
+# Short code for each Act, keyed by BOTH its abbreviation and its full name so
+# "S.420 IPC" and "Section 420 of the Indian Penal Code" resolve to one key.
+_ACT_CODE_BY_FORM = {
+    "ipc": "IPC", "indianpenalcode": "IPC",
+    "bns": "BNS", "bharatiynyayasanhita": "BNS",
+    "bnss": "BNSS", "bharatiyanagariksurakshasanhita": "BNSS",
+    "bsa": "BSA", "bharatiyasakshyaadhiniyam": "BSA",
+    "crpc": "CRPC", "codecriminalprocedure": "CRPC",
+    "ndps": "NDPS", "narcotic": "NDPS",
+    "iea": "IEA", "indianevidenceact": "IEA", "evidenceact": "IEA",
+    "constitutionofindia": "CONSTITUTION", "constitution": "CONSTITUTION",
+}
+
+
+def _canonical_act(text: str) -> str:
+    """Map an Act name or abbreviation to a stable short code ('' if unknown)."""
+    squashed = re.sub(r'[^a-z0-9]', '', (text or "").lower())
+    if not squashed:
+        return ""
+    if squashed in _ACT_CODE_BY_FORM:
+        return _ACT_CODE_BY_FORM[squashed]
+    # Longest form first so "indianpenalcode" wins over a stray substring.
+    for form, code in sorted(_ACT_CODE_BY_FORM.items(), key=lambda kv: -len(kv[0])):
+        if len(form) >= 3 and form in squashed:
+            return code
+    return ""
+
+
+def _statute_act(text: str) -> str:
+    """Find the Act a section belongs to, via long form or short abbreviation."""
+    long_m = _STATUTE_ACT_RE.search(text)
+    if long_m:
+        code = _canonical_act(long_m.group(1))
+        if code:
+            return code
+
+    squashed = re.sub(r'[^a-z]', '', (text or "").lower())
+    for alias in ("ipc", "bns", "bnss", "bsa", "crpc", "ndps", "iea"):
+        # Token-bounded so "IPC" is not found inside an unrelated word.
+        if re.search(rf'(?<![a-z0-9]){alias}(?![a-z0-9])', squashed):
+            return _ACT_CODE_BY_FORM[alias]
+    return ""
+
+
+def _statute_core(statute: str) -> str:
+    """Return a canonical dedup key for a statute/section reference.
+
+    The key is scoped by Act when one is resolvable. Keying on the bare number
+    alone (e.g. "63") would collapse genuinely different provisions - Section 63
+    of the BSA and Section 63 of the BNSS are different laws and must both
+    survive.
+    """
+    text = (statute or "").strip()
+    if not text or text.lower() in _PLACEHOLDER_VALUES:
+        return ""
+
+    num_m = _STATUTE_NUM_RE.search(text)
+    if not num_m:
+        return re.sub(r'[^a-z0-9]', '', text.lower())
+
+    num = re.sub(r'\s+', '', num_m.group(0))
+    act = _statute_act(text)
+    return f"{act}|{num}" if act else num
+
+
+def normalize_statutes(statutes_list: list[str]) -> list[str]:
+    """Deduplicate statute/section references, keeping the first (best) phrasing.
+
+    Handles the duplicate-chip problem where the same provision is collected from
+    several passes under different surface forms ("Article 14", "Section Art. 14",
+    "Art. 14 of the Constitution") while preserving distinct subsections
+    ("63(1)" vs "63(2)") and same-numbered sections of different Acts.
+    """
+    seen: set[str] = set()
+    unique_statutes: list[str] = []
+    for statute in statutes_list or []:
+        if not isinstance(statute, str):
+            continue
+        stripped = statute.strip()
+        if not stripped or stripped.lower() in _PLACEHOLDER_VALUES:
+            continue
+        core = _statute_core(stripped)
+        if not core:
+            continue
+        if core not in seen:
+            seen.add(core)
+            unique_statutes.append(stripped)
+    return unique_statutes
 
 
 # ── Helper: Agent metadata recording ───────────────────────
@@ -1012,7 +1175,7 @@ async def explainability_agent(state: AgentState) -> AgentState:
         graph: dict[str, Any] = {
             "nodes": [
                 {"id": "query", "type": "Query", "label": state.get("query", "Legal Analysis Request")[:80]},
-                {"id": "evidence", "type": "Evidence", "label": f"Evidence ({evidence.get('overall_score', 'N/A')})"},
+                {"id": "evidence", "type": "Evidence", "label": f"Evidence ({evidence.get('overall_score', 'Not available')})"},
                 {"id": "reasoning", "type": "Reasoning", "label": "IRAC Legal Reasoning"},
                 {"id": "conclusion", "type": "Conclusion", "label": "Legal Conclusion"},
                 {"id": "trust", "type": "Trust", "label": f"Trust Score: {trust:.2f}"},
@@ -1109,6 +1272,7 @@ async def report_generation_agent(state: AgentState) -> AgentState:
             build_risk_strategy,
             similarity_pct,
         )
+        from app.agents.presentation_universal import _strip_signature
 
         doc_text_full = "\n\n".join(d.get("text", "") for d in documents)
         page_chunks = build_page_chunks(doc_text_full) if doc_text_full else []
@@ -1258,16 +1422,16 @@ async def report_generation_agent(state: AgentState) -> AgentState:
         if not grounded_precedents:
             grounded_precedents = [{
                 "case_name": "No sufficiently relevant precedent found",
-                "court": "None",
-                "year": "N/A",
-                "citation": "N/A",
+                "court": "Not available",
+                "year": "Not available",
+                "citation": "Not available",
                 "relevance_score": 0.0,
                 "score": 0.0,
                 "acts": primary_act,
                 "sections": primary_secs,
                 "reason": "None of the indexed precedents exceeded the relevance threshold for the current case details.",
                 "matching_issue": "None",
-                "evidence": "N/A",
+                "evidence": "Not available",
                 "source_type": "precedent",
                 "source_document": "legal_corpus"
             }]

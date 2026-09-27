@@ -1181,7 +1181,7 @@ async def generate_case_draft(
     respondent = _meta_val(doc_meta, "respondent", "the Respondent")
     court = _meta_val(doc_meta, "court", case.court_name or "the Hon'ble Court")
     decision_date = _meta_val(doc_meta, "decision_date", (case.filing_date.strftime("%d-%m-%Y") if case.filing_date else date.today().strftime("%d-%m-%Y")))
-    case_number = _meta_val(doc_meta, "case_number", case.case_number or "N/A")
+    case_number = _meta_val(doc_meta, "case_number", case.case_number or "Not available")
     
     issues_text = "\n".join([f"- {i.get('issue', str(i)) if isinstance(i, dict) else str(i)}" for i in issues]) or "Substantial question of statutory compliance."
     precedents_text = "\n".join([f"- {p.get('case_name', '')} ({p.get('citation', '')}): {p.get('summary', '')}" for p in precedents if isinstance(p, dict)])

@@ -7,6 +7,8 @@ import re
 from datetime import datetime
 from typing import Any
 
+from app.agents.presentation_universal import _strip_signature
+
 # ================= 1) ACT NORMALIZER & SANHITA-AWARE BINDINGS =================
 def norm_act(name: str) -> str:
     n = re.sub(r'[^a-z0-9]', '', name.lower())
@@ -249,9 +251,9 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
                 valid_def.append(clean_d)
 
     if not valid_pros:
-        valid_pros = ["Prosecution / Respondent contends allegations and statutory provisions warrant strict judicial enforcement."]
+        valid_pros = []
     if not valid_def:
-        valid_def = ["Applicant / Petitioner submits non-compliance with mandatory procedural safeguards."]
+        valid_def = []
     return valid_pros[:4], valid_def[:4]
 
 
@@ -269,22 +271,31 @@ def build_risk_strategy(text: str, meta: dict[str, Any]) -> dict[str, Any]:
     pet = safe(meta, 'petitioner', 'the applicant')
     strengths, weaknesses = [], []
 
-    # Dynamic extraction of case strengths
-    if re.search(r'charge\s*sheet (?:has already been )?filed|investigation is complete', text, re.I):
-        strengths.append("Investigation complete; charge sheet filed — no risk of evidence tampering.")
-    if re.search(r'No direct financial transfer has been traced|no share of fraud proceeds', text, re.I):
-        strengths.append(f"No direct financial transfer traced to {pet}'s accounts.")
-    if re.search(r'custodial interrogation.*concluded|custodial interrogation.*completed', text, re.I):
-        strengths.append(f"Custodial interrogation of {pet} is complete.")
-    if re.search(r'Seizure proved by consistent official testimony|Panchanama typed on the spot', text, re.I):
-        strengths.append("Seizure proved by consistent official witness testimonies.")
-    if re.search(r'Documentary correspondence.*contradicts', text, re.I):
-        strengths.append("Contemporaneous documentary correspondence supports the claim.")
+    # Dynamic extraction of case strengths from COURT'S FAVORABLE FINDINGS (not procedural closings)
+    # Look for court's favorable findings in the judgment body
+    favorable_patterns = [
+        (r'We hold|We find|Court finds|Court holds|It is established|It is proved|proved beyond doubt|established beyond doubt', "Court's favorable finding on merits"),
+        (r'charge\s*sheet (?:has already been )?filed|investigation is complete', "Investigation complete; charge sheet filed — no risk of evidence tampering."),
+        (r'No direct financial transfer has been traced|no share of fraud proceeds', lambda m: f"No direct financial transfer traced to {safe(meta, 'petitioner', 'the applicant')}'s accounts."),
+        (r'custodial interrogation.*concluded|custodial interrogation.*completed', lambda m: f"Custodial interrogation of {safe(meta, 'petitioner', 'the applicant')} is complete."),
+        (r'Seizure proved by consistent official testimony|Panchanama typed on the spot', "Seizure proved by consistent official witness testimonies."),
+        (r'Documentary correspondence.*contradicts', "Contemporaneous documentary correspondence supports the claim."),
+        (r'proportionality test.*satisfied|proportionality.*satisfied', "Statutory measure satisfies proportionality test."),
+        (r'no mens rea|absence of mens rea|no criminal intent', lambda m: f"Absence of mens rea established for {safe(meta, 'petitioner', 'the applicant')}."),
+    ]
+
+    for pattern, strength_fn in favorable_patterns:
+        if re.search(pattern, text, re.I):
+            if callable(strength_fn):
+                strengths.append(strength_fn(None))
+            else:
+                strengths.append(strength_fn)
 
     if not strengths:
-        strengths.append(f"Pleadings and documentary record prima facie favor {pet}.")
+        strengths.append(f"Pleadings and documentary record prima facie favor {safe(meta, 'petitioner', 'the applicant')}.")
 
     # Dynamic extraction of case weaknesses & risks
+    weaknesses = []
     if re.search(r'without compliance with mandatory statutory certification|without compliance with Section 63', text, re.I):
         weaknesses.append("Electronic evidence (CDR / cell-site logs) lacks mandatory S.63 BSA certification — admissibility contested.")
     if re.search(r'main conspirators.*absconding|prime conspirators', text, re.I):
@@ -293,6 +304,8 @@ def build_risk_strategy(text: str, meta: dict[str, Any]) -> dict[str, Any]:
         weaknesses.append("Independent panch witnesses turned hostile — reliance placed primarily on official police testimonies.")
     if re.search(r'liquidated damages cannot be sustained|no loss was proved', text, re.I):
         weaknesses.append("Absence of formal proof of actual loss under Section 74 of Contract Act.")
+    if re.search(r'mens rea not established|absence of mens rea|no criminal intent proven', text, re.I):
+        weaknesses.append("Mens rea not conclusively established — intent element weak.")
 
     if not weaknesses:
         weaknesses.append("Strict statutory interpretation and judicial discretion under applicable codes.")
@@ -301,7 +314,7 @@ def build_risk_strategy(text: str, meta: dict[str, Any]) -> dict[str, Any]:
     if re.search(r'\b(bail application is allowed|bail is allowed|petition is allowed|application is allowed|appeal is allowed)\b', tail, re.I):
         bond_m = re.search(r'P\.?R\.?\s*Bond of Rs\.?\s*([\d,/-]+)', tail, re.I)
         bond_str = f" on P.R. Bond of Rs. {bond_m.group(1)}" if bond_m else ""
-        outcome = f"Bail application allowed.{bond_str} {pet} directed to be released."
+        outcome = f"Bail application allowed.{bond_str} {safe(meta, 'petitioner', 'the applicant')} directed to be released."
     elif re.search(r'\b(appeal dismissed|petition dismissed)\b', tail, re.I):
         outcome = "Appeal dismissed. Conviction and sentence upheld."
     elif re.search(r'\b(partly allowed|set aside)\b', tail, re.I):
@@ -310,14 +323,37 @@ def build_risk_strategy(text: str, meta: dict[str, Any]) -> dict[str, Any]:
         outcome = "Judgment delivered and case disposed of on merits."
 
     return {
-        'strengths': strengths,
-        'weaknesses': weaknesses,
+        'strengths': strengths[:4],  # Limit to top 4
+        'weaknesses': weaknesses[:4],
         'conclusion': outcome,
-        'strength': strengths[0],
-        'weakness': weaknesses[0],
-        'procedural': "Statutory procedural requirements and admissibility thresholds evaluated.",
+        'strength': strengths[0] if strengths else "",
+        'weakness': weaknesses[0] if weaknesses else "",
+        'procedural': _extract_procedural_directions(text),
         'missing': "None — records and pleadings tendered on file."
     }
+
+
+def _extract_procedural_directions(text: str) -> str:
+    """Extract specific procedural directions from the judgment text."""
+    tail = text[-2000:] if len(text) > 2000 else text
+    # Look for specific procedural directions
+    directions = []
+    patterns = [
+        r'(?:directed|ordered|required)\s+to\s+([^.]+)',
+        r'(?:shall|must|should)\s+(?:furnish|deposit|refund|pay|appear|execute|file|submit)\s+([^.]+)',
+        r'(?:bond of|sureties of|bail bond)\s+([^.]+)',
+        r'(?:surrender|appear before|report to)\s+([^.]+)',
+    ]
+    for pat in patterns:
+        for m in re.finditer(pat, tail, re.I):
+            directions.append(m.group(0).strip())
+            if len(directions) >= 3:
+                break
+        if len(directions) >= 3:
+            break
+    if directions:
+        return "; ".join(directions[:3])
+    return "Statutory procedural requirements and admissibility thresholds evaluated."
 
 
 # ================= 7) TIMELINE: REAL DATES & ACCURATE OUTCOME =================
@@ -325,22 +361,59 @@ def build_fact_timeline(text: str, decision_date: str | None = None) -> list[dic
     seen: set[str] = set()
     res: list[dict[str, str]] = []
     
+    # Strip signature block first to avoid extracting dates from signature block
+    text_stripped = _strip_signature(text)
+    
     # 1. Match DD-MM-YYYY dates
-    for m in re.finditer(r'\b(\d{1,2})[-/](\d{1,2})[-/](\d{4})\b', text):
+    for m in re.finditer(r'\b(\d{1,2})[-/](\d{1,2})[-/](\d{4})\b', text_stripped):
         date_str = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
         if date_str in seen:
             continue
         seen.add(date_str)
-        fact_text = re.sub(r'\s+', ' ', text[max(0, m.start() - 120): min(len(text), m.end() + 120)]).strip()
+        fact_text = re.sub(r'\s+', ' ', text_stripped[max(0, m.start() - 120): min(len(text_stripped), m.end() + 120)]).strip()
         res.append({
             'date': date_str,
             'event': fact_text,
             'fact': fact_text
         })
 
+    # 2. Match DD Month YYYY dates (e.g., "15 March 2024", "15 March, 2024")
+    MONTH = r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
+    DMY_ALPHA = rf'(\d{{1,2}})\s+({MONTH})\s*,?\s*(\d{{4}})'
+    for m in re.finditer(DMY_ALPHA, text_stripped, re.I):
+        date_str = f"{m.group(1)} {m.group(2)} {m.group(3)}"
+        # Normalize to DD-MM-YYYY for sorting
+        day = m.group(1).zfill(2)
+        month_map = {'january': '01', 'february': '02', 'march': '03', 'april': '04', 'may': '05', 'june': '06',
+                     'july': '07', 'august': '08', 'september': '09', 'october': '10', 'november': '11', 'december': '12'}
+        month = month_map.get(m.group(2).lower()[:3], '01')
+        year = m.group(3)
+        sort_key = f"{year}-{month}-{day}"
+        if sort_key in seen:
+            continue
+        seen.add(sort_key)
+        fact_text = re.sub(r'\s+', ' ', text_stripped[max(0, m.start() - 120): min(len(text_stripped), m.end() + 120)]).strip()
+        res.append({
+            'date': f"{day} {m.group(2)} {year}",
+            'event': fact_text,
+            'fact': fact_text
+        })
+
     # Sort chronologically
     try:
-        res.sort(key=lambda e: datetime.strptime(e['date'], '%d-%m-%Y') if '-' in e['date'] else datetime.min)
+        def parse_date(d):
+            # Try DD-MM-YYYY
+            try:
+                return datetime.strptime(d, '%d-%m-%Y')
+            except:
+                pass
+            # Try DD Month YYYY
+            try:
+                return datetime.strptime(d, '%d %B %Y')
+            except:
+                pass
+            return datetime.min
+        res.sort(key=lambda e: parse_date(e['date']))
     except Exception:
         pass
 

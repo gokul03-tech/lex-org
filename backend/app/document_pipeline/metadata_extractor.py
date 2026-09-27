@@ -17,15 +17,16 @@ from app.llm.provider import get_llm_provider
 
 
 METADATA_EXTRACTION_PROMPT = """
-You are a legal metadata extractor. Read the HEADER of the provided legal document and extract the following exactly as written:
+You are a legal metadata extractor. Read the HEADER and SIGNATURE BLOCK of the provided legal document and extract the following exactly as written:
 
 1. Case Name: Format as "Petitioner Name vs Respondent Name". Do NOT use the word "VERSUS" as a name.
-2. Petitioner/Applicant Name: The party before the word VERSUS (or before "vs" in High Court cases).
-3. Respondent/Defense Name: The party after the word VERSUS (or after "vs" in High Court cases).
-4. Court Name: Extract the full court name.
-5. Judge(s)/Bench Name: Extract ALL judges listed, separated by commas. Do not stop after the first judge.
-6. Decision Date: Look for the date at the very END of the judgment (signature block area). Format: DD Month YYYY. Do NOT use dates from appeal numbers or citations.
-7. Case/FIR Number: Extract if present, otherwise "Unstated in record".
+2. Petitioner/Applicant Name: The party before the word VERSUS (or before "vs").
+3. Respondent/Defense Name: The party after the word VERSUS (or after "vs").
+4. Court Name: Extract the full court name from the header.
+5. Judge(s)/Bench Name: Extract ALL judges listed in the header or signature block, separated by commas. Do not stop after the first judge.
+6. Decision Date: Look for the date at the very END of the judgment (signature block area, e.g., "NEW DELHI \\n 12 OCTOBER 2024"). Do NOT use dates from appeal numbers or citations.
+7. Case Number: Extract the main case number from the header (e.g., "CIVIL APPEAL NO. 4521 OF 2024"). Do NOT use High Court WP numbers mentioned in the body text.
+8. Report Reference: Extract the case's own citation if present in the header. Do NOT extract citations of precedents mentioned in the text.
 
 OUTPUT STRICT JSON ONLY.
 """
@@ -37,14 +38,24 @@ class LegalMetadataExtractor:
         pass
 
     def _extract_metadata_via_llm(self, text: str) -> dict[str, Any]:
-        """Use LLM to extract metadata from document header."""
+        """Use LLM to extract metadata from the document header AND signature block.
+
+        Both regions are required: parties/court/case number live in the header,
+        while the decision date and the full bench usually appear only in the tail.
+        """
         try:
             provider = get_llm_provider("qwen")
-            # Use first 4000 chars which typically contain the header with parties, court, judges
-            header_text = text[:4000]
-            
-            prompt = f"{METADATA_EXTRACTION_PROMPT}\n\nDOCUMENT HEADER:\n{header_text}\n\nOUTPUT JSON:"
-            
+
+            header_text = self._header_block(text)
+            tail_text = self._signature_block(text)
+
+            prompt = (
+                f"{METADATA_EXTRACTION_PROMPT}\n\n"
+                f"DOCUMENT HEADER:\n{header_text}\n\n"
+                f"SIGNATURE BLOCK (END OF DOCUMENT):\n{tail_text}\n\n"
+                f"OUTPUT JSON:"
+            )
+
             response = provider.generate(
                 prompt=prompt,
                 system_prompt="You are a precise legal metadata extractor. Output only valid JSON.",
@@ -63,6 +74,54 @@ class LegalMetadataExtractor:
             pass
         return {}
 
+    # ── Region helpers: keep header/signature concerns out of body prose ──
+    _JUDGMENT_START_RE = re.compile(
+        r'^\s*(?:JUDGMENT|JUDGEMENT|ORDER|OPINION)\s*$',
+        re.IGNORECASE | re.MULTILINE,
+    )
+
+    def _header_block(self, text: str, max_chars: int = 2500) -> str:
+        """Return the caption/header region only.
+
+        The header ends at the first standalone JUDGMENT/ORDER heading. Without
+        this bound, a 15+ page judgment leaks body paragraphs (and the precedent
+        citations inside them) into fields such as case number and report
+        reference - which is how "High Court WP numbers" and cited precedents
+        were previously mistaken for the case's own identifiers.
+        """
+        if not text:
+            return ""
+        m = self._JUDGMENT_START_RE.search(text)
+        head = text[: m.start()] if m else text[:max_chars]
+        return head if m else head[:max_chars]
+
+    def _signature_block(self, text: str, max_chars: int = 2500) -> str:
+        """Return the tail region that carries the decision date and bench."""
+        if not text:
+            return ""
+        return text[-max_chars:]
+
+    # Placeholder strings an LLM may emit instead of admitting absence.
+    _ABSENT_VALUES = {
+        "", "none", "n/a", "na", "null", "not specified", "not mentioned",
+        "not available", "unstated in record", "unknown", "not stated",
+        "not provided", "no case number", "not applicable",
+    }
+
+    def _llm_party(self, llm_metadata: dict[str, Any], key: str) -> str | None:
+        """Read one LLM field, rejecting placeholder/empty answers.
+
+        Keeps "Unstated in record" / "N/A" style placeholders out of the
+        structured output, where they would render as fake metadata values.
+        """
+        raw = llm_metadata.get(key)
+        if not isinstance(raw, str):
+            return None
+        cleaned = self._clean_party_name(raw) if re.search(r'name|party|judge|bench', key, re.I) else raw.strip()
+        if not cleaned or cleaned.lower() in self._ABSENT_VALUES:
+            return None
+        return cleaned
+
     def extract(self, text: str, filename: str = "") -> dict[str, Any]:
         """Extract all metadata from legal text following Master Grounding Rules.
 
@@ -78,14 +137,22 @@ class LegalMetadataExtractor:
         full_sample = text[:35000]
         word_count = len(text.split()) if text else 0
 
+        # Caption-only region. Court, case number, filing number, own citation and
+        # document type describe THIS case, so they must be read from the header
+        # only - never from body prose (where referenced WP numbers and precedent
+        # citations live and were previously misread as the case's own).
+        caption = self._header_block(text) or head
+
         # Try LLM-based extraction first for critical fields
         llm_metadata = self._extract_metadata_via_llm(text)
         
         # 1. Case Title & Parties (Rule 8 Title Fallback) - use LLM result if available
-        if llm_metadata.get("Petitioner/Applicant Name") and llm_metadata.get("Respondent/Defense Name"):
-            petitioner = {"value": llm_metadata["Petitioner/Applicant Name"], "status": "extracted"}
-            respondent = {"value": llm_metadata["Respondent/Defense Name"], "status": "extracted"}
-            case_title = f"{llm_metadata['Petitioner/Applicant Name']} vs {llm_metadata['Respondent/Defense Name']}"
+        llm_petitioner = self._llm_party(llm_metadata, "Petitioner/Applicant Name")
+        llm_respondent = self._llm_party(llm_metadata, "Respondent/Defense Name")
+        if llm_petitioner and llm_respondent:
+            petitioner = {"value": llm_petitioner, "status": "extracted"}
+            respondent = {"value": llm_respondent, "status": "extracted"}
+            case_title = f"{llm_petitioner} vs {llm_respondent}"
             case_title_meta = {"value": case_title, "status": "extracted"}
         else:
             title_res = self._extract_title_and_parties(text, filename)
@@ -94,30 +161,44 @@ class LegalMetadataExtractor:
             petitioner = title_res["petitioner"]
             respondent = title_res["respondent"]
 
-        # 2. Citations
-        citations = self._extract_citations(head)
+        # 2. Citations - the case's OWN reporter citation, header only
+        citations = self._extract_citations(caption)
 
         # 3. Court (Explicit + Reporter Inferences)
         if llm_metadata.get("Court Name"):
-            court_res = {"value": llm_metadata["Court Name"], "status": "extracted"}
+            court_res = {"value": str(llm_metadata["Court Name"]).strip(), "status": "extracted"}
         else:
-            court_res = self._extract_court_with_inference(head, citations)
+            court_res = self._extract_court_with_inference(caption, citations)
 
         # 4. Decision Date - use LLM if available
         if llm_metadata.get("Decision Date"):
-            date_res = {"value": llm_metadata["Decision Date"], "status": "extracted"}
+            date_res = {"value": str(llm_metadata["Decision Date"]).strip(), "status": "extracted"}
         else:
-            date_res = self._extract_decision_date(head)
+            # Prefer signature-block / tail date over header/appeal-number dates
+            date_res = self._extract_decision_date(text)
 
         # 5. Presiding Judges - use LLM if available
-        if llm_metadata.get("Judge(s)/Bench Name"):
-            judges_res = {"value": llm_metadata["Judge(s)/Bench Name"], "status": "extracted"}
+        llm_judges = self._clean_judge_list(llm_metadata.get("Judge(s)/Bench Name") or "")
+        if llm_judges:
+            judges_res = {"value": llm_judges, "status": "extracted"}
         else:
             judges_res = self._extract_judges(head, tail)
 
-        # 6. Court Matter & Filing Number
-        matter_res = self._extract_court_matter(head)
-        filing_res = self._extract_filing_number(head)
+        # 6. Court Matter (case number) & Filing Number - caption only
+        matter_res = self._extract_court_matter(caption)
+        llm_case_no = self._llm_party(llm_metadata, "Case Number")
+        if llm_case_no:
+            matter_res = {"value": llm_case_no, "status": "extracted"}
+        filing_res = self._extract_filing_number(caption)
+
+        # 6b. Report Reference - the case's own citation, never a precedent's
+        llm_report_ref = self._llm_party(llm_metadata, "Report Reference")
+        if llm_report_ref:
+            report_ref = {"value": llm_report_ref, "status": "extracted"}
+        elif citations.get("value"):
+            report_ref = {"value": ", ".join(citations["value"]), "status": "extracted"}
+        else:
+            report_ref = {"value": None, "status": "not_found"}
 
         # 7. Acts Mentioned
         acts_res = self._extract_acts(full_sample)
@@ -131,7 +212,7 @@ class LegalMetadataExtractor:
             "case_title": case_title_meta,
             "court": court_res,
             "jurisdiction": {"value": "India", "status": "extracted"},
-            "document_type": {"value": self._detect_document_type(head, filename), "status": "extracted"},
+            "document_type": {"value": self._detect_document_type(caption, filename), "status": "extracted"},
             "court_matter": matter_res,
             "case_number": matter_res,
             "filing_number": filing_res,
@@ -144,6 +225,7 @@ class LegalMetadataExtractor:
             "parties": {"petitioner": petitioner.get("value"), "respondent": respondent.get("value")},
             "citation_numbers": citations,
             "citation": {"value": ", ".join(citations.get("value") or []) if citations.get("value") else None, "status": citations.get("status")},
+            "report_reference": report_ref,
             "acts_referenced": acts_res,
             "acts_mentioned": acts_res,
             "language": {"value": "English", "status": "extracted"},
@@ -158,29 +240,50 @@ class LegalMetadataExtractor:
         lines = [l.strip() for l in text.split("\n") if l.strip()]
         first_lines = "\n".join(lines[:12])
 
-        # Match Title containing vs / v.
-        vs_match = re.search(
-            r'([A-Z0-9\.\'\s\-\&\,]+?)\s+(?:versus|vs\.?|v\.\s*s\s*\.?|v\s*\.\s*|\.\.\.\s*Appellant\s+Versus)\s+([A-Z0-9\.\'\s\-\&\,]+?)(?:\s+(?:\.\.\.\s*on|\.\.\.\s*Respondent|\.\.\.\s*Defendant|on\s+\d{1,2}|\n|\Z))',
-            first_lines,
-            re.IGNORECASE
-        )
-
+        # Match Title containing vs / v. / VERSUS
+        # Handle multi-line format: "Party 1\nVERSUS\nParty 2"
+        lines_12 = [l.strip() for l in first_lines.split("\n") if l.strip()]
+        
+        # First, check for multi-line VERSUS separator
         petitioner = None
         respondent = None
         case_title = None
+        
+        for i, line in enumerate(lines_12[:10]):
+            if re.match(r'^(?:versus|vs\.?|v\.?)$', line.strip(), re.I):
+                # Found VERSUS as a standalone line - stitch with prev and next.
+                # Both sides MUST go through _clean_party_name: the caption
+                # usually carries a role suffix ("... Appellants") that would
+                # otherwise leak into the party name.
+                if i > 0 and i + 1 < len(lines_12):
+                    p_clean = self._clean_party_name(lines_12[i - 1])
+                    r_clean = self._clean_party_name(lines_12[i + 1])
+                    if p_clean and r_clean:
+                        petitioner = p_clean
+                        respondent = r_clean
+                        case_title = f"{p_clean} vs {r_clean}"
+                        break
+        
+        # If not found multi-line, try inline vs/versus
+        if not case_title:
+            vs_match = re.search(
+                r'([A-Z0-9\.\'\s\-\&\,]+?)\s+(?:versus|vs\.?|v\.\s*s\s*\.?|v\s*\.\s*|\.\.\.\s*Appellant\s+Versus)\s+([A-Z0-9\.\'\s\-\&\,]+?)(?:\s+(?:\.\.\.\s*on|\.\.\.\s*Respondent|\.\.\.\s*Defendant|on\s+\d{1,2}|\n|\Z))',
+                first_lines,
+                re.IGNORECASE
+            )
+            
+            if vs_match:
+                p_raw = vs_match.group(1).strip()
+                r_raw = vs_match.group(2).strip()
 
-        if vs_match:
-            p_raw = vs_match.group(1).strip()
-            r_raw = vs_match.group(2).strip()
+                # Clean OCR artifacts and trailing words
+                p_clean = self._clean_party_name(p_raw)
+                r_clean = self._clean_party_name(r_raw)
 
-            # Clean OCR artifacts and trailing words
-            p_clean = self._clean_party_name(p_raw)
-            r_clean = self._clean_party_name(r_raw)
-
-            if p_clean and r_clean:
-                petitioner = p_clean
-                respondent = r_clean
-                case_title = f"{p_clean} vs {r_clean}"
+                if p_clean and r_clean:
+                    petitioner = p_clean
+                    respondent = r_clean
+                    case_title = f"{p_clean} vs {r_clean}"
 
         # If not found in first lines, try filename or first non-empty line
         if not case_title:
@@ -198,24 +301,74 @@ class LegalMetadataExtractor:
             "respondent": {"value": respondent, "status": "extracted" if respondent else "not_found"}
         }
 
-    def _clean_party_name(self, name: str) -> str:
-        """Strip procedural labels and OCR splits."""
-        # OCR fix: 'Ramj i' -> 'Ramji'
-        cleaned = re.sub(r'(\b[A-Za-z]{2,})\s+([a-z]\b)', r'\1\2', name)
-        # Strip trailing/leading procedural tokens
-        for tag in [
-            r'\.\.\.\s*Appellant', r'\.\.\.\s*Petitioner', r'\.\.\.\s*Plaintiff', r'\.\.\.\s*Applicant',
-            r'\.\.\.\s*Complainant', r'\.\.\.\s*Accused', r'\.\.\.\s*Respondent', r'\.\.\.\s*Defendant',
-            r'\bAppellant\b', r'\bPetitioner\b', r'\bPlaintiff\b', r'\bRespondent\b', r'\bDefendant\b',
-            r'\bAccused\b', r'\bComplainant\b', r'\bJUDGMENT\b', r'\bOrder\b'
-        ]:
-            cleaned = re.sub(tag, '', cleaned, flags=re.IGNORECASE).strip()
+    # Designation tokens that trail a caption party. The trailing "s?" matters:
+    # "\bAppellant\b" never matches "Appellants" (no word boundary between
+    # "r" and "s"), which used to leave an orphan "s" on the party name.
+    _PARTY_ROLE = (
+        r'(?:Interested\s+Party|Appellant|Petitioner|Plaintiff|Applicant|'
+        r'Complainant|Accused|Respondent|Defendant)s?'
+    )
 
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip(' .,-')
+    def _clean_party_name(self, name: str) -> str:
+        """Strip procedural labels and OCR splits from a caption party name."""
+        cleaned = (name or "").strip()
+        if not cleaned:
+            return ""
+
+        # OCR fix: 'Ramj i' -> 'Ramji'. Restricted to a TRAILING single lowercase
+        # letter. A mid-string version of this rule fused real party names with
+        # the case marker ("Ram Chandra v. State" -> "Ram Chandrav. State").
+        cleaned = re.sub(r'\b([A-Z][a-z]{2,})\s+([a-z])\s*$', r'\1\2', cleaned)
+
+        # Strip "... Appellants" / "... on behalf of the Respondent" style labels.
+        cleaned = re.sub(
+            r'\.\.\.\s*(?:(?:on|on\s+behalf\s+of|by\s+and\s+on\s+behalf\s+of)\s+)?'
+            r'(?:the\s+)?' + self._PARTY_ROLE,
+            '',
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        # Strip the same labels when they appear without a leading ellipsis.
+        cleaned = re.sub(r'\b' + self._PARTY_ROLE + r'\b', '', cleaned, flags=re.IGNORECASE)
+        # Strip structural words that never belong to a party name.
+        cleaned = re.sub(
+            r'\b(?:JUDGMENT|JUDGEMENT|ORDER|APPEAL|WRIT|PETITION|SUIT)\b',
+            '',
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip(' ,-')
+        cleaned = cleaned.lstrip(' .')
+        # Preserve a meaningful trailing period on short abbreviations
+        # ("& Ors.", "& Anr.") instead of truncating them to "Ors" / "Anr".
+        trailing_dot = bool(re.search(r'\b[A-Z][A-Za-z]{0,3}\.$', cleaned))
+        cleaned = cleaned.rstrip(' .')
+        if trailing_dot and not cleaned.endswith('.'):
+            cleaned += '.'
         # Return last segment if multi-line
         if '\n' in cleaned:
             cleaned = cleaned.split('\n')[-1].strip()
-        return cleaned if len(cleaned) > 2 else ""
+        return cleaned if len(cleaned.rstrip('.')) > 2 else ""
+
+    def _clean_judge_list(self, raw: str) -> str | None:
+        """Normalise a comma-separated bench, dropping blanks and role noise."""
+        if (raw or "").strip().lower() in self._ABSENT_VALUES:
+            return None
+        names = []
+        seen = set()
+        for part in re.split(r'[,;]|\band\b|\n', raw or ""):
+            cleaned = self._clean_judge_name(self._clean_party_name(part))
+            if not cleaned or cleaned.lower() in self._ABSENT_VALUES:
+                continue
+            key = re.sub(r'[^a-z]', '', cleaned.lower())
+            if key and key not in seen:
+                seen.add(key)
+                names.append(cleaned)
+        if not names:
+            return None
+        return ", ".join(names)
+
 
     def _extract_citations(self, text: str) -> dict[str, Any]:
         """Extract compressed & standard Indian citation formats without spaces."""
@@ -274,45 +427,103 @@ class LegalMetadataExtractor:
         return {"value": None, "status": "not_found"}
 
     def _extract_decision_date(self, text: str) -> dict[str, Any]:
-        """Extract judgment delivery date normalized to 'DD Month YYYY'."""
-        patterns = [
-            r'(?:\.\.\.\s*on|on|Decided\s+on|Dated)\s+(\d{1,2}(?:st|nd|rd|th)?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December),?\s+\d{4})',
-            r'(\d{1,2}(?:st|nd|rd|th)?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December),?\s+\d{4})'
-        ]
-        for pat in patterns:
-            m = re.search(pat, text, re.IGNORECASE)
-            if m:
-                raw_d = m.group(1).replace(",", "").strip()
-                # Normalize ordinal suffix '9th' -> '9'
-                norm_d = re.sub(r'(\d+)(?:st|nd|rd|th)', r'\1', raw_d)
-                return {"value": norm_d, "status": "extracted"}
-
+        """Extract judgment delivery date normalized to 'DD Month YYYY'.
+        
+        Priority:
+        1. Signature-block date at the very end of the document (e.g., "NEW DELHI 12 OCTOBER 2024")
+        2. Explicit "decided on/dated/pronounced on" dates in the tail
+        3. Any DD Month YYYY date in the tail (last 2000 chars)
+        4. Fallback to header/first 6000 chars
+        """
+        # 1. Signature-block / tail dates (last 2000 chars) - highest priority
+        tail = text[-2000:] if len(text) > 2000 else text
+        
+        MONTH = r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
+        DMY = rf'(\d{{1,2}})(?:st|nd|rd|th)?\s+({MONTH})\.?\s+(\d{{4}})'
+        
+        # 1a. Explicit "decided on/dated/pronounced on" in tail
+        tail_explicit = re.search(
+            rf'(?:decided\s+on|dated|pronounced\s+on)\s+{DMY}',
+            tail, re.I
+        )
+        if tail_explicit:
+            parts = re.search(DMY, tail_explicit.group(0), re.I)
+            if parts:
+                return {"value": f"{parts.group(1)} {parts.group(2)} {parts.group(3)}", "status": "extracted"}
+        
+        # 1b. Any DD Month YYYY in tail (signature block date)
+        tail_dmy = re.search(DMY, tail, re.I)
+        if tail_dmy:
+            return {"value": f"{tail_dmy.group(1)} {tail_dmy.group(2)} {tail_dmy.group(3)}", "status": "extracted"}
+        
+        # 2. Explicit "decided on/dated/pronounced on" in head
+        head = text[:6000]
+        head_explicit = re.search(
+            rf'(?:decided\s+on|dated|pronounced\s+on)\s+{DMY}',
+            head, re.I
+        )
+        if head_explicit:
+            parts = re.search(DMY, head_explicit.group(0), re.I)
+            if parts:
+                return {"value": f"{parts.group(1)} {parts.group(2)} {parts.group(3)}", "status": "extracted"}
+        
+        # 3. Any DD Month YYYY in head (appeal numbers, etc.)
+        head_dmy = re.search(DMY, head, re.I)
+        if head_dmy:
+            return {"value": f"{head_dmy.group(1)} {head_dmy.group(2)} {head_dmy.group(3)}", "status": "extracted"}
+        
         return {"value": None, "status": "not_found"}
 
     def _extract_judges(self, head: str, tail: str) -> dict[str, Any]:
         """Extract all presiding judges from headers, bench lines, and concurring end paragraphs."""
         judges = []
+        seen = set()
+
+        def add_judge(j):
+            if j and j not in seen:
+                judges.append(j)
+                seen.add(j)
 
         # 1. Bench/Coram lines in header
         bench_m = re.search(r'(?:Coram|Bench|Author|Before)\s*:\s*([A-Z][a-zA-Z\s\.,&]+?)(?:\n|\r|\.\s)', head)
         if bench_m:
             for seg in re.split(r',|\band\b|&', bench_m.group(1)):
                 j = self._clean_judge_name(seg)
-                if j and j not in judges:
-                    judges.append(j)
+                if j:
+                    add_judge(j)
 
-        # 2. 'NAME, J.' pattern in header
+        # 2. 'NAME, J.' pattern in header (with optional Hon'ble/Justice prefixes)
         for m in re.finditer(r'(?:Hon[\'’]?ble\s+(?:Mr\.|Mrs\.|Ms\.)?\s*Justice\s+([A-Z][a-zA-Z\s\.]+)|([A-Z][a-zA-Z\s\.]+),\s*J\b)', head):
             j = self._clean_judge_name(m.group(1) or m.group(2) or "")
-            if j and j not in judges:
-                judges.append(j)
+            if j:
+                add_judge(j)
 
-        # 3. Concurring judge at the end (e.g. 'Sadasivayya, J.' ... 'I agree')
+        # 3. Bench line without "Coram/Bench:" prefix - e.g. "HON'BLE MR. JUSTICE D.Y. CHANDRACHUD, CJI HON'BLE MR. JUSTICE B.R. GAVAI HON'BLE MS. JUSTICE B.V. NAGARATHNA"
+        # Look for "JUSTICE NAME, CJI/J" patterns
+        for m in re.finditer(r"JUSTICE\s+([A-Z][A-Za-z.\s'-]+?)(?:,\s*(?:CJI|J\b)|\s+HON'BLE|\s*$|\n)", head):
+            j = self._clean_judge_name(m.group(1))
+            if j:
+                add_judge(j)
+
+        # 3b. Also handle "NAME, CJI/J." format without "JUSTICE" prefix (e.g., "D.Y. CHANDRACHUD, CJI")
+        # Pattern: Initials followed by surname, then ", CJI" or ", J." - at line start or after JUDGMENT/JUSTICE
+        for m in re.finditer(r'(?:^|\n|JUDGMENT\s*\n+|JUSTICE\s+)\s*([A-Z]\.[A-Z]\.\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)?),\s*(?:CJI|J\b)', head):
+            j = self._clean_judge_name(m.group(1))
+            if j:
+                add_judge(j)
+        
+        # 3c. Also handle "NAME, J." where NAME is a full name without initials
+        for m in re.finditer(r'(?:^|\n|JUDGMENT\s*\n+|JUSTICE\s+)\s*([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)+),\s*(?:CJI|J\b)', head):
+            j = self._clean_judge_name(m.group(1))
+            if j:
+                add_judge(j)
+
+        # 4. Concurring judge at the end (e.g. 'Sadasivayya, J.' ... 'I agree')
         if tail:
             for m in re.finditer(r'([A-Z][a-zA-Z\s\.]+),\s*J\b', tail):
                 j = self._clean_judge_name(m.group(1))
-                if j and j not in judges:
-                    judges.append(j)
+                if j:
+                    add_judge(j)
 
         return {
             "value": judges if judges else None,
@@ -321,16 +532,17 @@ class LegalMetadataExtractor:
 
     def _clean_judge_name(self, name: str) -> str:
         """Strip honorifics and 'J.' suffix."""
-        cleaned = re.sub(r'\b(JUDGMENT|Hon[\'’]?ble|Justice|Mr\.|Mrs\.|Ms\.|J\.)\b', '', name, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\b(JUDGMENT|Hon[\'’]?ble|Justice|Mr\.|Mrs\.|Ms\.|CJI|J\.)\b', '', name, flags=re.IGNORECASE)
         cleaned = re.sub(r'\s+', ' ', cleaned).strip(' .,-')
         if any(k in cleaned.lower() for k in ["court", "order", "state", "police", "appellant", "versus"]):
             return ""
         return cleaned if len(cleaned) > 2 else ""
 
     def _extract_court_matter(self, text: str) -> dict[str, Any]:
-        """Extract appeal or special case number."""
+        """Extract appeal or special case number from HEADER only (first 12 lines)."""
+        head = "\n".join([l.strip() for l in text.split("\n")[:12] if l.strip()])
         pat = r'((?:Special\s+Case|Criminal\s+Appeal|Civil\s+Appeal|Appeal|Writ\s+Petition|W\.?P\.?|S\.?L\.?P\.?|R\.?A\.?)\s*(?:No\.?|Number)?\s*[:\-]?\s*\d+\s+of\s+\d{2,4})'
-        m = re.search(pat, text, re.IGNORECASE)
+        m = re.search(pat, head, re.IGNORECASE)
         if m:
             return {"value": m.group(1).strip(), "status": "extracted"}
         return {"value": None, "status": "not_found"}

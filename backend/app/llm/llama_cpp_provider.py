@@ -39,6 +39,11 @@ def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers:
                 n_gpu_layers=n_gpu_layers,
                 enable_thinking=False,
                 verbose=False,
+                # Memory optimization: use mmap for faster loading, reduce cache
+                use_mmap=True,
+                use_mlock=False,
+                # Reduce memory pressure
+                n_batch=512,
             )
         except Exception as exc:
             logger.warning(f"Failed with n_gpu_layers={n_gpu_layers}: {exc}. Retrying with n_gpu_layers=10...")
@@ -50,6 +55,9 @@ def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers:
                     n_gpu_layers=10,
                     enable_thinking=False,
                     verbose=False,
+                    use_mmap=True,
+                    use_mlock=False,
+                    n_batch=512,
                 )
             except Exception as exc2:
                 logger.warning(f"Failed with n_gpu_layers=10: {exc2}. Retrying on CPU (n_gpu_layers=0)...")
@@ -60,6 +68,9 @@ def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers:
                     n_gpu_layers=0,
                     enable_thinking=False,
                     verbose=False,
+                    use_mmap=True,
+                    use_mlock=False,
+                    n_batch=512,
                 )
         _shared_llamas[key] = model
         return model
