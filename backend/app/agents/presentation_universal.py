@@ -439,9 +439,13 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
         r'(' + NAME + r')(?=$|\s*[,;.])', n):
         _append(m.group(1), "")
 
-    # 5. "in the case of Name v. Name (Citation)" - explicit parenthetical citation
-    for m in re.finditer(r'in the case of\s+(' + NAME + r')\s*\(' + CIT + r'\)', n):
-        _append(m.group(1), m.group(2).strip())
+    # 5. "in the case of Name v. Name (Citation)" - explicit parenthetical citation.
+    # CIT is a top-level alternation, so it must be wrapped in a group both to
+    # give m.group(2) a value and to stop the alternation escaping the literal
+    # parentheses (it previously raised IndexError on every match).
+    for m in re.finditer(r'in the case of\s+(' + NAME + r')\s*\((?:' + CIT + r')\)', n):
+        cm = re.search(CIT, m.group(0))
+        _append(m.group(1), cm.group(0) if cm else "")
 
     # 6. "(YEAR) VOLUME REPORTER PAGE in the case of Name" - long-form citation style
     # e.g., "(2016) 7 SCC 353 in the case of Modern Dental College".
@@ -486,18 +490,32 @@ def _strip_signature(text: str) -> str:
     return text
 
 def _conclusion_section(text: str) -> str:
-    """Prefer the court's CONCLUSION AND ORDER (or equivalent) section over text tail."""
+    """Prefer the document's own CONCLUSION/ORDER section over the text tail.
+
+    The heading is matched as a whole line so that qualified headings are caught
+    ("20. CONCLUSION AND REFERENCES", "CONCLUSION AND ORDER", "IN THE RESULT").
+    Requiring the heading to be immediately followed by a newline silently missed
+    every heading that carries a trailing qualifier, which made the function fall
+    back to the whole document.
+    """
     if not text:
         return text
     m = re.search(
-        r'(?:CONCLUSION AND ORDER|CONCLUSION & ORDER|CONCLUSION|ORDER AND DISPOSITION|OPERATIVE PART|IN THE RESULT)\s*\n',
-        text, re.I,
+        r'^[ \t]*(?:\d+\s*[.)]\s*)?'
+        r'(?:CONCLUSION(?: AND|&)?[A-Z ]*|ORDER AND DISPOSITION|'
+        r'OPERATIVE PART|IN THE RESULT|DISPOSITION|FINDINGS?(?: AND CONCLUSIONS?)?)'
+        r'[ \t]*$\n',
+        text, re.I | re.MULTILINE,
     )
     if m:
         section = text[m.end():]
-        # Cut at signature block inside/after the section
+        # Cut at the next same-level heading (e.g. "REFERENCES", "21. APPENDIX")
+        # and at the signature block.
+        nxt = re.search(r'^[ \t]*(?:\d+\s*[.)]\s*)?[A-Z][A-Z &]{3,40}[ \t]*$\n', section, re.MULTILINE)
+        if nxt:
+            section = section[:nxt.start()]
         section = _strip_signature(section)
-        return section[:3000]
+        return section[:3000] or _strip_signature(text)
     return _strip_signature(text)
 
 def _operative_sentence(n: str) -> str | None:
@@ -1125,40 +1143,71 @@ def render_issues(r: dict[str, Any], text: str | None = None) -> list[str]:
     # Return empty list if no court-framed issues found - no fake issues
     return []
 
-def render_conclusion(r: dict[str, Any], text: str) -> str:
-    m = r.get('metadata') or {}
-    pet = safe(m, 'petitioner', 'the petitioner')
-    # Prefer the court's own CONCLUSION/ORDER block over the raw text tail
-    # (text tail is usually the judge signature block: "......J. [NAME]").
-    stripped = _strip_signature(text)
-    conclusion_src = _conclusion_section(text) or stripped[-700:]
-    if not conclusion_src:
-        conclusion_src = stripped[-700:] if len(stripped) > 700 else stripped
+# Outcome verbs across civil/criminal/constitutional practice. A disposition is
+# only reported when the document actually uses one of these words; templates are
+# never used to manufacture a result the document does not state.
+_DISPOSITION_RE = re.compile(
+    r'\b(?:convicted?|acquitted?|discharged|acquittal|conviction|guilty|not guilty|'
+    r'liable|not liable|upheld|set aside|allowed|dismissed|remanded|withdrawn|'
+    r'stri(?:ck|kes)?\s+down|quashed|declared|struck\s+down|released|granted|'
+    r'refused|rejected|sentenced?|awarded|directed\s+to|disposed\s+of|absolved)\b',
+    re.I,
+)
 
-    # Prefer a precise operative sentence from the conclusion block first.
-    op = _operative_sentence(norm(conclusion_src)) or _operative_sentence(norm(stripped))
-    if op and (SPEC_OUTCOME.search(op) or ANY_OUTCOME.search(op)):
-        cleaned = re.sub(r'^\s*(?:\d+\.\s*|\(?(?:i{1,3}|iv|v|vi{0,3}|ix|x)\)\s*)+', '', op).strip()
-        # Cut at the next numbered sub-clause — keep only the lead operative sentence(s)
-        cleaned = re.split(r'\s+\(?(?:ii|iii|iv|v|vi|vii|viii|ix|x)\)\s+', cleaned, maxsplit=1, flags=re.I)[0].strip()
+# A heading/reference-list line is not a conclusion even if it contains a verb.
+_NON_SUBSTANTIVE_RE = re.compile(
+    r'^\s*(?:REFERENCES?|BIBLIOGRAPHY|APPENDIX|ANNEXURES?|SOURCES?|NOTES?)\b',
+    re.I,
+)
+
+
+def _disposition_sentences(block: str) -> list[str]:
+    """Sentences in ``block`` that state an outcome, in document order."""
+    out: list[str] = []
+    for s in SENT(norm(block)):
+        s = s.strip()
+        if len(s) < 25 or _NON_SUBSTANTIVE_RE.match(s):
+            continue
+        if not _DISPOSITION_RE.search(s):
+            continue
+        # Skip list/heading noise and pure cross-references.
+        if re.match(r'^\s*[\(\[](?:\d+|[ivxlcdm]+)[\)\]]', s, re.I):
+            s = re.sub(r'^\s*[\(\[](?:\d+|[ivxlcdm]+)[\)\]][.)]?\s*', '', s, flags=re.I)
+        if re.search(r'\b(?:see|refer to|cf\.)\s+(?:also\s+)?(?:supra|infra|section|chapter|part)\b', s, re.I):
+            continue
+        out.append(s)
+    return out
+
+
+def render_conclusion(r: dict[str, Any], text: str) -> str:
+    """Report the disposition the document actually states, or an empty string.
+
+    Previously this matched bail/writ keyword templates and, when none matched,
+    returned "Relief granted per operative directions of the judgment." - a
+    fabricated outcome for any document outside that vocabulary (for example a
+    conviction, or an academic dossier). It now quotes the document's own
+    disposition sentence and returns '' when the document states none, so the
+    caller can show nothing rather than something false.
+    """
+    stripped = _strip_signature(text)
+    block = _conclusion_section(text) or stripped
+
+    # Prefer an explicit disposition sentence from the conclusion section.
+    for s in reversed(_disposition_sentences(block)):
+        cleaned = re.sub(r'^\s*(?:\d+\.\s*|\(?(?:i{1,3}|iv|v|vi{0,3}|ix|x)\)\s*)+', '', s).strip()
+        cleaned = re.split(
+            r'\s+\(?(?:ii|iii|iv|v|vi|vii|viii|ix|x)\)\s+', cleaned, maxsplit=1, flags=re.I
+        )[0].strip()
         if cleaned and not re.match(r'^(?:\.{3,}|NEW DELHI|Dated\b)', cleaned, re.I):
             return cleaned if len(cleaned) <= 420 else cleaned[:417].rstrip() + '…'
 
-    tail = conclusion_src
-    if re.search(r'partly allowed', tail, re.I):
-        return f"Petition partly allowed in favour of {pet}."
-    if re.search(r'\b(bail application is allowed|bail is allowed|admitted to bail)\b', tail, re.I):
-        return f"Bail application allowed in favour of {pet} on executing regular bond."
-    if re.search(r'\ballowed\b', tail, re.I):
-        return f"Application/appeal allowed in favour of {pet}."
-    if re.search(r'disposed of', tail, re.I):
-        return f"Writ petition disposed of with directions; relief granted to {pet}."
-    if 'dismissed' in tail.lower():
-        return "Appeal dismissed; conviction and sentence upheld."
+    # No disposition in the conclusion block: use an explicit one from the body.
+    for s in reversed(_disposition_sentences(stripped)):
+        if len(s) > 25:
+            return s if len(s) <= 420 else s[:417].rstrip() + '…'
 
-    if op:
-        return norm(op)
-    return "Relief granted per operative directions of the judgment."
+    # Otherwise state nothing rather than invent a result.
+    return ""
 
 def render_chips(r: dict[str, Any]) -> list[str]:
     sections = r.get('sections') or []
