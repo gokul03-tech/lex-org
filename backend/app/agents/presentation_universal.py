@@ -30,7 +30,13 @@ def _restore_dots(s: str) -> str:
     return s.replace('<DOT>', '.')
 
 def SENT(t: str) -> list[str]:
-    return [_restore_dots(s).strip() for s in re.split(r'(?<=[a-z0-9])\.\s+(?=[A-Z0-9])', _protect_dots(t))]
+    # The lookahead also admits '(' and '"' so that enumerated submissions
+    # ("...submissions: (i) Illegality of search...") and quoted passages start
+    # their own sentence instead of being glued to the preceding clause.
+    return [
+        _restore_dots(s).strip()
+        for s in re.split(r'(?<=[a-z0-9])\.\s+(?=[A-Z0-9(\'"])', _protect_dots(t))
+    ]
 JUNK = {'keyword', 'vector', '', 'null', 'none', 'precedent citation'}
 
 safe = lambda m, k, fb=None: (
@@ -339,9 +345,38 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
     NAME = r'[A-Z][A-Za-z.&\' -]+?(?:\s+(?:v\.?|versus)\s+[A-Z][A-Za-z.&\' -]+?)'
 
     # The judgment's own title line (e.g. "State of Maharashtra v. X") must never
-    # be captured as a cited precedent. Snapshot the first "X v. Y" in the header.
-    hm = re.search(NAME, n[:600])
-    title_nows = nows(re.sub(r'\s+', ' ', hm.group(0)).strip())[:15] if hm else ""
+    # be captured as a cited precedent.
+    #
+    # NAME is greedy and spans lowercase words, so a naive first-match snapshot
+    # can swallow body prose: on "The Court followed (2016) 7 SCC 353 in the case
+    # of Modern Dental College and in Arnesh Kumar v. State of Bihar" it returned
+    # "Modern Dental College and in Arnesh Kumar v. State", whose first 15
+    # squashed characters then suppressed the genuine Modern Dental College
+    # precedent. The snapshot is therefore taken from the caption window only
+    # (before the body starts) and validated; when it is not clearly a caption it
+    # is left empty, which is the safe direction - a missed self-title guard is
+    # caught downstream by the length/prose filters and the citation gate.
+    _BODY_MARKER_RE = re.compile(
+        r'(?:JUDGMENT|JUDGEMENT|OPINION|ORDER\s+DATED|\([12]\d{3}\)\s*\d|'
+        r'\bin the case of\b|\bfollowed\b|\bsupra\b|\bhas held\b|\bwe\s+hold\b)',
+        re.IGNORECASE,
+    )
+    _TITLE_PROSE_RE = re.compile(
+        r'\b(?:were|was|held|holds|following|reiterat|observed|submitted|contended|'
+        r'wherein|judgment|decision|ruling|court|appeal|appellant|petitioner|'
+        r'respondent|section|evidence)\b',
+        re.IGNORECASE,
+    )
+    title_nows = ""
+    caption = n[:600]
+    bm = _BODY_MARKER_RE.search(caption)
+    if bm:
+        caption = caption[: bm.start()]
+    hm = re.search(NAME, caption)
+    if hm:
+        cand = re.sub(r'\s+', ' ', hm.group(0)).strip()
+        if 6 <= len(cand) <= 60 and len(cand.split()) <= 8 and not _TITLE_PROSE_RE.search(cand):
+            title_nows = nows(cand)[:15]
 
     def _append(raw_name: str, cite: str) -> None:
         name = _clean_name(raw_name)
@@ -409,10 +444,15 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
         _append(m.group(1), m.group(2).strip())
 
     # 6. "(YEAR) VOLUME REPORTER PAGE in the case of Name" - long-form citation style
-    # e.g., "(2016) 7 SCC 353 in the case of Modern Dental College"
-    CIT_LONG = r'\([12]\d{3}\)\s+\d+\s+[A-Z]+\s+\d+\s+in the case of\s+' + NAME
-    for m in re.finditer(CIT_LONG, n):
-        _append(m.group(1), m.group(0).strip())
+    # e.g., "(2016) 7 SCC 353 in the case of Modern Dental College".
+    # NAME contains no capture group and is greedy across lowercase words, so
+    # this rule uses a tight capitalised-token pattern and slices the reporter
+    # citation out of the match instead of reading a group index.
+    CIT_LONG_HEAD = r'\([12]\d{3}\)\s+\d+\s+[A-Z]+\s+\d+'
+    LONG_NAME = r'[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,4}'
+    for m in re.finditer(CIT_LONG_HEAD + r'\s+in the case of\s+(' + LONG_NAME + r')', n):
+        cite_m = re.match(CIT_LONG_HEAD, m.group(0))
+        _append(m.group(1).strip(), cite_m.group(0) if cite_m else "")
 
     return out
 
@@ -524,13 +564,29 @@ def _strip_speaker(sentence: str, tokens: str) -> str:
     return sentence
 
 def extract_submissions(text: str) -> tuple[list[str], list[str]]:
-    n = norm(text)
+    # Force a sentence boundary before an enumerated argument so "(i) ..." starts
+    # its own unit even when it follows a colon in the same clause.
+    n = re.sub(r'[:;]\s+(?=\(\s*[ivxlcdm]+\s*\)|\d+\.\s)', '. ', norm(text))
     a, b = [], []
     cur = None
-    cur_points = []  # Accumulate multi-point submissions for current speaker
-    
-    PAT_A_START = re.compile(r'\b(?:counsel (?:for|appearing for|on behalf of) (?:the )?(?:applicant|petitioner|appellant|plaintiff)|the (?:applicant|petitioner|appellant|plaintiff) (?:has invoked|contends|submitted|argued|pleaded))\b', re.I)
-    PAT_B_START = re.compile(r'\b(?:(?:on the other hand|per contra|in opposition|opposed).*?(?:learned APP|state|respondent|prosecution|counsel)|counsel (?:for|appearing for|on behalf of) (?:the )?(?:respondent|state|prosecution|vendor|defendant|nhai|union of india)|learned (?:app|asg|solicitor general|standing counsel)|the (?:respondent|state|prosecution|vendor|defendant)(?:/vendor)? (?:contended|opposed|argued|defended|invoked)|the respondent/vendor)\b', re.I)
+    current_point = ''  # Argument currently being accumulated for `cur`
+
+    # Party roles are written in the plural in long judgments ("on behalf of the
+    # appellants"), so the trailing "s" is optional throughout.
+    _A = r'(?:applicant|petitioner|appellant|plaintiff|accused|complainant)s?'
+    _B = r'(?:respondent|state|prosecution|vendor|defendant|appellee|nhai|union of india)s?'
+    PAT_A_START = re.compile(
+        rf'\b(?:counsel (?:for|appearing (?:for|on behalf of)|on behalf of) (?:the )?{_A}'
+        rf'|the {_A} (?:has invoked|contends|submitted|argued|pleaded|advanced))',
+        re.I,
+    )
+    PAT_B_START = re.compile(
+        rf'\b(?:(?:on the other hand|per contra|in opposition|opposed).*?(?:learned APP|state|respondent|prosecution|counsel)'
+        rf'|counsel (?:for|appearing (?:for|on behalf of)|on behalf of) (?:the )?{_B}'
+        rf'|learned (?:app|asg|solicitor general|standing counsel)'
+        rf'|the {_B}(?:/vendor)? (?:contended|opposed|argued|defended|invoked)|the respondent/vendor)\b',
+        re.I,
+    )
     VERBS = re.compile(r'\b(?:submitted|contended|argued|relied|pointed|defended|opposed|demonstrated|pleaded|urged|resisted|invoked)\b', re.I)
     # Roman numeral list items: (i), (ii), (iii), (iv), (v), etc.
     ROMAN_NUMERAL = re.compile(r'^\(\s*[ivxlcdm]+\s*\)\s*', re.I)
@@ -542,25 +598,21 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
         if ' vs ' in s_clean or ' versus ' in s_clean or s_clean.startswith('Bench:'):
             continue
         if re.search(r'\b(?:We have heard|We hold|In our considered view|The petition is|Bail is allowed|Award is set aside)\b', s_clean, re.I):
-            # Flush any accumulated points for previous speaker before switching
-            if cur == 'a' and cur_points:
-                a.append(' '.join(cur_points))
-                cur_points = []
-            elif cur == 'b' and cur_points:
-                b.append(' '.join(cur_points))
-                cur_points = []
+            # Court's own reasoning ends the submissions: close the open point.
+            if cur is not None:
+                if current_point.strip():
+                    (a if cur == 'a' else b).append(current_point.strip())
+                current_point = ''
             cur = None
             continue
         # Court-framed issues are not counsel submissions
         if re.match(r'^Issue\s+[IVXLC]+\b', s_clean, re.I) or \
            re.search(r'\bWe frame the following issues\b', s_clean, re.I) or \
            re.match(r'^(?:CONCLUSION AND ORDER|ORDER AND DIRECTIONS)\b', s_clean, re.I):
-            if cur == 'a' and cur_points:
-                a.append(' '.join(cur_points))
-                cur_points = []
-            elif cur == 'b' and cur_points:
-                b.append(' '.join(cur_points))
-                cur_points = []
+            if cur is not None:
+                if current_point.strip():
+                    (a if cur == 'a' else b).append(current_point.strip())
+                current_point = ''
             cur = None
             continue
 
@@ -568,49 +620,48 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
         
         # Check for roman numeral list items (i), (ii), (iii), etc.
         roman_match = ROMAN_NUMERAL.match(s_clean)
-        # Check for numbered items 1., 2., etc.
+        # Check for numbered list items 1., 2., 3., etc.
         numbered_match = NUMBERED_ITEM.match(s_clean)
         is_list_item = bool(roman_match or numbered_match)
-        
-        # Detect speaker start
+        clean_s = re.sub(r'^\d+\.\s*', '', s_clean)
+
+        def _finalize(side: str | None) -> None:
+            """Close the point currently being accumulated for ``side``."""
+            nonlocal current_point
+            if current_point and current_point.strip():
+                (a if side == 'a' else b).append(current_point.strip())
+            current_point = ''
+
+        def _switch(side: str) -> None:
+            """Close the previous speaker's points and make ``side`` current."""
+            nonlocal cur, current_point
+            if cur is not None and cur != side:
+                _finalize(cur)
+            cur = side
+            current_point = ''
+
+        # Detect speaker start. Enumerated points are emitted as separate
+        # entries so the UI lists (i), (ii), (iii) separately instead of
+        # collapsing a whole argument block into one paragraph.
         if PAT_B_START.search(s_clean):
-            # Flush previous speaker's points
-            if cur == 'a' and cur_points:
-                a.append(' '.join(cur_points))
-                cur_points = []
-            elif cur == 'b' and cur_points:
-                b.append(' '.join(cur_points))
-                cur_points = []
-            cur = 'b'
-            # Start new point list with this sentence (if it has content beyond the marker)
-            clean_s = re.sub(r'^\d+\.\s*', '', s_clean)
+            _switch('b')
             if clean_s.strip() and (has_verb or is_list_item):
-                cur_points = [clean_s]
+                current_point = clean_s
         elif PAT_A_START.search(s_clean):
-            # Flush previous speaker's points
-            if cur == 'a' and cur_points:
-                a.append(' '.join(cur_points))
-                cur_points = []
-            elif cur == 'b' and cur_points:
-                b.append(' '.join(cur_points))
-                cur_points = []
-            cur = 'a'
-            clean_s = re.sub(r'^\d+\.\s*', '', s_clean)
+            _switch('a')
             if clean_s.strip() and (has_verb or is_list_item):
-                cur_points = [clean_s]
+                current_point = clean_s
         elif cur and (has_verb or is_list_item):
-            # Continuation of current speaker's points (including list items)
-            clean_s = re.sub(r'^\d+\.\s*', '', s_clean)
-            if clean_s.strip():
-                cur_points.append(clean_s)
-        
+            if is_list_item and current_point.strip():
+                # A new marker starts a new argument.
+                _finalize(cur)
+            current_point = f"{current_point} {clean_s}".strip() if current_point else clean_s
+
     # Flush any remaining points
-    if cur == 'a' and cur_points:
-        a.append(' '.join(cur_points))
-    elif cur == 'b' and cur_points:
-        b.append(' '.join(cur_points))
-        
-    return a[:3], b[:3]
+    if cur is not None:
+        _finalize(cur)
+
+    return a[:4], b[:4]
 
 # ---------- 6) EVIDENCE (per-item reliability, word-aligned) ----------
 CUES = [
@@ -742,7 +793,10 @@ def build_risk(text: str, subs_a: list[str], subs_b: list[str]) -> dict[str, Any
             strengths.append(strength_text)
     
     if not strengths:
-        strengths.append("Pleadings and documentary record prima facie favor the petitioner.")
+        # No generic praise. When the conclusion records no favorable finding
+        # matching these patterns, an empty list is the honest answer; the
+        # renderer decides how to present an absent strength.
+        strengths = []
 
     op = _operative_sentence(norm(concl_block)) or _operative_sentence(n)
     fallback_quote = _last_substantive(norm(concl_block)) or _last_substantive(n) or n[-160:].strip()

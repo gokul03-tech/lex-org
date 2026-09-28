@@ -31,6 +31,7 @@ class AgentState(TypedDict, total=False):
     case_facts: dict[str, Any]
     entities: dict[str, Any]
     timeline: list[dict[str, Any]]
+    counsel_submissions: dict[str, list[str]]
 
     # Legal Research outputs
     legal_issues: list[str]
@@ -56,6 +57,7 @@ class AgentState(TypedDict, total=False):
 
     # Strategy Recommendation outputs
     strategy_options: list[dict[str, Any]]
+    judicial_rebuttal: str
 
     # Risk Assessment outputs
     risk_assessment: dict[str, Any]

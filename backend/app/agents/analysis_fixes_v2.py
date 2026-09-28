@@ -258,6 +258,49 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
 
 
 # ================= 6) RISK & STRATEGY: 100% GROUNDED =================
+# Phrases that signal "nothing to report" and must never be echoed as a finding.
+_ABSENT_PHRASES = {
+    "", "n/a", "na", "none", "null", "not found", "not available",
+    "not specified", "no data",
+}
+
+# The court's own finding language. Captured case-insensitively because PDFs
+# vary between "We hold" and "we hold".
+_HOLDING_CUE = (
+    r'\b(?:we\s+(?:hold|hold\s+that|find|find\s+that|are\s+of\s+the\s+view\s+that)'
+    r'|the\s+court\s+(?:finds|holds|is\s+of\s+the\s+view\s+that)'
+    r'|it\s+is\s+(?:established|proved)|proved\s+beyond\s+doubt|established\s+beyond\s+doubt)'
+)
+
+
+def _sentence_at(text: str, pos: int, limit: int = 300) -> str:
+    """Return the sentence surrounding ``pos``, trimmed to ``limit`` characters.
+
+    Only sentence punctuation terminates the span. A newline must not, because a
+    wrapped PDF splits one sentence across many lines and cutting at the first
+    line break truncated holdings to a few words.
+    """
+    if pos < 0 or pos > len(text):
+        return ""
+
+    start = 0
+    for punct in ".?!":
+        idx = text.rfind(punct, 0, pos)
+        if idx != -1:
+            start = max(start, idx + 1)
+
+    end = len(text)
+    for punct in ".?!":
+        idx = text.find(punct, pos)
+        if idx != -1:
+            end = min(end, idx + 1)
+
+    sentence = re.sub(r'\s+', ' ', text[start:end]).strip()
+    if len(sentence) > limit:
+        sentence = sentence[:limit - 1].rstrip() + '…'
+    return sentence
+
+
 def safe(meta: dict[str, Any], key: str, fb: str) -> str:
     v = meta.get(key) or {}
     if isinstance(v, dict):
@@ -274,7 +317,8 @@ def build_risk_strategy(text: str, meta: dict[str, Any]) -> dict[str, Any]:
     # Dynamic extraction of case strengths from COURT'S FAVORABLE FINDINGS (not procedural closings)
     # Look for court's favorable findings in the judgment body
     favorable_patterns = [
-        (r'We hold|We find|Court finds|Court holds|It is established|It is proved|proved beyond doubt|established beyond doubt', "Court's favorable finding on merits"),
+        # Quote the court's own words rather than emitting a generic label.
+        (_HOLDING_CUE, lambda m: _sentence_at(text, m.start())),
         (r'charge\s*sheet (?:has already been )?filed|investigation is complete', "Investigation complete; charge sheet filed — no risk of evidence tampering."),
         (r'No direct financial transfer has been traced|no share of fraud proceeds', lambda m: f"No direct financial transfer traced to {safe(meta, 'petitioner', 'the applicant')}'s accounts."),
         (r'custodial interrogation.*concluded|custodial interrogation.*completed', lambda m: f"Custodial interrogation of {safe(meta, 'petitioner', 'the applicant')} is complete."),
@@ -285,14 +329,20 @@ def build_risk_strategy(text: str, meta: dict[str, Any]) -> dict[str, Any]:
     ]
 
     for pattern, strength_fn in favorable_patterns:
-        if re.search(pattern, text, re.I):
-            if callable(strength_fn):
-                strengths.append(strength_fn(None))
-            else:
-                strengths.append(strength_fn)
+        m = re.search(pattern, text, re.I)
+        if not m:
+            continue
+        if callable(strength_fn):
+            value = strength_fn(m)
+        else:
+            value = strength_fn
+        if value and value.strip() and value.lower() not in _ABSENT_PHRASES:
+            strengths.append(value.strip())
 
     if not strengths:
-        strengths.append(f"Pleadings and documentary record prima facie favor {safe(meta, 'petitioner', 'the applicant')}.")
+        # No generic praise: an empty list is the honest answer when the
+        # judgment records no favorable finding matching these patterns.
+        strengths = []
 
     # Dynamic extraction of case weaknesses & risks
     weaknesses = []
@@ -308,7 +358,9 @@ def build_risk_strategy(text: str, meta: dict[str, Any]) -> dict[str, Any]:
         weaknesses.append("Mens rea not conclusively established — intent element weak.")
 
     if not weaknesses:
-        weaknesses.append("Strict statutory interpretation and judicial discretion under applicable codes.")
+        # Mirror the same no-fabrication rule: the caller decides how to render
+        # an absent weakness, rather than the engine inventing a generic one.
+        weaknesses = []
 
     tail = text[-700:] if len(text) > 700 else text
     if re.search(r'\b(bail application is allowed|bail is allowed|petition is allowed|application is allowed|appeal is allowed)\b', tail, re.I):

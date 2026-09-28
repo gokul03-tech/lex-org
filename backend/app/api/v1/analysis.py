@@ -373,16 +373,30 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
 
     # Category-aware Evidence & Arguments Brief (zero status leakage, extracted directly from text)
     pros_subs, def_subs = extract_submissions(doc_text)
-    counter_arg = (
-        "State (APP) asserts statutory compliance and seeks rigorous evidentiary scrutiny."
-        if category == "criminal" else
-        "Respondent contends claims are barred by contractual limitation and lack evidentiary proof of loss."
-    )
+
+    # Prefer the pipeline's LLM counsel extraction when the deterministic
+    # patterns found nothing (long dossiers often defeat single-line regexes).
+    llm_subs = state.get("counsel_submissions") or {}
+    if not def_subs and isinstance(llm_subs, dict):
+        def_subs = llm_subs.get("petitioner") or llm_subs.get("plaintiff") or []
+    if not pros_subs and isinstance(llm_subs, dict):
+        pros_subs = llm_subs.get("respondent") or llm_subs.get("prosecution") or []
+
+    # Counter-arguments must come from the document. Previously this was a
+    # hardcoded per-category sentence, which surfaced as a fabricated argument
+    # on every document in that category.
+    counter_list = list(def_subs[1:3]) if len(def_subs) > 1 else []
+    counter_arg = " ".join(counter_list)
+
+    # Supporting material: quote the strongest favorable finding, if any.
+    strengths = risk_analysis.get("strengths") or []
+    supporting = strengths[0] if strengths else ""
+
     arguments_data = {
         "prosecution": pros_subs,
         "defense": def_subs,
-        "supporting": "The settled principles of legal precedent and statutory procedures govern these facts.",
-        "weaknesses": ", ".join(risk_analysis.get("weaknesses", [])) if isinstance(risk_analysis.get("weaknesses"), list) else str(risk_analysis.get("weaknesses", "Procedural scrutiny.")),
+        "supporting": supporting,
+        "weaknesses": ", ".join(risk_analysis.get("weaknesses", [])) if isinstance(risk_analysis.get("weaknesses"), list) else str(risk_analysis.get("weaknesses", "")),
         "counter_arguments": counter_arg
     }
 

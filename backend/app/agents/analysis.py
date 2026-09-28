@@ -95,7 +95,7 @@ _STATUTE_ACT_RE = re.compile(
 # "S.420 IPC" and "Section 420 of the Indian Penal Code" resolve to one key.
 _ACT_CODE_BY_FORM = {
     "ipc": "IPC", "indianpenalcode": "IPC",
-    "bns": "BNS", "bharatiynyayasanhita": "BNS",
+    "bns": "BNS", "bharatiyanyayasanhita": "BNS",
     "bnss": "BNSS", "bharatiyanagariksurakshasanhita": "BNSS",
     "bsa": "BSA", "bharatiyasakshyaadhiniyam": "BSA",
     "crpc": "CRPC", "codecriminalprocedure": "CRPC",
@@ -127,12 +127,23 @@ def _statute_act(text: str) -> str:
         if code:
             return code
 
-    squashed = re.sub(r'[^a-z]', '', (text or "").lower())
+    # Search for a short alias ("420 IPC") in the text with the section number
+    # removed, so the number itself cannot supply the word boundary. Searched
+    # un-squashed: collapsing to letters only would destroy that boundary.
+    residue = _STATUTE_NUM_RE.sub(" ", text).lower()
     for alias in ("ipc", "bns", "bnss", "bsa", "crpc", "ndps", "iea"):
-        # Token-bounded so "IPC" is not found inside an unrelated word.
-        if re.search(rf'(?<![a-z0-9]){alias}(?![a-z0-9])', squashed):
+        if re.search(rf'(?<![a-z]){alias}(?![a-z])', residue):
             return _ACT_CODE_BY_FORM[alias]
     return ""
+
+
+def _statute_parts(statute: str) -> tuple[str, str]:
+    """Split a reference into (canonical_act_code, section_number)."""
+    text = (statute or "").strip()
+    num_m = _STATUTE_NUM_RE.search(text)
+    if not num_m:
+        return "", re.sub(r'[^a-z0-9]', '', text.lower())
+    return _statute_act(text), re.sub(r'\s+', '', num_m.group(0))
 
 
 def _statute_core(statute: str) -> str:
@@ -143,16 +154,11 @@ def _statute_core(statute: str) -> str:
     of the BSA and Section 63 of the BNSS are different laws and must both
     survive.
     """
-    text = (statute or "").strip()
-    if not text or text.lower() in _PLACEHOLDER_VALUES:
+    if not statute or statute.strip().lower() in _PLACEHOLDER_VALUES:
         return ""
-
-    num_m = _STATUTE_NUM_RE.search(text)
-    if not num_m:
-        return re.sub(r'[^a-z0-9]', '', text.lower())
-
-    num = re.sub(r'\s+', '', num_m.group(0))
-    act = _statute_act(text)
+    act, num = _statute_parts(statute)
+    if not num:
+        return ""
     return f"{act}|{num}" if act else num
 
 
@@ -163,9 +169,15 @@ def normalize_statutes(statutes_list: list[str]) -> list[str]:
     several passes under different surface forms ("Article 14", "Section Art. 14",
     "Art. 14 of the Constitution") while preserving distinct subsections
     ("63(1)" vs "63(2)") and same-numbered sections of different Acts.
+
+    A second pass drops Act-less references ("S. 420") only when the same number
+    resolves to exactly one Act elsewhere in the list, so the duplicate chip
+    disappears in the common single-Act case without ever merging a reference
+    that could belong to a different law.
     """
     seen: set[str] = set()
-    unique_statutes: list[str] = []
+    kept: list[str] = []
+    kept_parts: list[tuple[str, str]] = []
     for statute in statutes_list or []:
         if not isinstance(statute, str):
             continue
@@ -173,12 +185,99 @@ def normalize_statutes(statutes_list: list[str]) -> list[str]:
         if not stripped or stripped.lower() in _PLACEHOLDER_VALUES:
             continue
         core = _statute_core(stripped)
-        if not core:
+        if not core or core in seen:
             continue
-        if core not in seen:
-            seen.add(core)
-            unique_statutes.append(stripped)
-    return unique_statutes
+        seen.add(core)
+        kept.append(stripped)
+        kept_parts.append(_statute_parts(stripped))
+
+    acts_by_number: dict[str, set[str]] = {}
+    for act, num in kept_parts:
+        if act:
+            acts_by_number.setdefault(num, set()).add(act)
+
+    return [
+        text for text, (act, num) in zip(kept, kept_parts)
+        if act or len(acts_by_number.get(num, ())) != 1
+    ]
+
+
+# ── Helper: Submission list sanitising ─────────────────────
+# Phrases the model emits instead of admitting that the document contains no
+# submissions. Rendering them would reintroduce the very generic-fallback text
+# COUNSEL_EXTRACTION_PROMPT forbids.
+_GENERIC_SUBMISSION_RE = re.compile(
+    r'\b(?:petitioner|applicant|appellant|respondent|defence|defense|prosecution|state|counsel)'
+    r'\s+(?:contends?|asserts?|alleges?|argues?|submits?)\s+'
+    r'(?:that\s+)?(?:the\s+)?'
+    r'(?:allegations?|claims?|relief|warrant|merit|liability|applicable|relevant|'
+    r'provisions?|statut\w*|facts?|grounds?)\b',
+    re.IGNORECASE,
+)
+
+
+def _clean_submission_list(raw: Any) -> list[str]:
+    """Normalise a counsel-submission list, dropping placeholders and filler."""
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        return []
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        text = re.sub(r'^\s*\(?[ivx]+\)?[.)\s]*', '', item.strip(), flags=re.IGNORECASE)
+        text = re.sub(r'^\s*\(?\d+\)?[.)\s]*', '', text).strip()
+        if len(text) < 25:
+            continue
+        if text.lower() in _PLACEHOLDER_VALUES:
+            continue
+        if _GENERIC_SUBMISSION_RE.search(text):
+            continue
+        key = re.sub(r'[^a-z0-9]', '', text.lower())[:60]
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+    return out
+
+
+def _sanitize_strategies(strategies: Any) -> list[dict[str, Any]]:
+    """Strip placeholder values and empty shells from LLM strategy output.
+
+    STRATEGY_PROMPT forbids "N/A" and "No sufficiently relevant precedent found"
+    in any field, but prompt rules alone are not a guarantee. Fields that end up
+    empty are removed so the UI renders nothing rather than an error string.
+    """
+    if not isinstance(strategies, (list, tuple)):
+        return []
+
+    out: list[dict[str, Any]] = []
+    for raw in strategies:
+        if not isinstance(raw, dict):
+            continue
+        cleaned: dict[str, Any] = {}
+        for key, value in raw.items():
+            if isinstance(value, str):
+                text = value.strip()
+                if not text or text.lower() in _PLACEHOLDER_VALUES:
+                    continue
+                cleaned[key] = text
+            elif isinstance(value, (list, tuple)):
+                items = [
+                    str(v).strip() for v in value
+                    if isinstance(v, str) and v.strip()
+                    and str(v).strip().lower() not in _PLACEHOLDER_VALUES
+                ]
+                if items:
+                    cleaned[key] = items
+            elif value is not None:
+                cleaned[key] = value
+        if cleaned.get("name") or cleaned.get("description"):
+            out.append(cleaned)
+    return out
 
 
 # ── Helper: Agent metadata recording ───────────────────────
@@ -292,9 +391,14 @@ async def case_understanding_agent(state: AgentState) -> AgentState:
 
 1. CASE FACTS: Summarize the key facts in 3-5 bullet points.
 2. PARTIES: Identify the plaintiff/petitioner, defendant/respondent, and any other parties.
-3. LEGAL ISSUES: Identify potential legal issues.
+3. LEGAL ISSUES: Identify the legal issues using the strict rules below.
 4. TIMELINE: Extract key dates and events in chronological order.
 5. KEY ENTITIES: Identify any courts, judges, advocates, witnesses, organizations mentioned.
+6. COUNSEL SUBMISSIONS: Extract the actual arguments advanced by each side using the strict rules below.
+
+{ISSUE_EXTRACTION_PROMPT}
+
+{COUNSEL_EXTRACTION_PROMPT}
 
 Respond in the following JSON format:
 {{
@@ -302,6 +406,7 @@ Respond in the following JSON format:
     "facts": ["fact 1", "fact 2", ...],
     "parties": {{"plaintiff": "...", "defendant": "...", "others": ["..."]}},
     "legal_issues": ["issue 1", "issue 2", ...],
+    "counsel_submissions": {{"petitioner": ["..."], "respondent": ["..."]}},
     "timeline": [{{"date": "...", "event": "..."}}],
     "entities": {{"courts": [], "judges": [], "advocates": [], "witnesses": [], "organizations": []}}
 }}
@@ -321,6 +426,7 @@ Additional Query: {query}
                     "facts": {"type": "array", "items": {"type": "string"}},
                     "parties": {"type": "object"},
                     "legal_issues": {"type": "array", "items": {"type": "string"}},
+                    "counsel_submissions": {"type": "object"},
                     "timeline": {"type": "array"},
                     "entities": {"type": "object"},
                 },
@@ -334,6 +440,28 @@ Additional Query: {query}
         state["entities"] = result.get("entities", {})
         state["legal_issues"] = result.get("legal_issues", [])
         state["timeline"] = result.get("timeline", [])
+
+        # Counsel submissions from the LLM, filtered for placeholders so the
+        # deterministic extractor's empty lists stay authoritative when the
+        # model invents text instead of reporting none.
+        raw_subs = result.get("counsel_submissions") or {}
+        if isinstance(raw_subs, dict):
+            pet_side = self_side = None
+            for pet_key, def_key in (
+                ("petitioner", "respondent"),
+                ("plaintiff", "defendant"),
+                ("appellant", "appellee"),
+                ("defense", "prosecution"),
+            ):
+                if raw_subs.get(pet_key) or raw_subs.get(def_key):
+                    pet_side, def_side = raw_subs.get(pet_key), raw_subs.get(def_key)
+                    break
+            state["counsel_submissions"] = {
+                "petitioner": _clean_submission_list(pet_side),
+                "respondent": _clean_submission_list(def_side),
+            }
+        else:
+            state["counsel_submissions"] = {"petitioner": [], "respondent": []}
 
         text_len = len(doc_texts.strip())
         has_parties = bool(result.get("parties", {}).get("plaintiff") or result.get("parties", {}).get("petitioner"))
@@ -519,7 +647,9 @@ async def legal_research_agent(state: AgentState) -> AgentState:
         # 3. Extract Literal Constitutional Articles (no hallucinated defaults)
         state["articles"] = extract_articles(doc_text_full) if doc_text_full else []
 
-        # Deduplicate
+        # Deduplicate sections by Act + number so "Section Art. 14", "Article 14"
+        # and "Art. 14 of the Constitution" collapse to one entry, while
+        # Section 63 BSA and Section 63 BNSS stay distinct.
         seen = set()
         unique_sections = []
         for s in sections:
@@ -530,8 +660,9 @@ async def legal_research_agent(state: AgentState) -> AgentState:
                 seen.add(key)
                 unique_sections.append(s)
 
-        state["applicable_sections"] = unique_sections[:12]
-        state["applicable_acts"] = list({_act_key(a): a for a in acts if a}.values())[:10]
+        unique_sections = unique_sections[:12]
+        state["applicable_sections"] = unique_sections
+        state["applicable_acts"] = normalize_statutes(acts)[:10]
         state["precedents"] = all_precedents[:7]
 
         confidence = 0.98 if (unique_sections and all_precedents) else (0.975 if all_precedents else (0.85 if unique_sections else 0.40))
@@ -953,17 +1084,33 @@ async def strategy_recommendation_agent(state: AgentState) -> AgentState:
         reasoning = state.get("legal_reasoning", "")
         risk = state.get("risk_assessment", {})
         evidence = state.get("evidence_assessment", {})
+        metadata = state.get("metadata", {}) or {}
+        documents = state.get("documents", [])
 
-        prompt = f"""Generate litigation strategies for this case. For each strategy provide:
-- Strategy name and description
-- Legal basis (sections/cases to rely on)
-- Probability of success (0-1)
-- Pros (advantages)
-- Cons (risks/drawbacks)
-- Recommended actions
-- Alternative approaches if strategy fails
+        # Counsel arguments as recorded by case understanding, so "Strategic
+        # Ground" quotes the appellant's actual arguments rather than invented ones.
+        counsel = state.get("counsel_submissions", {}) or {}
+        pet_args = _clean_submission_list(counsel.get("petitioner"))
+        opp_args = _clean_submission_list(counsel.get("respondent"))
 
-Case reasoning:
+        # Full document text: the grounding rules require the model to see the
+        # operative passages, and procedural directions only appear in the tail.
+        case_text = "\n\n".join(
+            d.get("text") or d.get("parsed_text") or "" for d in documents
+        )[:20000]
+
+        prompt = f"""{STRATEGY_PROMPT}
+
+CASE METADATA:
+{json.dumps(metadata, default=str)[:1200]}
+
+APPELLANT / PETITIONER SUBMISSIONS (from this document):
+{json.dumps(pet_args, indent=2) if pet_args else "None recorded in this document."}
+
+RESPONDENT / PROSECUTION SUBMISSIONS (from this document):
+{json.dumps(opp_args, indent=2) if opp_args else "None recorded in this document."}
+
+CASE REASONING:
 {reasoning[:1000]}
 
 Evidence assessment:
@@ -972,8 +1119,31 @@ Evidence assessment:
 Risk assessment:
 {json.dumps(risk, indent=2)[:500]}
 
-Respond with JSON:
-{{"strategies": [{{"name": "", "description": "", "legal_basis": [], "success_probability": 0.0, "pros": [], "cons": [], "recommended_actions": [], "fallback": ""}}], "recommended_strategy": "", "overall_confidence": 0.0}}
+DOCUMENT TEXT (grounding source - cite only what appears here):
+{case_text}
+
+Map the extraction rules above onto this JSON schema. Leave a list empty rather
+than inventing content, and never write placeholder strings such as "N/A" or
+"No sufficiently relevant precedent found" into any value:
+{{
+  "strategies": [
+    {{
+      "name": "",
+      "description": "",
+      "legal_basis": [],
+      "success_probability": 0.0,
+      "pros": [],
+      "cons": [],
+      "recommended_actions": [],
+      "fallback": "",
+      "strategic_ground": "",
+      "key_strengths": [],
+      "action_plan": []
+    }}
+  ],
+  "judicial_rebuttal": "",
+  "overall_confidence": 0.0
+}}
 """
         provider = get_deepseek_provider()
         result = provider.generate_structured(
@@ -982,6 +1152,7 @@ Respond with JSON:
                 "type": "object",
                 "properties": {
                     "strategies": {"type": "array"},
+                    "judicial_rebuttal": {"type": "string"},
                     "recommended_strategy": {"type": "string"},
                     "overall_confidence": {"type": "number"},
                 },
@@ -990,7 +1161,8 @@ Respond with JSON:
             temperature=0.3,
         )
 
-        state["strategy_options"] = result.get("strategies", [])
+        state["strategy_options"] = _sanitize_strategies(result.get("strategies", []))
+        state["judicial_rebuttal"] = result.get("judicial_rebuttal", "")
         confidence = result.get("overall_confidence", 0.6)
         duration_ms = (time.monotonic() - start_time) * 1000
         logger.info(f"[StrategyRecommendation] {len(state['strategy_options'])} strategies ({duration_ms:.0f}ms)")
@@ -1250,6 +1422,7 @@ async def report_generation_agent(state: AgentState) -> AgentState:
         facts = state.get("case_facts", {})
         issues = state.get("legal_issues", [])
         acts = state.get("applicable_acts", [])
+        normalized_acts = normalize_statutes([a for a in acts if isinstance(a, str)])
         sections = state.get("applicable_sections", [])
         precedents = state.get("precedents", [])
         evidence = state.get("evidence_assessment", {})
@@ -1522,7 +1695,7 @@ Write a 3-4 sentence executive summary in plain English suitable for an advocate
                 {"title": "Executive Summary", "content": exec_summary, "order": 1},
                 {"title": "Case Facts", "content": grounded_facts, "order": 2},
                 {"title": "Legal Issues Identified", "content": [q["question"] for q in grounded_issues], "order": 3},
-                {"title": "Applicable Acts", "content": acts, "order": 4},
+                {"title": "Applicable Acts", "content": normalized_acts, "order": 4},
                 {"title": "Applicable Sections", "content": [{"section": s.get("section_number"), "act": s.get("act"), "title": s.get("title", ""), "text": s.get("text", ""), "explicit": s.get("explicitly_mentioned")} for s in grounded_sections], "order": 5},
                 {"title": "Supporting Judgments", "content": grounded_precedents, "order": 6},
                 {"title": "Evidence Analysis", "content": evidence, "order": 7},

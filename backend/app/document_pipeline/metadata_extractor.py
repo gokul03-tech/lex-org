@@ -264,26 +264,22 @@ class LegalMetadataExtractor:
                         case_title = f"{p_clean} vs {r_clean}"
                         break
         
-        # If not found multi-line, try inline vs/versus
+        # Inline "vs"/"v." on a single caption line.
+        # Split line-by-line instead of one unbounded regex over the header: an
+        # IGNORECASE character class that spans newlines swallowed the court
+        # heading ("IN THE HIGH COURT ... Vikram Dev" became the party name).
         if not case_title:
-            vs_match = re.search(
-                r'([A-Z0-9\.\'\s\-\&\,]+?)\s+(?:versus|vs\.?|v\.\s*s\s*\.?|v\s*\.\s*|\.\.\.\s*Appellant\s+Versus)\s+([A-Z0-9\.\'\s\-\&\,]+?)(?:\s+(?:\.\.\.\s*on|\.\.\.\s*Respondent|\.\.\.\s*Defendant|on\s+\d{1,2}|\n|\Z))',
-                first_lines,
-                re.IGNORECASE
-            )
-            
-            if vs_match:
-                p_raw = vs_match.group(1).strip()
-                r_raw = vs_match.group(2).strip()
-
-                # Clean OCR artifacts and trailing words
-                p_clean = self._clean_party_name(p_raw)
-                r_clean = self._clean_party_name(r_raw)
-
+            for line in lines_12[:10]:
+                parts = self._VS_SPLIT_RE.split(line, maxsplit=1)
+                if len(parts) != 2:
+                    continue
+                p_clean = self._clean_party_name(parts[0])
+                r_clean = self._clean_party_name(parts[1])
                 if p_clean and r_clean:
                     petitioner = p_clean
                     respondent = r_clean
                     case_title = f"{p_clean} vs {r_clean}"
+                    break
 
         # If not found in first lines, try filename or first non-empty line
         if not case_title:
@@ -301,12 +297,17 @@ class LegalMetadataExtractor:
             "respondent": {"value": respondent, "status": "extracted" if respondent else "not_found"}
         }
 
-    # Designation tokens that trail a caption party. The trailing "s?" matters:
-    # "\bAppellant\b" never matches "Appellants" (no word boundary between
-    # "r" and "s"), which used to leave an orphan "s" on the party name.
+    # Party roles are written in the plural in long judgments ("on behalf of the
+    # appellants"), so the trailing "s" is optional throughout.
     _PARTY_ROLE = (
         r'(?:Interested\s+Party|Appellant|Petitioner|Plaintiff|Applicant|'
         r'Complainant|Accused|Respondent|Defendant)s?'
+    )
+
+    # Caption separators seen across HC/SC and portal extracts.
+    _VS_SPLIT_RE = re.compile(
+        r'\s*(?:\.\.\.\s*Appellant\s+)?(?:versus|vs\.?|v\.\s*s\.?|v\.)\s+',
+        re.IGNORECASE,
     )
 
     def _clean_party_name(self, name: str) -> str:
@@ -474,6 +475,23 @@ class LegalMetadataExtractor:
         
         return {"value": None, "status": "not_found"}
 
+    # A PDF line wrap that continues an initial run: "B.V." + newline + "NAME".
+    # The continuation may be full caps ("NAGARATHNA") as well as title case.
+    _WRAPPED_INITIAL_RE = re.compile(r'((?:[A-Z]\.){1,3})[ \t]*\n[ \t]*(?=[A-Z][A-Za-z])')
+
+    def _join_wrapped_initials(self, text: str) -> str:
+        """Rejoin judge surnames that a PDF line break split off their initials.
+
+        Scoped to lines ending in an initial run, so genuine paragraph breaks
+        elsewhere in the document are untouched.
+        """
+        prev = None
+        out = text or ""
+        while prev != out:
+            prev = out
+            out = self._WRAPPED_INITIAL_RE.sub(r'\1 ', out)
+        return out
+
     def _extract_judges(self, head: str, tail: str) -> dict[str, Any]:
         """Extract all presiding judges from headers, bench lines, and concurring end paragraphs."""
         judges = []
@@ -483,6 +501,12 @@ class LegalMetadataExtractor:
             if j and j not in seen:
                 judges.append(j)
                 seen.add(j)
+
+        # PDF line wrapping splits names mid-token ("B.V." / "NAGARATHNA" on
+        # separate lines), which truncated the bench to initials. Rejoin a line
+        # that continues an initial run before any pattern matching.
+        head = self._join_wrapped_initials(head)
+        tail = self._join_wrapped_initials(tail)
 
         # 1. Bench/Coram lines in header
         bench_m = re.search(r'(?:Coram|Bench|Author|Before)\s*:\s*([A-Z][a-zA-Z\s\.,&]+?)(?:\n|\r|\.\s)', head)
