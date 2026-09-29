@@ -120,6 +120,7 @@ class TransformersProvider(LLMProvider):
         output_schema: dict[str, Any],
         system_prompt: str = "",
         temperature: float = 0.1,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         """Generate structured JSON output using schema prompt and validation parsing."""
         if not self._ensure_model():

@@ -27,7 +27,7 @@ async def _process_upload_async(
     document_type: str,
     description: str | None,
 ):
-    """Background task: parse uploaded document, extract metadata, save to DB."""
+    """Background task: parse uploaded document, clean it, extract metadata, save to DB."""
     import asyncio
 
     def _sync_parse():
@@ -40,8 +40,37 @@ async def _process_upload_async(
         logger.warning(f"Parser failed for {original_filename}: {exc}")
         parsed_data = {"text": f"[Error parsing text content: {exc}]", "page_count": 1, "metadata": {}}
 
+    # Normalise the parsed text before anything reads it. Uploads previously stored
+    # the parser output verbatim, so HTML markup, page-number noise and encoding
+    # artifacts flowed straight into metadata extraction and every downstream
+    # agent - which is how tags surfaced in Devil's Advocate and the strategy
+    # roadmap. raw_text keeps the untouched parser output.
+    from app.document_pipeline.cleaner import TextCleaner
+
+    def _sync_clean():
+        cleaner = TextCleaner()
+        raw_text = parsed_data.get("text", "") or ""
+        raw_pages = parsed_data.get("pages") or [raw_text]
+        # clean_pages drops headers/footers that repeat across pages, which is
+        # where a running title ("Cyber Crime Case Document - X v. Y") and the
+        # page stamps live in a 15+ page judgment or dossier.
+        cleaned_pages = cleaner.clean_pages(raw_pages)
+        cleaned_text = "\n\n".join(cleaned_pages).strip() or cleaner.clean(raw_text)
+        if not cleaned_text.strip():
+            # Never overwrite usable content with an empty result.
+            cleaned_text, cleaned_pages = raw_text, raw_pages
+        return raw_text, cleaned_text, cleaned_pages
+
+    try:
+        raw_text, cleaned_text, cleaned_pages = await asyncio.to_thread(_sync_clean)
+    except Exception as exc:
+        logger.warning(f"Cleaner failed for {original_filename}: {exc}")
+        raw_text = parsed_data.get("text", "") or ""
+        cleaned_text = raw_text
+        cleaned_pages = parsed_data.get("pages") or [raw_text]
+
     from app.agents.metadata_extractor import extract_metadata
-    legal_meta = extract_metadata(parsed_data.get("text", ""))
+    legal_meta = extract_metadata(cleaned_text)
 
     async with async_session_factory() as session:
         db_doc = Document(
@@ -51,13 +80,13 @@ async def _process_upload_async(
             document_type=document_type,
             description=description,
             status="uploaded",
-            parsed_text=parsed_data.get("text", ""),
-            raw_text=parsed_data.get("text", ""),
+            parsed_text=cleaned_text,
+            raw_text=raw_text,
             page_count=parsed_data.get("page_count", 1),
             metadata_={
                 **(parsed_data.get("metadata") or {}),
                 **legal_meta,
-                "pages": parsed_data.get("pages", []),
+                "pages": cleaned_pages,
             },
             mime_type=mime_type,
         )

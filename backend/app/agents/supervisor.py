@@ -26,6 +26,14 @@ class AgentState(TypedDict, total=False):
     query: str
     documents: list[dict[str, Any]]
 
+    # Shared structured extraction. These are written by the agents below and
+    # read downstream (report generation resolves the case category and metadata
+    # from them). They must be declared: LangGraph merges state against this
+    # schema, so an undeclared key is dropped on the way through, which left the
+    # report with null metadata regardless of what the extractor produced.
+    metadata: dict[str, Any]
+    case_category: str
+
     # Case Understanding outputs
     case_summary: str
     case_facts: dict[str, Any]
@@ -38,6 +46,7 @@ class AgentState(TypedDict, total=False):
     applicable_acts: list[str]
     applicable_sections: list[dict[str, Any]]
     precedents: list[dict[str, Any]]
+    articles: list[str]
 
     # Knowledge Graph outputs
     kg_data: dict[str, Any]

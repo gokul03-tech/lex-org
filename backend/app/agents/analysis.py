@@ -82,6 +82,10 @@ _PLACEHOLDER_VALUES = {
     "", "n/a", "na", "none", "null", "not available", "not specified",
     "not mentioned", "unknown", "no sufficiently relevant precedent found",
     "not applicable", "unstated in record",
+    # Retriever placeholders that leak in as if they were case names.
+    "vector", "vectors", "kg", "graph", "chunk", "chunks", "document",
+    "documents", "result", "results", "hit", "hits", "node", "nodes",
+    "precedent", "keyword", "keywords", "text", "passage", "page",
 }
 
 # "Section 63", "S.63", "sec 63(1)(b)", "u/s 63" -> "63" / "63(1)(b)"
@@ -244,6 +248,47 @@ def _clean_submission_list(raw: Any) -> list[str]:
     return out
 
 
+# STRATEGY_PROMPT asks for a flat "Strategic Ground / Key Strengths / Action
+# Plan" shape, while the JSON schema describes a "strategies" array. The model
+# often follows the prompt, so a response keyed by the flat shape produced
+# strategy_options == [] even on a good run. Both shapes are accepted here and
+# normalised into one structure.
+_FLAT_STRATEGY_ALIASES = {
+    "strategic_ground": "description",
+    "opposing_counsel": "counter_argument",
+    "key_strengths": "pros",
+    "action_plan": "recommended_actions",
+    "judicial_rebuttal": "rebuttal",
+}
+
+
+def _normalise_strategy_result(result: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+    """Return (strategy entries, judicial rebuttal) from either response shape."""
+    raw = result.get("strategies")
+    rebuttal = str(result.get("judicial_rebuttal") or "").strip()
+
+    if isinstance(raw, list) and raw:
+        return _sanitize_strategies(raw), rebuttal
+
+    # Flat shape: promote the grounded sections into a single strategy entry.
+    # Keys are normalised first - the model echoes the prompt's labels
+    # ("Strategic Ground", "Key Strengths"), not snake_case identifiers.
+    entry: dict[str, Any] = {}
+    for key, value in result.items():
+        norm_key = re.sub(r'[^a-z0-9]+', '_', str(key).strip().lower()).strip('_')
+        if norm_key in ("overall_confidence", "recommended_strategy", "judicial_rebuttal"):
+            continue
+        target = _FLAT_STRATEGY_ALIASES.get(norm_key, norm_key)
+        entry[target] = value
+
+    if not rebuttal and isinstance(entry.get("rebuttal"), str):
+        rebuttal = entry.pop("rebuttal")
+    entry.pop("rebuttal", None)
+
+    entries = _sanitize_strategies([entry]) if entry else []
+    return entries, rebuttal
+
+
 def _sanitize_strategies(strategies: Any) -> list[dict[str, Any]]:
     """Strip placeholder values and empty shells from LLM strategy output.
 
@@ -275,7 +320,17 @@ def _sanitize_strategies(strategies: Any) -> list[dict[str, Any]]:
                     cleaned[key] = items
             elif value is not None:
                 cleaned[key] = value
-        if cleaned.get("name") or cleaned.get("description"):
+        # Keep an entry when it carries any substantive content. Requiring
+        # name/description discarded valid grounded entries whose only fields
+        # were "description"+"recommended_actions" from the flat response shape.
+        substantive = [
+            k for k, v in cleaned.items()
+            if v and (not isinstance(v, (list, tuple)) or len(v) > 0)
+        ]
+        if substantive and any(
+            k in cleaned
+            for k in ("name", "description", "strategic_ground", "recommended_actions", "action_plan", "pros")
+        ):
             out.append(cleaned)
     return out
 
@@ -375,9 +430,15 @@ async def case_understanding_agent(state: AgentState) -> AgentState:
                 qdrant.upsert_chunks(qdrant_chunks, collection_name=settings.QDRANT_COLLECTION_DOCS)
                 logger.info(f"Indexed {len(qdrant_chunks)} chunks for document '{filename}' (Case: {case_id})")
 
-        # Build prompt from documents (using larger context window limit of 25,000 characters)
+        # Build the prompt from the document. Budget matters here: the backend runs
+        # on CPU with n_ctx=8192, so a 25,000-char slice per document (up to 125k
+        # for 5 documents) both overflows the context and makes prefill so slow
+        # that throughput fell from ~5 to ~2.7 tok/s, turning one agent into a
+        # 10+ minute call. A single 6,000-char slice is enough for the summary,
+        # parties and entities this agent produces; facts, timeline, issues and
+        # evidence are all re-derived from the FULL document downstream.
         doc_texts = "\n\n---\n\n".join(
-            d.get("text", d.get("parsed_text", ""))[:25000] for d in documents[:5]
+            d.get("text", d.get("parsed_text", ""))[:6000] for d in documents[:1]
         ) if documents else query
 
         # Layer 1: Deterministic Metadata Extraction
@@ -389,12 +450,14 @@ async def case_understanding_agent(state: AgentState) -> AgentState:
 
         prompt = f"""Analyze the following legal case document(s) and extract:
 
-1. CASE FACTS: Summarize the key facts in 3-5 bullet points.
-2. PARTIES: Identify the plaintiff/petitioner, defendant/respondent, and any other parties.
-3. LEGAL ISSUES: Identify the legal issues using the strict rules below.
-4. TIMELINE: Extract key dates and events in chronological order.
-5. KEY ENTITIES: Identify any courts, judges, advocates, witnesses, organizations mentioned.
-6. COUNSEL SUBMISSIONS: Extract the actual arguments advanced by each side using the strict rules below.
+1. SUMMARY: Write a 4-6 sentence factual summary of the case.
+2. CASE FACTS: Summarize the key facts in 3-5 bullet points.
+3. PARTIES: Identify the plaintiff/petitioner, defendant/respondent, and any other parties.
+4. KEY ENTITIES: Identify any courts, judges, advocates, witnesses, organizations mentioned.
+5. COUNSEL SUBMISSIONS: Extract the actual arguments advanced by each side using the strict rules below.
+
+Do NOT produce a legal_issues or timeline list: both are re-derived directly from
+the document later, and asking for them here only lengthens the response.
 
 {ISSUE_EXTRACTION_PROMPT}
 
@@ -405,9 +468,7 @@ Respond in the following JSON format:
     "summary": "Brief case summary",
     "facts": ["fact 1", "fact 2", ...],
     "parties": {{"plaintiff": "...", "defendant": "...", "others": ["..."]}},
-    "legal_issues": ["issue 1", "issue 2", ...],
     "counsel_submissions": {{"petitioner": ["..."], "respondent": ["..."]}},
-    "timeline": [{{"date": "...", "event": "..."}}],
     "entities": {{"courts": [], "judges": [], "advocates": [], "witnesses": [], "organizations": []}}
 }}
 
@@ -425,28 +486,29 @@ Additional Query: {query}
                     "summary": {"type": "string"},
                     "facts": {"type": "array", "items": {"type": "string"}},
                     "parties": {"type": "object"},
-                    "legal_issues": {"type": "array", "items": {"type": "string"}},
                     "counsel_submissions": {"type": "object"},
-                    "timeline": {"type": "array"},
                     "entities": {"type": "object"},
                 },
             },
             system_prompt=QWEN_SYSTEM_PROMPT,
             temperature=0.1,
+            max_tokens=520,
         )
 
         state["case_summary"] = result.get("summary", "")
         state["case_facts"] = result.get("facts", {})
         state["entities"] = result.get("entities", {})
-        state["legal_issues"] = result.get("legal_issues", [])
-        state["timeline"] = result.get("timeline", [])
+        # legal_issues / timeline are intentionally left unset: both are rebuilt
+        # from the full document downstream, and an LLM value here would be
+        # silently overwritten later while costing generation time now.
 
         # Counsel submissions from the LLM, filtered for placeholders so the
         # deterministic extractor's empty lists stay authoritative when the
         # model invents text instead of reporting none.
         raw_subs = result.get("counsel_submissions") or {}
+        pet_side: Any = None
         if isinstance(raw_subs, dict):
-            pet_side = self_side = None
+            def_side: Any = None
             for pet_key, def_key in (
                 ("petitioner", "respondent"),
                 ("plaintiff", "defendant"),
@@ -565,7 +627,14 @@ async def legal_research_agent(state: AgentState) -> AgentState:
                         case_name = f"Indian Kanoon Judgement {cname}"
                     else:
                         case_name = cname
-                        
+
+                # Reject retriever placeholders. With the KG/vector backends
+                # live, results can carry a literal "vector" (or "kg", "chunk")
+                # as the name, which reached the report as a precedent and was
+                # then scored as a hallucinated citation.
+                if re.sub(r'[^a-z0-9]', '', str(case_name).lower()) in _PLACEHOLDER_VALUES:
+                    continue
+
                 precedents.append({
                     "case_name": case_name,
                     "citation": metadata.get("citation") or result.get("citation") or f"Source: {source}",
@@ -660,7 +729,20 @@ async def legal_research_agent(state: AgentState) -> AgentState:
                 seen.add(key)
                 unique_sections.append(s)
 
-        unique_sections = unique_sections[:12]
+        # Drop provisions the document only cites or declares invalid. Without
+        # this, a section mentioned solely in a reference list or in a "struck
+        # down" aside is presented as an applicable provision of this case.
+        from app.agents.analysis_fixes_v2 import filter_contextual_sections
+
+        substantive_sections = filter_contextual_sections(unique_sections, doc_text_full)
+        dropped_count = len(unique_sections) - len(substantive_sections)
+        if dropped_count:
+            logger.info(
+                f"[LegalResearch] Excluded {dropped_count} citation-only/superseded "
+                f"section reference(s) not applied by this document"
+            )
+
+        unique_sections = substantive_sections[:12]
         state["applicable_sections"] = unique_sections
         state["applicable_acts"] = normalize_statutes(acts)[:10]
         state["precedents"] = all_precedents[:7]
@@ -848,6 +930,7 @@ Respond with JSON:
             },
             system_prompt=DEEPSEEK_SYSTEM_PROMPT,
             temperature=0.1,
+            max_tokens=520,
         )
 
         state["evidence_assessment"] = result
@@ -914,6 +997,7 @@ Respond with JSON: {{"contradictions": [{{"type": "", "statement_a": "", "statem
             },
             system_prompt=DEEPSEEK_SYSTEM_PROMPT,
             temperature=0.1,
+            max_tokens=520,
         )
 
         contradictions_found = result.get("contradictions", [])
@@ -983,6 +1067,7 @@ Respond with JSON:
             },
             system_prompt=QWEN_SYSTEM_PROMPT,
             temperature=0.1,
+            max_tokens=520,
         )
 
         state["procedural_status"] = result
@@ -1053,6 +1138,7 @@ Respond with JSON:
             },
             system_prompt=QWEN_SYSTEM_PROMPT,
             temperature=0.1,
+            max_tokens=750,
         )
 
         state["irac_analysis"] = result
@@ -1159,10 +1245,28 @@ than inventing content, and never write placeholder strings such as "N/A" or
             },
             system_prompt=DEEPSEEK_SYSTEM_PROMPT,
             temperature=0.3,
+            max_tokens=750,
         )
 
-        state["strategy_options"] = _sanitize_strategies(result.get("strategies", []))
-        state["judicial_rebuttal"] = result.get("judicial_rebuttal", "")
+        # Accept both the "strategies" array and the flat grounded shape.
+        entries, rebuttal = _normalise_strategy_result(result)
+        if not entries:
+            # The model returned nothing usable. Fall back to the deterministic,
+            # document-grounded extraction rather than shipping an empty module:
+            # these sentences are quoted from the source text, so they cannot
+            # invent strategy.
+            from app.agents.analysis_fixes_v2 import build_risk_strategy
+
+            grounded = build_risk_strategy(
+                "\n\n".join(d.get("text") or "" for d in documents), state.get("metadata") or {}
+            )
+            entries = [{
+                "name": "Document-grounded assessment",
+                "description": "; ".join(grounded.get("strengths") or []) or grounded.get("conclusion", ""),
+                "recommended_actions": [grounded["procedural"]] if grounded.get("procedural") else [],
+            }]
+        state["strategy_options"] = _sanitize_strategies(entries)
+        state["judicial_rebuttal"] = rebuttal
         confidence = result.get("overall_confidence", 0.6)
         duration_ms = (time.monotonic() - start_time) * 1000
         logger.info(f"[StrategyRecommendation] {len(state['strategy_options'])} strategies ({duration_ms:.0f}ms)")
@@ -1231,6 +1335,7 @@ Respond with JSON:
             },
             system_prompt=DEEPSEEK_SYSTEM_PROMPT,
             temperature=0.1,
+            max_tokens=520,
         )
 
         state["risk_assessment"] = result

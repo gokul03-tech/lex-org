@@ -57,6 +57,7 @@ class MockProvider(LLMProvider):
         output_schema: dict[str, Any],
         system_prompt: str = "",
         temperature: float = 0.1,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         """Generate a mock structured response that complies with the requested schema."""
         # Extract the case document text from the prompt

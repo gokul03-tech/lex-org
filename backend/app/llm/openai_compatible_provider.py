@@ -78,6 +78,7 @@ class OpenAICompatibleProvider(LLMProvider):
         output_schema: dict[str, Any],
         system_prompt: str = "",
         temperature: float = 0.1,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         """Generate structured JSON response using API's JSON mode."""
         headers = {}

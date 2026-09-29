@@ -38,7 +38,13 @@ def norm_act(name: str) -> str:
         return "Constitution of India"
     return name.strip()
 
-ACT_RE = r'Section\s+(\d+(?:\([\w]+\))*)\s+of\s+(?:the\s+)?([A-Z][A-Za-z0-9.\s(){},–-]{2,80}?(?:Act|Sanhita|Adhiniyam|Code|Constitution))'
+# "Section 63 of the X Act" and the plural form "Sections 469 and 509 of the
+# Indian Penal Code", which the singular-only pattern never matched, leaving both
+# sections reported as "Statute (verify)".
+ACT_RE = (
+    r'Sections?\s+(\d+(?:\([\w]+\))*)\s*(?:(?:,|and|&)\s*\d+(?:\([\w]+\))*)*'
+    r'\s+of\s+(?:the\s+)?([A-Z][A-Za-z0-9.\s(){},–-]{2,80}?(?:Act|Sanhita|Adhiniyam|Code|Constitution))'
+)
 
 def _num(sec: str) -> str:
     m = re.match(r'\d+', str(sec))
@@ -48,9 +54,13 @@ def extract_section_act_bindings(text: str) -> dict[str, str]:
     binds: dict[str, str] = {}
     for m in re.finditer(ACT_RE, text, re.IGNORECASE):
         act = norm_act(m.group(2))
-        sec_raw = m.group(1).strip()
-        binds[sec_raw] = act
-        binds[_num(sec_raw)] = act
+        # Capture every number in the "Sections 469 and 509 of the X Act" list,
+        # not just the first, so each one resolves to the named Act.
+        clause = m.group(0)
+        for num in re.findall(r'\d+(?:\([\w]+\))*', clause.split(' of ')[0]):
+            sec_raw = num.strip()
+            binds[sec_raw] = act
+            binds[_num(sec_raw)] = act
     return binds
 
 NDPS_DEFAULT = {2, 8, 21, 22, 27, 35, 37, *range(41, 58)}
@@ -301,6 +311,134 @@ def _sentence_at(text: str, pos: int, limit: int = 300) -> str:
     return sentence
 
 
+# ── Document-grounded sentence mining ───────────────────────────────────
+# These helpers never compose sentences: they return the document's own wording.
+# That keeps every rendered field traceable to a source line, which the previous
+# hardcoded pattern lists could not guarantee outside bail/cybercrime matters.
+
+_FINDING_CUE_RE = re.compile(
+    r'\b(?:we\s+hold|it\s+is\s+established|is\s+established|was\s+established|'
+    r'the\s+court\s+(?:held|found|held\s+that|found\s+that)|held\s+that|found\s+that|'
+    r'the\s+case\s+shows|this\s+shows|demonstrates|establishes|requires\s+that|'
+    r'must\s+establish|turns\s+on|governs|applies\s+to|is\s+governed\s+by)\b',
+    re.I,
+)
+
+_LIMITATION_CUE_RE = re.compile(
+    r'\b(?:however|although|but\s+the|cannot\s+be|could\s+not\s+be|'
+    r'is\s+not\s+(?:a\s+)?(?:certified|verbatim|available)|'
+    r'should\s+be\s+preferred|should\s+not\s+be|'
+    r'not\s+established|not\s+proved|unverified|requires?\s+verification|'
+    r'caution|limitation|limited\s+by|risk\s+of|'
+    r'without\s+compliance|in\s+absence\s+of|is\s+contested|remains\s+an\s+issue|'
+    r'has\s+been\s+(?:struck|repealed)|no\s+longer|superseded)\b',
+    re.I,
+)
+
+# Lines that are structural, not substantive (headers, running titles, references).
+_NON_SUBSTANTIVE_RE = re.compile(
+    r'^\s*(?:REFERENCES?|BIBLIOGRAPHY|APPENDIX|ANNEXURES?|SOURCES?|NOTES?|'
+    r'END OF CASE DOCUMENT|Page\s+\d+)\b',
+    re.I,
+)
+
+
+def _clean_sentence(s: str, limit: int = 300) -> str:
+    """Normalise one mined sentence for display."""
+    s = re.sub(r'\s+', ' ', (s or '')).strip()
+    # Strip a leading all-caps section label and list markers.
+    s = re.sub(r'^(?:[A-Z][A-Z&]{1,}(?:\s+|$)){2,}', '', s).lstrip(' .:;-')
+    s = re.sub(r'^\s*[\(\[](?:\d+|[ivxlcdm]+)[\)\]][.)]?\s*', '', s, flags=re.I)
+    s = re.sub(r'^\s*\d+\.\s*', '', s)
+    if len(s) > limit:
+        s = s[:limit - 1].rstrip() + '…'
+    return s.strip()
+
+
+def _mined_sentences(text: str, cue: re.Pattern[str]) -> list[str]:
+    """Document sentences matching ``cue``, longest/most substantive first."""
+    if not text:
+        return []
+    from app.agents.presentation_universal import SENT
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in SENT(text):
+        s = _clean_sentence(raw)
+        if len(s) < 40 or _NON_SUBSTANTIVE_RE.match(s):
+            continue
+        if not cue.search(s):
+            continue
+        # Drop running page headers that survived cleaning.
+        if re.match(r'^\s*(?:Cyber\s+Crime\s+)?Case\s+Document\b', s, re.I):
+            continue
+        key = re.sub(r'[^a-z0-9]', '', s.lower())[:70]
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    # Longer sentences carry more of the court's reasoning.
+    out.sort(key=lambda x: -len(x))
+    return out
+
+
+def _findings_sentences(text: str) -> list[str]:
+    """Sentences in which the document states a finding or holding."""
+    return _mined_sentences(text, _FINDING_CUE_RE)
+
+
+# Reader-facing prevention advice ("report promptly", "enable 2FA") is not a
+# weakness of the case. The limitation miner was picking it up because those
+# sentences also contain hedging words like "may" and "risk".
+_ADVICE_CUE_RE = re.compile(
+    r'\b(?:report\s+promptly|secure\s+(?:your\s+)?accounts?|use\s+strong\s+passwords?|'
+    r'enable\s+(?:multi-factor|two-factor|2FA)|do\s+not\s+(?:share|click|post)|'
+    r'protect\s+yourself|tips?\s+for\s+(?:users|students|parents)|'
+    r'change\s+your\s+password|avoid\s+clicking|be\s+careful\s+(?:when|while))\b',
+    re.IGNORECASE,
+)
+
+# Genuine self-declared limitations of the source/analysis.
+_LIMITATION_STRONG_RE = re.compile(
+    r'\b(?:this\s+document\s+is\s+not|is\s+not\s+a\s+(?:certified|verbatim)|'
+    r'should\s+be\s+preferred|should\s+not\s+be|may\s+summari[sz]e|'
+    r'requires?\s+verification|is\s+not\s+available|'
+    r'public\s+sources\s+may|secondary\s+summar\w+|not\s+established|'
+    r'no\s+longer\s+(?:a\s+)?(?:valid|applicable|in\s+force))\b',
+    re.IGNORECASE,
+)
+
+
+def _limitation_sentences(text: str) -> list[str]:
+    """Sentences in which the document itself flags a gap, caveat or weakness."""
+    mined = _mined_sentences(text, _LIMITATION_CUE_RE)
+    out: list[str] = []
+    seen: set[str] = set()
+    strong: list[str] = []
+    for s in mined:
+        if _ADVICE_CUE_RE.search(s):
+            continue
+        key = re.sub(r'[^a-z0-9]', '', s.lower())[:70]
+        if key in seen:
+            continue
+        seen.add(key)
+        (strong if _LIMITATION_STRONG_RE.search(s) else out).append(s)
+    # Explicitly declared limitations lead; incidental hedges follow.
+    return strong + out
+
+
+def _documented_outcome(text: str) -> str:
+    """The disposition the document states, or '' when it states none.
+
+    The previous version matched a bail/writ template list and otherwise returned
+    "Judgment delivered and case disposed of on merits." - a fabricated outcome for
+    convictions, acquittals and study documents.
+    """
+    from app.agents.presentation_universal import render_conclusion
+
+    return render_conclusion({"metadata": {}}, text)
+
+
 def safe(meta: dict[str, Any], key: str, fb: str) -> str:
     v = meta.get(key) or {}
     if isinstance(v, dict):
@@ -340,12 +478,16 @@ def build_risk_strategy(text: str, meta: dict[str, Any]) -> dict[str, Any]:
             strengths.append(value.strip())
 
     if not strengths:
-        # No generic praise: an empty list is the honest answer when the
-        # judgment records no favorable finding matching these patterns.
-        strengths = []
+        # Generic fallback: quote the document's own findings instead of either
+        # inventing praise or returning nothing. The previous behaviour appended a
+        # fixed sentence ("Pleadings and documentary record prima facie favor ...")
+        # for every document, and the pattern list above only recognises bail and
+        # cybercrime strings, so any other subject produced either a fabrication or
+        # an empty list.
+        strengths = _findings_sentences(text)[:3]
 
     # Dynamic extraction of case weaknesses & risks
-    weaknesses = []
+    weaknesses: list[str] = []
     if re.search(r'without compliance with mandatory statutory certification|without compliance with Section 63', text, re.I):
         weaknesses.append("Electronic evidence (CDR / cell-site logs) lacks mandatory S.63 BSA certification — admissibility contested.")
     if re.search(r'main conspirators.*absconding|prime conspirators', text, re.I):
@@ -358,21 +500,12 @@ def build_risk_strategy(text: str, meta: dict[str, Any]) -> dict[str, Any]:
         weaknesses.append("Mens rea not conclusively established — intent element weak.")
 
     if not weaknesses:
-        # Mirror the same no-fabrication rule: the caller decides how to render
-        # an absent weakness, rather than the engine inventing a generic one.
-        weaknesses = []
+        # Mirror the same rule for weaknesses: quote what the document itself
+        # flags as a gap, limitation or caution rather than inventing one.
+        weaknesses = _limitation_sentences(text)[:3]
 
     tail = text[-700:] if len(text) > 700 else text
-    if re.search(r'\b(bail application is allowed|bail is allowed|petition is allowed|application is allowed|appeal is allowed)\b', tail, re.I):
-        bond_m = re.search(r'P\.?R\.?\s*Bond of Rs\.?\s*([\d,/-]+)', tail, re.I)
-        bond_str = f" on P.R. Bond of Rs. {bond_m.group(1)}" if bond_m else ""
-        outcome = f"Bail application allowed.{bond_str} {safe(meta, 'petitioner', 'the applicant')} directed to be released."
-    elif re.search(r'\b(appeal dismissed|petition dismissed)\b', tail, re.I):
-        outcome = "Appeal dismissed. Conviction and sentence upheld."
-    elif re.search(r'\b(partly allowed|set aside)\b', tail, re.I):
-        outcome = "Petition partly allowed. Impugned award / findings modified."
-    else:
-        outcome = "Judgment delivered and case disposed of on merits."
+    outcome = _documented_outcome(text)
 
     return {
         'strengths': strengths[:4],  # Limit to top 4
@@ -386,26 +519,61 @@ def build_risk_strategy(text: str, meta: dict[str, Any]) -> dict[str, Any]:
 
 
 def _extract_procedural_directions(text: str) -> str:
-    """Extract specific procedural directions from the judgment text."""
-    tail = text[-2000:] if len(text) > 2000 else text
-    # Look for specific procedural directions
-    directions = []
-    patterns = [
-        r'(?:directed|ordered|required)\s+to\s+([^.]+)',
-        r'(?:shall|must|should)\s+(?:furnish|deposit|refund|pay|appear|execute|file|submit)\s+([^.]+)',
-        r'(?:bond of|sureties of|bail bond)\s+([^.]+)',
-        r'(?:surrender|appear before|report to)\s+([^.]+)',
+    """Extract actionable next steps the document itself states.
+
+    Two shapes are accepted, because not every document is a judgment:
+      * court directions  - "The Registry is directed to ...", "the appellants shall ..."
+      * study/next steps  - "the original judgment should be preferred", "must establish ..."
+    Anything else returns '' so a fabricated action plan is never rendered.
+    """
+    from app.agents.presentation_universal import SENT
+
+    # Court directions: keep the operative clause, highest priority.
+    court_patterns = [
+        r'(?:directed|ordered|required)\s+to\s+[^.;]+',
+        r'(?:shall|must|should)\s+(?:furnish|deposit|refund|pay|appear|execute|file|submit|surrender)\s+[^.;]+',
+        r'(?:bond of|sureties of|bail bond)\s+[^.;]+',
+        r'(?:surrender|appear before|report to)\s+[^.;]+',
     ]
-    for pat in patterns:
+    directions: list[str] = []
+    tail = text[-2000:] if len(text) > 2000 else text
+    for pat in court_patterns:
         for m in re.finditer(pat, tail, re.I):
-            directions.append(m.group(0).strip())
+            directions.append(re.sub(r'\s+', ' ', m.group(0)).strip())
             if len(directions) >= 3:
                 break
         if len(directions) >= 3:
             break
+
     if directions:
         return "; ".join(directions[:3])
-    return "Statutory procedural requirements and admissibility thresholds evaluated."
+
+    # No court order in the document. Use the next steps the document itself
+    # prescribes, rather than a generic sentence that belongs to no source line.
+    next_step = re.compile(
+        r'\b(?:should\s+(?:be\s+preferred|not\s+be|consult|rely|be\s+verified)|'
+        r'must\s+(?:be\s+preferred|establish|be\s+verified)|ought\s+to|'
+        r'next\s+steps?\s+(?:is|are|include)|is\s+intended\s+to|'
+        r'official\s+(?:statutory\s+)?sources?\s+should)\b',
+        re.I,
+    )
+    steps: list[str] = []
+    seen: set[str] = set()
+    for raw in SENT(text):
+        s = _clean_sentence(raw)
+        if len(s) < 30 or _NON_SUBSTANTIVE_RE.match(s):
+            continue
+        if not next_step.search(s):
+            continue
+        key = re.sub(r'[^a-z0-9]', '', s.lower())[:60]
+        if key in seen:
+            continue
+        seen.add(key)
+        steps.append(s)
+        if len(steps) >= 3:
+            break
+
+    return "; ".join(steps)
 
 
 # ================= 7) TIMELINE: REAL DATES & ACCURATE OUTCOME =================
@@ -490,3 +658,121 @@ def extract_articles(text: str) -> list[str]:
         set(re.findall(r'Article\s+(\d+(?:\([A-Za-z0-9]+\))?)', text, re.IGNORECASE)),
         key=lambda x: int(re.match(r'\d+', x).group())
     )
+
+
+# ── Context-aware section filtering ──────────────────────────────────────
+# A provision can appear in a document without being applied in it: cited in a
+# reference list, or mentioned only to record that it was struck down or
+# replaced. Listing those as "applicable sections" misrepresents the case - e.g.
+# Section 66A of the IT Act appears in an IT-crime dossier solely as the
+# provision Shreya Singhal invalidated, yet was surfaced as an applicable
+# provision of the case.
+
+_REFERENCE_HEADING_RE = re.compile(
+    r'^[ \t]*(?:\d+\s*[.)]\s*)?(?:REFERENCES|BIBLIOGRAPHY|WORKS\s+CITED|'
+    r'SOURCES|LIST\s+OF\s+Authorities|FURTHER\s+READING)\b',
+    re.IGNORECASE | re.MULTILINE,
+)
+_ANY_HEADING_RE = re.compile(
+    r'^[ \t]*(?:\d+\s*[.)]\s*)?[A-Z][A-Z &]{3,40}[ \t]*$', re.MULTILINE
+)
+# What actually terminates a references block: an unnumbered all-caps heading
+# (e.g. "APPENDIX", "INDEX TO AUTHORITIES"), or an all-caps line. A numbered
+# entry inside the bibliography is not a terminator.
+_REFERENCE_BLOCK_END_RE = re.compile(
+    r'^[ \t]*(?!\d+[.)])[A-Z][A-Z0-9 &,.\'-]{3,60}[ \t]*$',
+    re.MULTILINE,
+)
+_SUPERSEDED_RE = re.compile(
+    r'\b(?:struck\s+down|struck\s+down|no\s+longer\s+(?:a\s+|an\s+)?'
+    r'(?:valid|applicable|in\s+force|operative|offence|offense|law)'
+    r'|(?:has|was|were)\s+been\s+(?:struck|repealed|invalidated|declared\s+unconstitutional)'
+    r'|declared\s+(?:unconstitutional|invalid|void)|unconstitutional|invalidated'
+    r'|repealed\s+by|superseded\s+by|replaced\s+by\s+the'
+    r'|not\s+(?:in\s+force|applicable|a\s+valid)|is\s+not\s+(?:a\s+)?(?:valid|current)'
+    r'|subsequently\s+struck|was\s+later\s+(?:struck|declared|repealed)'
+    r'|no\s+longer\s+lists?)\b',
+    re.IGNORECASE,
+)
+
+
+# Comparative / meta-discussion cues: the mention is about the provision rather
+# than an application of it ("do not confuse Section 67 with Section 66A", "old
+# notes often list Section 66A").
+_META_CUE_RE = re.compile(
+    r'\b(?:do\s+not\s+confuse|should\s+not\s+confuse|confus\w+\s+with|'
+    r'distinguish\s+between|as\s+opposed\s+to|often\s+list\w*|'
+    r'commonly\s+list\w*|is\s+not\s+to\s+be\s+confused|'
+    r'no\s+longer\s+list\w*|earlier\s+(?:provision|offence|offense))\b',
+    re.IGNORECASE,
+)
+
+# A bibliography entry: an enumerated/bulleted line, usually carrying a citation.
+_REFERENCE_LINE_RE = re.compile(
+    r'^\s*(?:\d+\s*[.)]|[-*•]|\(\w{1,4}\))\s+\S'
+)
+_CITATION_ON_LINE_RE = re.compile(
+    r'\b(?:SCC|SCR|CRILJ|CRLJ|Bom\s*CR|AIR|SCALE|BomLR|PLD|SCC\s+OnLine)\b',
+    re.IGNORECASE,
+)
+
+
+def _enclosing_sentence(text: str, start: int, end: int, cap: int = 400) -> str:
+    """The sentence containing [start, end].
+
+    Boundaries are sentence punctuation only - not newlines - because a PDF line
+    wrap splits phrases ("struck\\ndown", "declared unconstitutional\\nby the
+    Supreme Court"). Cutting at a newline hid the very cue being searched for.
+    Scoping matters too: a fixed window lets one "declared unconstitutional"
+    elsewhere in the document mark every other provision as invalid.
+    """
+    lo = max(0, start - cap)
+    hi = min(len(text), end + cap)
+    left = -1
+    for punct in ".!?;":
+        i = text.rfind(punct, lo, start)
+        if i != -1:
+            left = max(left, i)
+    right = None
+    for punct in ".!?;":
+        i = text.find(punct, end, hi)
+        if i != -1:
+            right = i if right is None else min(right, i)
+    return text[left + 1: (right + 1) if right is not None else hi]
+
+
+def section_mention_is_contextual(text: str, sec: str) -> bool:
+    """True when every mention of ``sec`` is a citation, a warning or a voided provision."""
+    if not text or not sec:
+        return True
+    # Trailing lookahead is "(?![\w])" rather than "\b": a section like "63(1)"
+    # ends in ")", and \b after a non-word character can never match, which
+    # silently reported every sub-section as having no mention.
+    pat = re.compile(
+        rf'(?<![\w])(?:Section|Sec\.?|S\.|Article|Art\.?)\s*{re.escape(str(sec))}(?![\w])',
+        re.IGNORECASE,
+    )
+    substantive = 0
+    for m in pat.finditer(text):
+        sentence = _enclosing_sentence(text, m.start(), m.end())
+        # The provision is declared invalid / superseded in this sentence.
+        if _SUPERSEDED_RE.search(sentence):
+            continue
+        # The mention is comparative/meta rather than an application.
+        if _META_CUE_RE.search(sentence):
+            continue
+        # The mention sits on a bibliography entry.
+        line_start = text.rfind("\n", 0, m.start()) + 1
+        line = text[line_start: text.find("\n", m.end()) if text.find("\n", m.end()) != -1 else len(text)]
+        if _REFERENCE_LINE_RE.match(line) and _CITATION_ON_LINE_RE.search(line):
+            continue
+        substantive += 1
+    return substantive == 0
+
+
+def filter_contextual_sections(
+    sections: list[dict[str, Any]],
+    text: str,
+) -> list[dict[str, Any]]:
+    """Drop sections that the document only cites, never applies."""
+    return [s for s in sections if not section_mention_is_contextual(text, s.get('section_number'))]

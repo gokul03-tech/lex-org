@@ -9,6 +9,7 @@ to ensure accuracy across all document formats.
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime
 from typing import Any
@@ -122,6 +123,44 @@ class LegalMetadataExtractor:
             return None
         return cleaned
 
+    # ── Hybrid extraction policy ──────────────────────────────────────────
+    # Regex runs first and the LLM is a fallback for fields it could not find.
+    # The previous order (LLM first, always) cost a ~20s generation on every
+    # document even when the deterministic path already resolved the caption
+    # perfectly, and an LLM is strictly worse than the regex here: it can invent
+    # a date or a case number that appear nowhere in the document.
+    # Set LLM_METADATA_FALLBACK=false to disable the fallback entirely.
+    @staticmethod
+    def _llm_fallback_enabled() -> bool:
+        raw = os.getenv("LLM_METADATA_FALLBACK", "true").strip().lower()
+        return raw not in ("0", "false", "no", "off")
+
+    @staticmethod
+    def _needs_llm(text: str) -> bool:
+        """True when the deterministic pass is missing a critical caption field."""
+        if not text:
+            return False
+        head = "\n".join(l.strip() for l in text.split("\n")[:40] if l.strip())
+        # No trailing \b after "v.": the character after the period is a space,
+        # so \b (which needs a word character) never matches and every
+        # "X v. Y" caption was reported as having no parties.
+        has_parties = bool(
+            re.search(r'(?:versus|vs\.|v\.)', head, re.IGNORECASE)
+            or re.search(r'^\s*(?:versus|vs\.|v\.?)\s*$', head, re.MULTILINE | re.IGNORECASE)
+        )
+        has_court = bool(re.search(
+            r'\b(?:Supreme\s+Court|High\s+Court|Magistrate|Judge|Court|Tribunal|'
+            r'Commissionerate|Consumer\s+Commission)\b', head, re.IGNORECASE))
+        has_date = bool(re.search(
+            r'\d{1,2}(?:st|nd|rd|th)?[\s\-/.]+'
+            r'(?:January|February|March|April|May|June|July|August|September|October|'
+            r'November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.?[\s\-/,]+\d{4}',
+            text, re.IGNORECASE))
+        has_number = bool(re.search(
+            r'(?:\b(?:No\.?|Number)\s*\d+|\b[A-Z][A-Za-z.]{0,5}\s+No\.?\s*\d+)', head))
+        # Only escalate when something important is genuinely absent.
+        return not (has_parties and has_court and has_date and has_number)
+
     def extract(self, text: str, filename: str = "") -> dict[str, Any]:
         """Extract all metadata from legal text following Master Grounding Rules.
 
@@ -143,8 +182,12 @@ class LegalMetadataExtractor:
         # citations live and were previously misread as the case's own).
         caption = self._header_block(text) or head
 
-        # Try LLM-based extraction first for critical fields
-        llm_metadata = self._extract_metadata_via_llm(text)
+        # Deterministic first; the LLM only fills genuine gaps (see
+        # _needs_llm). This keeps metadata predictable and removes a ~20s
+        # generation from every run where the caption parses cleanly.
+        llm_metadata: dict[str, Any] = {}
+        if self._llm_fallback_enabled() and self._needs_llm(text):
+            llm_metadata = self._extract_metadata_via_llm(text) or {}
         
         # 1. Case Title & Parties (Rule 8 Title Fallback) - use LLM result if available
         llm_petitioner = self._llm_party(llm_metadata, "Petitioner/Applicant Name")
@@ -412,6 +455,26 @@ class LegalMetadataExtractor:
             if m:
                 return {"value": m.group(1).strip(), "status": "extracted"}
 
+        # 1b. Lower-court / tribunal designations. Matters before a magistrate,
+        # a commissionerate or a consumer forum carry a court name that is not
+        # a High Court, and previously reported nothing for those documents.
+        designation = re.search(
+            r'((?:(?:Additional|Deputy|Chief|Senior|Junior|Principal|Metropolitan|District|'
+            r'Sessions|Chief\s+Judicial|Additional\s+Chief\s+Metropolitan|Standing|'
+            r'Presiding)\s+)*'
+            r'(?:Metropolitan\s+Magistrate|Magistrate|Judge|Court|Tribunal|Commissionerate|'
+            r'Consumer\s+Commission|Authority|Chamber)'
+            r'(?:\s*,?\s+[A-Z][A-Za-z.\s]{2,40}){0,3})',
+            text,
+        )
+        if designation:
+            cand = re.sub(r'\s+', ' ', designation.group(1)).strip(' ,.-')
+            # Reject body prose that merely contains a role word.
+            if 4 < len(cand) <= 90 and not re.match(
+                r'^(?:the|this|that|a|an)\b', cand, re.IGNORECASE
+            ):
+                return {"value": cand, "status": "extracted"}
+
         # 2. Infer from citation reporters
         cit_tokens = "".join(citations.get("value") or []) + " " + text[:2000]
         if any(rep in cit_tokens for rep in ["BOMLR", "BomCR", "BOM"]):
@@ -563,12 +626,25 @@ class LegalMetadataExtractor:
         return cleaned if len(cleaned) > 2 else ""
 
     def _extract_court_matter(self, text: str) -> dict[str, Any]:
-        """Extract appeal or special case number from HEADER only (first 12 lines)."""
-        head = "\n".join([l.strip() for l in text.split("\n")[:12] if l.strip()])
+        """Extract the appeal/case number from the caption only.
+
+        A known-prefix list is tried first, then a generic docket pattern. The
+        generic form is required for local-court and magistrate numbering such as
+        "C.C. No. 4680 of 2004" or "Cr.A. 231 of 2019", which the fixed prefix
+        list did not recognise and therefore reported nothing.
+        """
+        head = "\n".join([l.strip() for l in text.split("\n")[:14] if l.strip()])
         pat = r'((?:Special\s+Case|Criminal\s+Appeal|Civil\s+Appeal|Appeal|Writ\s+Petition|W\.?P\.?|S\.?L\.?P\.?|R\.?A\.?)\s*(?:No\.?|Number)?\s*[:\-]?\s*\d+\s+of\s+\d{2,4})'
         m = re.search(pat, head, re.IGNORECASE)
         if m:
             return {"value": m.group(1).strip(), "status": "extracted"}
+
+        # Generic docket: short uppercase-ish prefix + "No." + number + "of" + year.
+        generic = r'((?:[A-Z][A-Za-z]{0,8}\.?){1,3}\s*(?:No\.?|Number)\s*[:\-]?\s*\d+\s+of\s+\d{4})'
+        m = re.search(generic, head)
+        if m:
+            return {"value": m.group(1).strip(), "status": "extracted"}
+
         return {"value": None, "status": "not_found"}
 
     def _extract_filing_number(self, text: str) -> dict[str, Any]:

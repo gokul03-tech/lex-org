@@ -167,6 +167,51 @@ class TextCleaner:
 
         return text.strip()
 
+    # ── Running headers / footers across pages ────────────────────────
+    _PAGE_LABEL_RE = re.compile(r'^\s*(?:page\s+)?\d{1,4}(?:\s+of\s+\d{1,4})?\s*$', re.I)
+
+    def clean_pages(self, pages: list[str]) -> list[str]:
+        """Clean a page list and drop headers/footers that repeat across pages.
+
+        A multi-page judgment or dossier repeats its title on every page
+        ("Cyber Crime Case Document - State of Tamil Nadu v. Suhas Katti") and
+        stamps a page number on each. Those lines sit in the caption region, so
+        leaving them in corrupts party names, the self-title guard and keyword
+        extraction. A line is treated as running furniture only when it appears at
+        the top or bottom of at least 40% of pages (and at least 2 pages), which
+        keeps a one-off heading that happens to repeat inside the body.
+        """
+        cleaned = [self.clean(p or "") for p in pages]
+        if len(cleaned) < 2:
+            return cleaned
+
+        edge_counts: dict[str, int] = {}
+        for page in cleaned:
+            lines = [ln.strip() for ln in page.split("\n") if ln.strip()]
+            if len(lines) < 3:
+                continue
+            for ln in {*lines[:2], *lines[-2:]}:
+                key = re.sub(r'\s+', ' ', ln).strip().lower()
+                if key and not self._PAGE_LABEL_RE.match(ln):
+                    edge_counts[key] = edge_counts.get(key, 0) + 1
+
+        threshold = max(2, int(0.4 * len(cleaned)))
+        running = {k for k, v in edge_counts.items() if v >= threshold}
+        if not running:
+            return cleaned
+
+        out: list[str] = []
+        for page in cleaned:
+            kept = [
+                ln for ln in page.split("\n")
+                if not (
+                    re.sub(r'\s+', ' ', ln).strip().lower() in running
+                    or self._PAGE_LABEL_RE.match(ln.strip())
+                )
+            ]
+            out.append("\n".join(kept).strip())
+        return out
+
     def _fix_encoding(self, text: str) -> str:
         """Fix common PDF extraction encoding issues."""
         replacements = {

@@ -63,6 +63,13 @@ def nows(value: Any) -> str:
 
 
 def text_has(text: str, *needles: str) -> bool:
+    # An empty needle must not match: a null field compared against an empty
+    # substring trivially passed every "or text_has(expected, got)" check, which
+    # reported a missing court as correct.
+    if not any(nows(n) for n in needles):
+        return False
+    if not nows(text):
+        return False
     hay = nows(text)
     return all(nows(n) in hay for n in needles)
 
@@ -372,14 +379,44 @@ CORPORA: dict[str, dict[str, Any]] = {
             "required_dates": ["5 November 2004"],
         },
     },
+    "vikram_dev": {
+        "file": "data/uploads/fc95115557d241da8d14e630a10e7679_Vikram_Dev_Complete_Case_Text.pdf",
+        "label": "Full judgment (23k chars, 4 roman issues, bench, bail orders)",
+        "gold": {
+            "parties": [
+                {"side": "petitioner", "value": "Vikram Dev"},
+                {"side": "respondent", "value": "State of Maharashtra"},
+            ],
+            "court": "SUPREME COURT",
+            "case_number": "2847",
+            "decision_date": "15 AUGUST 2024",
+            "required_sections": ["63", "50"],
+            "hallucinated_sections": [],
+            "required_topics": ["search"],
+            "non_empty": True,
+            "max_issues": 4,
+            "required_concepts": ["bail"],
+            "must_not_invent": ["vicarious conspiracy"],
+            "kg_case_label": "Vikram Dev",
+            "kg_party_sides": ["petitioner", "respondent"],
+            "required_dates": ["15 AUGUST 2024"],
+            "procedure_concepts": ["bail"],
+        },
+    },
 }
 
 
 def load_text(corpus: dict[str, Any]) -> str:
+    """Load a document the way the upload pipeline does.
+
+    Uses clean_pages (running header/footer removal) rather than clean() on the
+    joined text, so the harness measures the same path the API takes. Scoring a
+    differently-cleaned string would hide exactly the defects this checks for.
+    """
     parser = DocumentParser()
     raw = parser.parse(corpus["file"])
     pages = raw.get("pages") or [raw.get("text", "")]
-    return TextCleaner().clean("\n".join(pages))
+    return "\n\n".join(TextCleaner().clean_pages(pages)).strip()
 
 
 def evaluate(path: str, gold: dict[str, Any], label: str) -> dict[str, Any]:
@@ -391,6 +428,21 @@ def evaluate(path: str, gold: dict[str, Any], label: str) -> dict[str, Any]:
     # Deterministic path: the LLM path is exercised separately in the pipeline.
     extractor._extract_metadata_via_llm = lambda _t: {}
     meta = extractor.extract(text)
+
+    # Score the extractor the pipeline actually reports from. case_understanding_agent
+    # calls app.agents.metadata_extractor.extract_metadata, so a harness that only
+    # exercised the document_pipeline copy would miss a whole class of regressions
+    # (that divergence is why the report showed "only the date correct").
+    import app.document_pipeline.metadata_extractor as _dp_meta
+    from app.agents.metadata_extractor import extract_metadata as agent_extract
+
+    real_llm = _dp_meta.LegalMetadataExtractor._extract_metadata_via_llm
+    try:
+        _dp_meta.LegalMetadataExtractor._extract_metadata_via_llm = lambda self, _t: {}
+        agent_meta = agent_extract(text)
+    finally:
+        _dp_meta.LegalMetadataExtractor._extract_metadata_via_llm = real_llm
+    meta_for_report = {**meta, **agent_meta}
 
     # Mirror legal_research_agent: every "Section N" mention in the document,
     # with its Act resolved from in-text bindings (falling back to defaults).
@@ -424,21 +476,21 @@ def evaluate(path: str, gold: dict[str, Any], label: str) -> dict[str, Any]:
             sections.append({"section_number": num, "act": act, "explicitly_mentioned": True})
 
     r_ctx = {
-        "metadata": meta,
+        "metadata": meta_for_report,
         "sections": [s["section_number"] for s in sections],
         "articles": [],
         "precedents": [],
         "category": category,
     }
     issues = _court_framed_issues(text) or extract_grounded_issues(r_ctx, text)
-    conclusion = render_conclusion(meta, text)
-    risk = build_risk_strategy(text, meta)
-    timeline = build_timeline(text, (meta.get("decision_date") or {}).get("value"))
+    conclusion = render_conclusion(meta_for_report, text)
+    risk = build_risk_strategy(text, meta_for_report)
+    timeline = build_timeline(text, (meta_for_report.get("decision_date") or {}).get("value"))
     kg = build_kg(r_ctx)
     _ = extract_submissions(text), extract_precedents(text)
 
     scorers: list[tuple[str, Callable[[], tuple[float, list[str]]]]] = [
-        ("metadata", lambda: score_metadata(text, meta, gold)),
+        ("metadata", lambda: score_metadata(text, meta_for_report, gold)),
         ("statutes", lambda: score_statutes(text, sections, gold)),
         ("issues", lambda: score_issues(text, issues, gold)),
         ("conclusion", lambda: score_conclusion(text, conclusion, gold)),

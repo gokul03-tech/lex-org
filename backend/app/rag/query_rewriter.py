@@ -6,6 +6,7 @@ to improve retrieval recall across vector, keyword, and KG searches.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from loguru import logger
@@ -23,8 +24,9 @@ class QueryRewriter:
     - Section-focused (emphasizes statutory references)
     """
 
-    def __init__(self) -> None:
-        pass
+    def __init__(self, max_variants: int = 5) -> None:
+        # Total variants to return, including the original query.
+        self.max_variants = max(1, max_variants)
 
     def rewrite(self, query: str, intent: str | None = None) -> list[str]:
         """Generate multiple query variants for parallel retrieval.
@@ -47,13 +49,26 @@ class QueryRewriter:
 
             provider = get_qwen_provider()
             prompt = self._build_rewrite_prompt(query, intent)
-            result = provider.generate(prompt, temperature=0.3)
+            # Five short query variants need a few hundred tokens, not the 2048
+            # default. Left uncapped, the model ran on to 12,000 characters of
+            # repeated variants and this single call cost 252s of a 12-minute
+            # pipeline, for output that is then truncated to 5 lines anyway.
+            result = provider.generate(prompt, temperature=0.3, max_tokens=320)
 
-            # Parse generated variants
+            # Parse generated variants, keeping only the requested number.
+            limit = max(1, self.max_variants)
             for line in result.strip().split("\n"):
                 line = line.strip()
-                if line and line not in variants:
+                if not line:
+                    continue
+                # Drop numbering/bullets the model may add ("1. ", "- ").
+                line = re.sub(r'^(?:[-*•]|\d+[.)])\s*', '', line).strip()
+                if not line:
+                    continue
+                if line not in variants:
                     variants.append(line)
+                if len(variants) >= limit + 1:  # +1 for the original query
+                    break
         except Exception as exc:
             logger.warning(f"LLM query rewrite failed, using rule-based fallback: {exc}")
             variants.extend(self._rule_based_rewrite(query, intent))

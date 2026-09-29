@@ -123,7 +123,10 @@ class IntentDetector:
                 f"- general: None of the above\n\n"
                 f"ONLY output the category name (one word, lowercase):"
             )
-            result = provider.generate(prompt, temperature=0.1).strip().lower()
+            # The reply is a single intent label, so the 2048-token default is
+            # pure waste; capping also stops the model rambling past a short
+            # answer and stalling the retrieval stage.
+            result = provider.generate(prompt, temperature=0.1, max_tokens=24).strip().lower()
 
             # Map result to enum
             intent_map = {

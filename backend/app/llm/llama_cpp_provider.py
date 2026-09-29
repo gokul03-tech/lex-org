@@ -193,6 +193,7 @@ class LlamaCppProvider(LLMProvider):
         output_schema: dict[str, Any],
         system_prompt: str = "",
         temperature: float = 0.1,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         """Generate structured JSON using grammar-constrained generation.
 
@@ -202,7 +203,7 @@ class LlamaCppProvider(LLMProvider):
             from app.llm.mock_provider import MockProvider
 
             return MockProvider(self.model_name).generate_structured(
-                prompt, output_schema, system_prompt, temperature
+                prompt, output_schema, system_prompt, temperature, max_tokens
             )
 
         json_instruction = (
@@ -211,13 +212,18 @@ class LlamaCppProvider(LLMProvider):
             f"{prompt}"
         )
 
+        # Generation budget. On a CPU backend every extra token costs real wall
+        # clock (measured ~2.7-5 tok/s), so an oversized default turned one
+        # agent into a 10+ minute call. Callers pass the smallest budget that
+        # fits their schema; None keeps the previous 4096 default.
+        budget = 4096 if max_tokens is None else max_tokens
         try:
             # Try grammar-constrained generation
             schema_str = json.dumps(output_schema)
             grammar_prompt = f"{system_prompt}\n\n{json_instruction}"
             result = self._model.create_completion(
                 prompt=grammar_prompt,
-                max_tokens=self._cap_max_tokens(grammar_prompt, 4096),
+                max_tokens=self._cap_max_tokens(grammar_prompt, budget),
                 temperature=temperature,
                 grammar=json.dumps(
                     {
@@ -232,7 +238,12 @@ class LlamaCppProvider(LLMProvider):
             return json.loads(result["choices"][0]["text"])
         except Exception:
             # Fallback: regular generation then parse JSON
-            response = self.generate(json_instruction, system_prompt, temperature=temperature)
+            response = self.generate(
+                json_instruction,
+                system_prompt,
+                max_tokens=budget,
+                temperature=temperature,
+            )
             try:
                 # Extract JSON block from response
                 import re

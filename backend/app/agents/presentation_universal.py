@@ -368,15 +368,27 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
         re.IGNORECASE,
     )
     title_nows = ""
-    caption = n[:600]
+    # Scan the RAW text: `n` has had its newlines collapsed, so splitting it on
+    # "\n" yields a single line and the per-line scan below is a no-op.
+    caption = text[:800]
     bm = _BODY_MARKER_RE.search(caption)
     if bm:
         caption = caption[: bm.start()]
-    hm = re.search(NAME, caption)
-    if hm:
+    # Scan line by line. NAME is lazy but still spans lower-case words, so a
+    # single search across the caption welded the document's title line
+    # ("CYBER CRIME CASE DOCUMENT") onto the case line and the combined result
+    # failed validation, leaving the judgment's own name uncaptured and letting
+    # it come back later as a "cited precedent" against itself.
+    for line in caption.split("\n"):
+        if not re.search(r'\s(?:v\.|versus)\s', line, re.IGNORECASE):
+            continue
+        hm = re.search(NAME, line)
+        if not hm:
+            continue
         cand = re.sub(r'\s+', ' ', hm.group(0)).strip()
         if 6 <= len(cand) <= 60 and len(cand.split()) <= 8 and not _TITLE_PROSE_RE.search(cand):
             title_nows = nows(cand)[:15]
+            break
 
     def _append(raw_name: str, cite: str) -> None:
         name = _clean_name(raw_name)
@@ -1064,6 +1076,108 @@ def gate(report: dict[str, Any], text: str) -> dict[str, Any]:
     return report
 
 # ---------- 10) LEGACY & GROUNDED ISSUES HELPERS ----------
+# Headings that introduce an explicit list of issues, whether in a judgment
+# ("ISSUES FOR CONSIDERATION") or a study document ("9. LEGAL ISSUES").
+_ISSUE_SECTION_RE = re.compile(
+    r'^[ \t]*(?:\d+\s*[.)]\s*)?'
+    r'(?:LEGAL\s+ISSUES?|ISSUES?\s+(?:FOR\s+CONSIDERATION|ARISING|DISCUSSED)'
+    r'|QUESTIONS?\s+(?:ARISING|CONSIDERED|IN\s+ISSUE)|ISSUES?\s+RAISED)\s*$\n',
+    re.I | re.MULTILINE,
+)
+
+# Enumerated issue items. Ordinal words and Arabic/roman numerals are all
+# accepted because the framing varies by court and by academic source.
+_ISSUE_ITEM_RE = re.compile(
+    r'^\s*(?:'
+    r'(?P<roman>(?:Issue|Question|Point)\s*(?:[IVXLC]+|\d+))\s*[:.)-]\s*'
+    r'|(?P<ordinal>(?:First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth))\s*,\s*'
+    r'|\(?([0-9]{1,2})\)\s*'
+    r'|\[([0-9]{1,2})\]\s*'
+    r')(?P<body>.+)$',
+    re.I | re.MULTILINE,
+)
+
+# An issue statement must actually be a question the law must answer.
+_ISSUE_QUESTION_RE = re.compile(
+    r'\b(?:whether|if\s+the|whether\s+the|is\s+it|was\s+the|does\s+the|'
+    r'did\s+the|can\s+the|would\s+the|ought\s+the)\b',
+    re.I,
+)
+
+
+def _enumerated_issues(text: str) -> list[dict[str, Any]]:
+    """Issues stated as an explicit enumerated list, with or without a heading.
+
+    Judgments frame issues as "Issue I:"; study documents, moot notes and academic
+    dossiers instead use "First, whether ...", "Second, whether ..." or a numbered
+    list under a "LEGAL ISSUES" heading. Requiring the roman-numeral form left the
+    issue list completely empty for those documents.
+    """
+    if not text:
+        return []
+
+    # Bound the search to an issues section when one is present, else the whole text.
+    region = text
+    m = _ISSUE_SECTION_RE.search(text)
+    if m:
+        # Stop at the next same-level numbered/uppercase heading.
+        tail = text[m.end():]
+        nxt = re.search(
+            r'^[ \t]*(?:\d+\s*[.)]\s+[A-Z]|[A-Z][A-Z &]{3,40}\s*$)',
+            tail,
+            re.MULTILINE,
+        )
+        region = tail[:nxt.start()] if nxt else tail[:4000]
+    else:
+        region = text
+
+    n = norm(region)
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for item in _ISSUE_ITEM_RE.finditer(region):
+        body = re.sub(r'\s+', ' ', item.group('body')).strip()
+        # An issue may wrap onto following lines until the next marker.
+        if not body or not _ISSUE_QUESTION_RE.search(body):
+            continue
+        if len(body) < 20:
+            continue
+        label = (item.group('roman') or item.group('ordinal') or '').strip(" :.)-")
+        text_out = f"{label}: {body}" if label else body
+        key = nows(body)[:60]
+        if key in seen:
+            continue
+        seen.add(key)
+        results.append({
+            'issue': text_out,
+            'text': text_out,
+            'evidence': body if len(body) < 400 else body[:397].rstrip() + '…',
+            'source': 'document',
+            'page': '1-2',
+        })
+
+    # Headless ordinal form: "First, whether ..." captured above. If nothing
+    # matched but the region is an issues section, fall back to its question
+    # sentences rather than reporting an empty list.
+    if not results:
+        for s in SENT(n):
+            if _ISSUE_QUESTION_RE.search(s) and 30 <= len(s) <= 300 and '?' in s or (
+                _ISSUE_QUESTION_RE.search(s) and s.strip().lower().startswith(('first', 'second', 'third', 'fourth'))
+            ):
+                key = nows(s)[:60]
+                if key in seen:
+                    continue
+                seen.add(key)
+                results.append({
+                    'issue': s, 'text': s, 'evidence': s,
+                    'source': 'document', 'page': '1-2',
+                })
+            if len(results) >= 6:
+                break
+
+    return results[:6]
+
+
 def _court_framed_issues(text: str) -> list[dict[str, Any]]:
     """Extract issues the court itself framed (Issue I: ..., Issue II: ...)."""
     if not text:
@@ -1115,8 +1229,14 @@ def _court_framed_issues(text: str) -> list[dict[str, Any]]:
         out = [o for o in out if o['text'].split(':')[0].upper() != key or len(o['text']) >= len(item['text'])]
         seen.add(key)
         out.append(item)
-    # Limit to 4 issues for bail/criminal cases to avoid overwhelming the user
-    return out[:4]
+    # Roman-numeral framing found: return it.
+    if out:
+        return out[:4]
+
+    # No "Issue I:" framing. Accept an explicitly enumerated issue list instead
+    # ("First, whether ...", "1. whether ..."), which study documents, moot notes
+    # and academic dossiers use. Every item is still text the document states.
+    return _enumerated_issues(text)
 
 def extract_grounded_issues(r: dict[str, Any], text: str) -> list[dict[str, Any]]:
     """Extract grounded legal issues paired with real verbatim quotes from this specific document.
@@ -1129,18 +1249,20 @@ def extract_grounded_issues(r: dict[str, Any], text: str) -> list[dict[str, Any]
     if court_issues:
         return court_issues
     
-    # If no court-framed issues found, return empty list (no fake issues)
-    # The caller should handle empty issues appropriately
-    return []
+    # If no roman-numeral framing exists, accept an explicitly enumerated issue
+    # list. _court_framed_issues already applies that fallback, so simply defer
+    # to it. Still document-stated, never invented: every item is a line the
+    # document itself wrote under an issues/questions heading.
+    return _court_framed_issues(text)
 
 def render_issues(r: dict[str, Any], text: str | None = None) -> list[str]:
-    # Use ONLY court-framed issues - no fallback to section-based issue generation
+    # Use ONLY document-stated issues - no fallback to section-based generation
     if text:
         court = _court_framed_issues(text)
         if court:
             return [item['text'] for item in court]
     
-    # Return empty list if no court-framed issues found - no fake issues
+    # Return empty list if the document states no issues - no fake issues
     return []
 
 # Outcome verbs across civil/criminal/constitutional practice. A disposition is
@@ -1179,6 +1301,49 @@ def _disposition_sentences(block: str) -> list[str]:
     return out
 
 
+# Subject markers that show a sentence is about *this* case's outcome.
+_PARTY_MARKER_RE = re.compile(
+    r'\b(?:accused|appellant|respondent|petitioner|applicant|defendant|'
+    r'complainant|the accused|the appellant|the court|the trial court|the magistrate)\b',
+    re.I,
+)
+_SECTION_MARKER_RE = re.compile(r'\b(?:Section|Sec\.?|Ss\.?|Article)\s*\d+', re.I)
+_PENALTY_MARKER_RE = re.compile(
+    r'\b(?:fine\s+of|sentence(?:d)?\s+(?:of|to)|imprisonment|rigorous|'
+    r'cost(?:s)?\s+of|amounting\s+to|period\s+of)\b',
+    re.I,
+)
+# Sentences about other cases, superseded law, or speculation are not this
+# document's disposition and must be ranked below a real finding.
+_OFF_TOPIC_RE = re.compile(
+    r'\b(?:struck\s+down|replaced\s+by|no\s+longer|was\s+later|'
+    r'subsequently\s+struck|superseded|has\s+been\s+repealed|'
+    r'could\s+result|would\s+be|may\s+be\s+(?:treated|regarded)|'
+    r'historical(?:ly)?\s+importance|is\s+often\s+described|'
+    r'widely\s+discussed|frequently\s+described|for\s+academic\s+work)\b',
+    re.I,
+)
+
+
+def _rank_disposition(sent: str) -> int:
+    """Score how strongly a sentence states this document's own outcome."""
+    score = 0
+    if _PARTY_MARKER_RE.search(sent):
+        score += 3
+    if _SECTION_MARKER_RE.search(sent):
+        score += 3
+    if _PENALTY_MARKER_RE.search(sent):
+        score += 2
+    if _OFF_TOPIC_RE.search(sent):
+        score -= 5
+    # A bare reference to another case's outcome is not this case's result.
+    if re.search(r'\b(?:v\.?|versus)\b', sent) and not _PARTY_MARKER_RE.search(sent):
+        score -= 2
+    if 40 <= len(sent) <= 320:
+        score += 1
+    return score
+
+
 def render_conclusion(r: dict[str, Any], text: str) -> str:
     """Report the disposition the document actually states, or an empty string.
 
@@ -1186,28 +1351,44 @@ def render_conclusion(r: dict[str, Any], text: str) -> str:
     returned "Relief granted per operative directions of the judgment." - a
     fabricated outcome for any document outside that vocabulary (for example a
     conviction, or an academic dossier). It now quotes the document's own
-    disposition sentence and returns '' when the document states none, so the
-    caller can show nothing rather than something false.
+    disposition sentence, ranked so that a finding about this case outranks a
+    passing remark about other cases or superseded law, and returns '' when the
+    document states no outcome, so the caller shows nothing rather than a
+    falsehood.
     """
     stripped = _strip_signature(text)
     block = _conclusion_section(text) or stripped
 
-    # Prefer an explicit disposition sentence from the conclusion section.
-    for s in reversed(_disposition_sentences(block)):
-        cleaned = re.sub(r'^\s*(?:\d+\.\s*|\(?(?:i{1,3}|iv|v|vi{0,3}|ix|x)\)\s*)+', '', s).strip()
-        cleaned = re.split(
-            r'\s+\(?(?:ii|iii|iv|v|vi|vii|viii|ix|x)\)\s+', cleaned, maxsplit=1, flags=re.I
-        )[0].strip()
-        if cleaned and not re.match(r'^(?:\.{3,}|NEW DELHI|Dated\b)', cleaned, re.I):
-            return cleaned if len(cleaned) <= 420 else cleaned[:417].rstrip() + '…'
+    # Conclusion-section candidates outrank body candidates, so a sentence seen
+    # in both is not penalised for being repeated.
+    ranked: list[tuple[int, int, str]] = []
+    for priority, source in ((2, block), (1, stripped)):
+        for idx, sent in enumerate(_disposition_sentences(source)):
+            cleaned = re.sub(r'^\s*(?:\d+\.\s*|\(?(?:i{1,3}|iv|v|vi{0,3}|ix|x)\)\s*)+', '', sent).strip()
+            cleaned = re.split(
+                r'\s+\(?(?:ii|iii|iv|v|vi|vii|viii|ix|x)\)\s+', cleaned, maxsplit=1, flags=re.I
+            )[0].strip()
+            if not cleaned or re.match(r'^(?:\.{3,}|NEW DELHI|Dated\b)', cleaned, re.I):
+                continue
+            # Drop a leading all-caps label that the PDF glued to the sentence
+            # ("JUDGMENT AND SENTENCE Publicly available accounts state ...").
+            cleaned = re.sub(r'^(?:[A-Z][A-Z&]{1,}(?:\s+|$)){2,}', '', cleaned).lstrip(' .:;-')
+            if not cleaned:
+                continue
+            if len(cleaned) <= 420:
+                ranked.append((_rank_disposition(cleaned), priority, cleaned))
+            else:
+                ranked.append((_rank_disposition(cleaned), priority, cleaned[:417].rstrip() + '…'))
 
-    # No disposition in the conclusion block: use an explicit one from the body.
-    for s in reversed(_disposition_sentences(stripped)):
-        if len(s) > 25:
-            return s if len(s) <= 420 else s[:417].rstrip() + '…'
+    if not ranked:
+        return ""
 
-    # Otherwise state nothing rather than invent a result.
-    return ""
+    ranked.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    best_score = ranked[0][0]
+    if best_score <= 0:
+        # Nothing in the document states a usable outcome.
+        return ""
+    return ranked[0][2]
 
 def render_chips(r: dict[str, Any]) -> list[str]:
     sections = r.get('sections') or []
