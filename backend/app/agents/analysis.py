@@ -516,7 +516,12 @@ Additional Query: {query}
             max_tokens=520,
         )
 
-        state["case_summary"] = result.get("summary", "")
+        summary_value = str(result.get("summary") or "").strip()
+        if not summary_value and result.get("raw_response"):
+            # Grammar-constrained generation failed and the fallback returned
+            # unparsed text. Surface that rather than reporting no summary.
+            summary_value = re.sub(r'\s+', ' ', str(result["raw_response"])).strip()[:600]
+        state["case_summary"] = summary_value
         state["case_facts"] = result.get("facts", {})
         state["entities"] = result.get("entities", {})
 
@@ -639,7 +644,11 @@ async def legal_research_agent(state: AgentState) -> AgentState:
         acts: list[str] = []
         precedents: list[dict[str, Any]] = []
 
-        import re
+        # Imported before the RAG loop below uses it. The import used to sit
+        # AFTER that loop, so the first norm_act() call raised
+        # UnboundLocalError and the whole agent aborted - which silently emptied
+        # applicable_sections and precedents.
+        from app.agents.analysis_fixes_v2 import norm_act as _norm_act
 
         for result in rag_results:
             doc_type = result.get("doc_type") or (result.get("metadata") or {}).get("document_type") or "act"
@@ -697,7 +706,7 @@ async def legal_research_agent(state: AgentState) -> AgentState:
                         "relevance_score": result.get("score", 0.0),
                     })
                     if act_name and act_name != "Unknown Act":
-                        acts.append(norm_act(act_name))
+                        acts.append(_norm_act(act_name))
 
         # Also extract sections and acts directly cited in the uploaded case document(s)
         from app.agents.analysis_fixes_v2 import (
@@ -706,7 +715,6 @@ async def legal_research_agent(state: AgentState) -> AgentState:
             extract_cited_precedents,
             extract_articles,
             similarity_pct,
-            norm_act,
         )
 
         def _act_key(name: str) -> str:
