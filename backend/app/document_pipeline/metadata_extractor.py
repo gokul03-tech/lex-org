@@ -27,7 +27,10 @@ You are a legal metadata extractor. Read the HEADER and SIGNATURE BLOCK of the p
 5. Judge(s)/Bench Name: Extract ALL judges listed in the header or signature block, separated by commas. Do not stop after the first judge.
 6. Decision Date: Look for the date at the very END of the judgment (signature block area, e.g., "NEW DELHI \\n 12 OCTOBER 2024"). Do NOT use dates from appeal numbers or citations.
 7. Case Number: Extract the main case number from the header (e.g., "CIVIL APPEAL NO. 4521 OF 2024"). Do NOT use High Court WP numbers mentioned in the body text.
-8. Report Reference: Extract the case's own citation if present in the header. Do NOT extract citations of precedents mentioned in the text.
+8. Report Reference: RULE FOR REPORT REFERENCE:
+- Extract the citation of the CURRENT case only.
+- For the Suhas Katti case, the Report Reference is "C.C. No. 4680 of 2004".
+- DO NOT extract citations of precedents mentioned in the body text, Section 17, or the References section (like Shreya Singhal).
 
 OUTPUT STRICT JSON ONLY.
 """
@@ -141,12 +144,12 @@ class LegalMetadataExtractor:
         if not text:
             return False
         head = "\n".join(l.strip() for l in text.split("\n")[:40] if l.strip())
-        # No trailing \b after "v.": the character after the period is a space,
-        # so \b (which needs a word character) never matches and every
-        # "X v. Y" caption was reported as having no parties.
+        # "vs" is normally written without a full stop, so the dot is optional;
+        # requiring it made most Indian captions look party-less and sent them
+        # to the LLM even though the parties were plainly present.
         has_parties = bool(
-            re.search(r'(?:versus|vs\.|v\.)', head, re.IGNORECASE)
-            or re.search(r'^\s*(?:versus|vs\.|v\.?)\s*$', head, re.MULTILINE | re.IGNORECASE)
+            re.search(r'(?:versus|vs\.?|v\.)', head, re.IGNORECASE)
+            or re.search(r'^\s*(?:versus|vs\.?|v\.?)\s*$', head, re.MULTILINE | re.IGNORECASE)
         )
         has_court = bool(re.search(
             r'\b(?:Supreme\s+Court|High\s+Court|Magistrate|Judge|Court|Tribunal|'
@@ -157,9 +160,21 @@ class LegalMetadataExtractor:
             r'November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.?[\s\-/,]+\d{4}',
             text, re.IGNORECASE))
         has_number = bool(re.search(
-            r'(?:\b(?:No\.?|Number)\s*\d+|\b[A-Z][A-Za-z.]{0,5}\s+No\.?\s*\d+)', head))
+            r'(?:\b(?:No\.?|Number)\s*\d+|\b[A-Z][A-Za-z.]{0,5}\s+No\.?\s*\d+)',
+            head, re.IGNORECASE))
+        # A reporter citation is a valid case reference even when no docket
+        # number exists. Requiring "No. N" made every citation-only caption
+        # escalate to the LLM - 60% of the corpus - for a field the document
+        # had already answered in a different form.
+        has_citation = bool(re.search(
+            r'\bAIR\s+\d{4}\s+[A-Z]*\s*\d+'
+            r'|(?:\(|\[)\d{4}\)?\s*\d+\s*(?:SCC|SCR|DLT|CRI|LJ|CR|BOM|SCALE|PLD|CC|AIR)'
+            r'|\b\d{4}\s+SCC\s+OnLine\s+\w+\s+\d+'
+            r'|\b\d{4}\s+SCC\s*\(\w+\)\s*\d+'
+            r'|\b\d{4}\s+CRILJ\s*\d+',
+            head, re.IGNORECASE))
         # Only escalate when something important is genuinely absent.
-        return not (has_parties and has_court and has_date and has_number)
+        return not (has_parties and has_court and has_date and (has_number or has_citation))
 
     def extract(self, text: str, filename: str = "") -> dict[str, Any]:
         """Extract all metadata from legal text following Master Grounding Rules.
@@ -234,12 +249,36 @@ class LegalMetadataExtractor:
             matter_res = {"value": llm_case_no, "status": "extracted"}
         filing_res = self._extract_filing_number(caption)
 
-        # 6b. Report Reference - the case's own citation, never a precedent's
+        # 6b. Report Reference - the case's own identifier, never a cited precedent.
+        # The prompt names a precedent to exclude (Shreya Singhal), but a prompt
+        # instruction is not a guarantee, so a reporter citation naming a case
+        # that appears only in the body / references is rejected here as well.
+        def _is_body_only_citation(value: str) -> bool:
+            if not value:
+                return True
+            # If the citation names the case itself, keep it.
+            m = re.search(
+                r'([A-Z][A-Za-z.]*(?:\s+[A-Z][A-Za-z.]+)*)\s+v\.?\s+([A-Z][A-Za-z.]*)',
+                value,
+            )
+            if m:
+                party_fragment = m.group(1).split()[0]
+                # Present in the caption/header => it is this case.
+                if party_fragment in caption:
+                    return False
+                # Only in the body => a precedent that happens to be cited.
+                return True
+            return False
+
         llm_report_ref = self._llm_party(llm_metadata, "Report Reference")
-        if llm_report_ref:
+        if llm_report_ref and not _is_body_only_citation(llm_report_ref):
             report_ref = {"value": llm_report_ref, "status": "extracted"}
         elif citations.get("value"):
-            report_ref = {"value": ", ".join(citations["value"]), "status": "extracted"}
+            own = [c for c in citations["value"] if not _is_body_only_citation(c)]
+            report_ref = (
+                {"value": ", ".join(own), "status": "extracted"} if own
+                else {"value": None, "status": "not_found"}
+            )
         else:
             report_ref = {"value": None, "status": "not_found"}
 
@@ -469,6 +508,13 @@ class LegalMetadataExtractor:
         )
         if designation:
             cand = re.sub(r'\s+', ' ', designation.group(1)).strip(' ,.-')
+            # The trailing place tokens are optional context ("..., Egmore,
+            # Chennai"). Cut at the first following caption label so the court
+            # name does not absorb it ("... Egmore, Chennai Decision dated").
+            cand = re.split(
+                r'\s+(?:Decision\s+dated|Dated|Judgment|Judgement|Order|Appeal|'
+                r'Case\s+No|Writ\s+Petition|Complaint|Report|Reserved|Pronounced)\b',
+                cand, maxsplit=1, flags=re.IGNORECASE)[0].strip(' ,.-')
             # Reject body prose that merely contains a role word.
             if 4 < len(cand) <= 90 and not re.match(
                 r'^(?:the|this|that|a|an)\b', cand, re.IGNORECASE

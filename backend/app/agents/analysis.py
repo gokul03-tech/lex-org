@@ -38,6 +38,11 @@ CRITICAL RULES:
 4. If the document explicitly numbers the issues, extract them exactly as numbered.
 5. Do NOT include counsel submissions, factual matrix paragraphs, or "ANALYSIS AND REASONING" headers in the issue text.
 
+RULE FOR ISSUE EXTRACTION:
+- Extract ALL issues framed by the court. Do not stop after 3 issues.
+- Continue extracting until you reach the section titled "ANALYSIS AND REASONING".
+- Do not include the words "ANALYSIS AND REASONING" at the end of the last issue.
+
 OUTPUT: Return a numbered list of the exact issues framed by the court.
 """
 
@@ -50,6 +55,17 @@ RULES:
 3. If the specific name of the counsel is not mentioned, DO NOT use generic fallback text like "Petitioner contends allegations warrant relief." Instead, summarize the actual legal arguments made on behalf of each side based on the text.
 4. Ensure strict separation between Prosecution/Respondent arguments and Defense/Appellant arguments.
 5. Do NOT include the court's framed issues in counsel submissions.
+
+RULES FOR ACADEMIC DOSSIERS (no counsel names present):
+- For academic dossiers, look for sections titled "DEFENCE CONTENTIONS" (Section 8) or "PROSECUTION WITNESSES AND EVIDENCE" (Section 7).
+- For standard judgments, look for numbered lists (i), (ii), (iii), (iv) following counsel names.
+- If specific counsel names are missing, summarize the actual arguments from the "Defence Contentions" section.
+- CRITICAL EXCLUSION RULE: DO NOT extract from sections titled "Case Study for Legal-AI",
+  "Conclusion and References", "References", "Academic Case Dossier", or
+  "Why this is a Cyber-Crime Case". Those sections describe the DOCUMENT, not
+  the litigation, and their text is not a submission by either side.
+- If a side genuinely has no recorded argument, return an empty list. Never
+  fabricate a plausible-sounding argument to fill the field.
 
 OUTPUT:
 - Petitioner/Defense Submissions: [actual numbered arguments]
@@ -67,6 +83,11 @@ EXTRACTION RULES:
 - Strategic Ground: Extract the actual arguments made by the Appellant/Petitioner (look for "Mr. [Name] submitted..."). Do NOT use procedural closing lines like "Pending interlocutory applications...".
 - Key Strengths: Extract substantive favorable findings made by the Court (look for "We are of the view that...", "The circular fails..."). Do NOT use generic fallbacks.
 - Action Plan: Extract ONLY direct procedural orders/directions from the Court (look for "The Registry is directed...", "The appellants shall..."). Do NOT include legal reasoning or precedent citations.
+
+CRITICAL EXCLUSION RULE:
+- DO NOT extract text from sections titled "Case Study for Legal-AI", "Conclusion and References", "References", "Academic Case Dossier", or "Why this is a Cyber-Crime Case".
+- The Conclusion MUST ONLY come from the section titled "JUDGMENT AND SENTENCE" (Section 12) or "CONCLUSION AND ORDER".
+- The Action Plan MUST ONLY be derived from the court's specific sentencing or orders (e.g., "two years' rigorous imprisonment"), NOT from the bibliography or academic commentary.
 
 OUTPUT FORMAT:
 - Strategic Ground: [Appellant's actual arguments]
@@ -498,9 +519,27 @@ Additional Query: {query}
         state["case_summary"] = result.get("summary", "")
         state["case_facts"] = result.get("facts", {})
         state["entities"] = result.get("entities", {})
-        # legal_issues / timeline are intentionally left unset: both are rebuilt
-        # from the full document downstream, and an LLM value here would be
-        # silently overwritten later while costing generation time now.
+
+        # Issues and timeline are derived here deterministically instead of being
+        # generated. Both are read downstream (legal_research builds its RAG query
+        # from state["legal_issues"]), and the document-stated extractors are more
+        # reliable than the model: they cannot invent a question the court never
+        # framed. report_generation re-grounds issues later; this keeps the value
+        # correct for every consumer in between.
+        from app.agents.presentation_universal import (
+            _court_framed_issues,
+            _enumerated_issues,
+        )
+        from app.agents.analysis_fixes_v2 import build_fact_timeline
+
+        full_text = "\n\n".join(
+            d.get("text") or d.get("parsed_text") or "" for d in documents
+        )
+        det_issues = _court_framed_issues(full_text) or _enumerated_issues(full_text)
+        state["legal_issues"] = [i.get("text") or i.get("issue") or "" for i in det_issues]
+        det_date = (state.get("metadata") or {}).get("decision_date")
+        dec_date = det_date.get("value") if isinstance(det_date, dict) else det_date
+        state["timeline"] = build_fact_timeline(full_text, dec_date)
 
         # Counsel submissions from the LLM, filtered for placeholders so the
         # deterministic extractor's empty lists stay authoritative when the

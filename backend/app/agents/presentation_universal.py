@@ -597,9 +597,18 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
     # Force a sentence boundary before an enumerated argument so "(i) ..." starts
     # its own unit even when it follows a colon in the same clause.
     n = re.sub(r'[:;]\s+(?=\(\s*[ivxlcdm]+\s*\)|\d+\.\s)', '. ', norm(text))
+    # A numbered section heading ("8. DEFENCE CONTENTIONS") must also become its
+    # own unit, otherwise it is welded onto the first sentence of the section and
+    # the heading/argument split is impossible.
+    n = re.sub(r'(?:(?<=\s)|(?<=^))\d{1,2}\.\s+(?=[A-Z][A-Z &/\'-]{5,})', '. ', n)
+    from app.agents.doc_meta_guard import is_meta_text
     a, b = [], []
     cur = None
     current_point = ''  # Argument currently being accumulated for `cur`
+    # Inside a dossier section ("DEFENCE CONTENTIONS") the prose carries no
+    # reporting verb, so each substantive sentence must become its own bullet
+    # rather than being merged with the next one.
+    section_mode = False
 
     # Party roles are written in the plural in long judgments ("on behalf of the
     # appellants"), so the trailing "s" is optional throughout.
@@ -608,6 +617,24 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
     PAT_A_START = re.compile(
         rf'\b(?:counsel (?:for|appearing (?:for|on behalf of)|on behalf of) (?:the )?{_A}'
         rf'|the {_A} (?:has invoked|contends|submitted|argued|pleaded|advanced))',
+        re.I,
+    )
+    # Dossier sections that state a side's arguments without naming counsel.
+    # A study document has no "Mr. X, learned Counsel..." to anchor on, so
+    # without these the extractor returned nothing and the caller fell back to
+    # generic text.
+    # The heading is glued to the sentence that follows it by norm()
+    # ("DEFENCE CONTENTIONS Public descriptions of the defence state ..."), so
+    # these are searched anywhere in the sentence, not anchored to it. The
+    # sentence is kept when it carries real content after the heading.
+    SECTION_A = re.compile(
+        r'(?:DEFEN[CS]E\s+(?:CONTENTIONS|ARGUMENTS|POSITION)'
+        r'|(?:APPELLANT|PETITIONER|ACCUSED)\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS))\b',
+        re.I,
+    )
+    SECTION_B = re.compile(
+        r'(?:PROSECUTION\s+(?:ARGUMENTS|CONTENTIONS|EVIDENCE|WITNESSES)'
+        r'|(?:RESPONDENT|STATE)\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS))\b',
         re.I,
     )
     PAT_B_START = re.compile(
@@ -627,6 +654,30 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
         s_clean = s.strip()
         if ' vs ' in s_clean or ' versus ' in s_clean or s_clean.startswith('Bench:'):
             continue
+
+        # Dossier section anchor: "8. DEFENCE CONTENTIONS" switches the active
+        # speaker. If the heading sentence also carries argument text after the
+        # heading, that text is kept; if it is heading-only, it is dropped.
+        m_a = SECTION_A.search(s_clean)
+        m_b = SECTION_B.search(s_clean)
+        if m_a or m_b:
+            _switch('a' if m_a else 'b')
+            tail_text = s_clean[(m_a or m_b).end():].strip(' .:;-')
+            # The heading is often welded to the NEXT sentence too
+            # ("PROSECUTION WITNESSES AND EVIDENCE Public accounts state ...").
+            # Two section anchors can therefore land in one sentence; only the
+            # first is this sentence's speaker, so stop the tail at the second.
+            second = SECTION_B.search(tail_text) or SECTION_A.search(tail_text)
+            if second:
+                tail_text = tail_text[:second.start()].strip(' .:;-')
+            if tail_text and len(tail_text) > 25 and not is_meta_text(tail_text):
+                # Dossier prose has no reporting verb, so mark this section as
+                # emitting one point per sentence instead of merging the whole
+                # section into a single argument.
+                section_mode = True
+                current_point = tail_text
+            continue
+
         if re.search(r'\b(?:We have heard|We hold|In our considered view|The petition is|Bail is allowed|Award is set aside)\b', s_clean, re.I):
             # Court's own reasoning ends the submissions: close the open point.
             if cur is not None:
@@ -664,11 +715,12 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
 
         def _switch(side: str) -> None:
             """Close the previous speaker's points and make ``side`` current."""
-            nonlocal cur, current_point
+            nonlocal cur, current_point, section_mode
             if cur is not None and cur != side:
                 _finalize(cur)
             cur = side
             current_point = ''
+            section_mode = False
 
         # Detect speaker start. Enumerated points are emitted as separate
         # entries so the UI lists (i), (ii), (iii) separately instead of
@@ -686,12 +738,56 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
                 # A new marker starts a new argument.
                 _finalize(cur)
             current_point = f"{current_point} {clean_s}".strip() if current_point else clean_s
+        elif cur and current_point.strip() and not section_mode and not has_verb and not is_list_item:
+            # Continuation prose inside an already-open argument. Keep it with
+            # the point it belongs to: splitting it out turned one argument
+            # ("(i) ... relied on X. The certificate was produced only during
+            # the arguments.") into two half-arguments in the UI.
+            current_point = f"{current_point} {clean_s}".strip()
+        elif cur:
+            # A new sentence that opens a fresh point: either it carries a
+            # reporting verb, or it begins a new sentence with no open point.
+            # Dossier sections use no reporting verbs, so each substantive
+            # sentence becomes its own bullet there.
+            if current_point.strip():
+                _finalize(cur)
+            if clean_s.strip():
+                current_point = clean_s
 
     # Flush any remaining points
     if cur is not None:
         _finalize(cur)
 
-    return a[:4], b[:4]
+    # A dossier section yields one long argument; split it into readable points
+    # on sentence boundaries so the UI shows separate bullets. Split the raw
+    # accumulator: _finalize already truncated each point to 420 chars, so
+    # splitting afterwards could only ever recover one fragment.
+    return _split_long_points(a)[:4], _split_long_points(b)[:4]
+
+
+def _split_long_points(items: list[str], max_len: int = 420) -> list[str]:
+    """Split over-long extracted arguments into separate, readable points.
+
+    Splitting is unconditional rather than only above ``max_len``: a single
+    8,000-character "argument" is not one submission, and it silently ran past
+    the caller's list cap so only one item was ever shown.
+    """
+    from app.agents.doc_meta_guard import is_meta_text as _is_meta
+
+    out: list[str] = []
+    for item in items or []:
+        text = re.sub(r'\s+', ' ', item or '').strip()
+        if not text:
+            continue
+        sentences = [s.strip() for s in SENT(text) if len(s.strip()) > 40 and not _is_meta(s)]
+        if not sentences:
+            sentences = [text[:max_len - 1] + '…'] if len(text) > max_len else [text]
+        elif len(sentences) == 1 and len(sentences[0]) <= max_len:
+            out.append(sentences[0])
+            continue
+        for s in sentences:
+            out.append(s if len(s) <= max_len else s[:max_len - 1].rstrip() + '…')
+    return out
 
 # ---------- 6) EVIDENCE (per-item reliability, word-aligned) ----------
 CUES = [
@@ -737,7 +833,13 @@ def extract_evidence(text: str) -> list[dict[str, Any]]:
 
 # ---------- 7) TIMELINE + OUTCOME ----------
 def build_timeline(text: str, date: str | None) -> list[dict[str, Any]]:
-    body = _strip_signature(text or '')
+    from app.agents.doc_meta_guard import is_meta_text, strip_meta_sections, strip_reference_blocks
+
+    # Chronology lives in the narrative record. Dossier meta-sections and the
+    # bibliography contain dates in the same shape ("5 November 2004: India
+    # Code -- Bharatiya Nyaya Sanhita, 2023"), so they must be removed before
+    # matching or they are indistinguishable from real events.
+    body = _strip_signature(strip_reference_blocks(strip_meta_sections(text or '')))
     n = norm(body)
     def _bad_fact(fact: str) -> bool:
         if not fact or len(fact) < 20:
@@ -745,6 +847,9 @@ def build_timeline(text: str, date: str | None) -> list[dict[str, Any]]:
         if re.search(r'\bJ\s*U\s*D\s*G\s*M\s*E\s*N\s*T\b|HON[\'’]?BLE\s+MR\.|CHIEF JUSTICE OF INDIA|\bJUSTICE\b', fact, re.I):
             return True
         if re.match(r'^(?:IN THE SUPREME|CRIMINAL APPEAL|NO\.\s*\d)', fact, re.I):
+            return True
+        # Self-referential commentary is not a chronological event.
+        if is_meta_text(fact):
             return True
         return False
 
@@ -771,12 +876,25 @@ def _extract_procedural_actions(text: str, n: str, op: str | None) -> list[str]:
     ensuring zero hallucination and strict grounding. Only captures actual
     procedural directives (directions, orders, mandates), not legal reasoning."""
     actions = []
-    
+
+    # Read the record only. Dossier self-description ("This expanded dossier is
+    # intended to...") and bibliography lines ("India Code -- Bharatiya Nyaya
+    # Sanhita, 2023") otherwise surface as action items, because they follow the
+    # same comma-and-date shape as a citation.
+    from app.agents.doc_meta_guard import is_meta_text, strip_meta_sections
+
+    record_text = strip_meta_sections(text)
+    n = norm(record_text)
+    op = _operative_sentence(n) if op is None else op
+
     sentences = SENT(n)
     for s in sentences:
         s_clean = s.strip()
         # Never surface court-framed issues / headings as next steps
         if re.match(r'^(?:Issue\s+[IVXLC]+|We frame the following|CONCLUSION AND ORDER|ORDER AND DIRECTIONS)\b', s_clean, re.I):
+            continue
+        # Never surface document-about-itself commentary or bare citations.
+        if is_meta_text(s_clean):
             continue
         # Only match actual procedural directives with strong directive verbs
         if re.search(r'\b(?:directed to|ordered to|shall furnish|shall deposit|shall refund|shall pay|shall appear|shall execute|shall file|shall submit|shall comply|shall furnish|shall deposit|shall pay|shall appear|shall execute|shall submit|shall surrender|shall appear|shall report|shall deposit|shall refund|shall pay|shall produce|shall disclose|shall provide|shall maintain|shall preserve|shall not|shall cease|shall desist|shall refrain)\b', s_clean, re.I):
@@ -789,19 +907,25 @@ def _extract_procedural_actions(text: str, n: str, op: str | None) -> list[str]:
                         if len(actions) >= 3:
                             break
                         
-    if not actions and op:
+    # Fallbacks must be grounded too: neither the operative sentence nor the
+    # last substantive sentence may be document-about-itself commentary.
+    if not actions and op and not is_meta_text(op):
         actions = [op]
     elif not actions:
         fb = _last_substantive(n)
-        if fb:
+        if fb and not is_meta_text(fb):
             actions = [fb]
-            
+
     return actions
 
 def build_risk(text: str, subs_a: list[str], subs_b: list[str]) -> dict[str, Any]:
-    body = _strip_signature(text)
+    from app.agents.doc_meta_guard import is_meta_text, strip_meta_sections
+
+    # Work on the record only: dossier self-description and bibliographies are
+    # not evidence, findings or an outcome for this case.
+    body = _strip_signature(strip_meta_sections(text))
     n = norm(body)
-    concl_block = _conclusion_section(text) or n
+    concl_block = _conclusion_section(body) or n
     
 # Extract strengths from COURT'S FAVORABLE FINDINGS in CONCLUSION AND ORDER section (not procedural closings)
     # Use ONLY the conclusion block, not the full document
@@ -829,7 +953,14 @@ def build_risk(text: str, subs_a: list[str], subs_b: list[str]) -> dict[str, Any
         strengths = []
 
     op = _operative_sentence(norm(concl_block)) or _operative_sentence(n)
-    fallback_quote = _last_substantive(norm(concl_block)) or _last_substantive(n) or n[-160:].strip()
+    # The tail fallback must also not be self-referential commentary.
+    fallback_quote = (
+        _last_substantive(norm(concl_block))
+        or _last_substantive(n)
+        or ""
+    )
+    if not fallback_quote or is_meta_text(fallback_quote):
+        fallback_quote = ""
 
     str_list = strengths[:2]  # Limit to top 2
     contest_cue = re.compile(r'\b(contended|opposed|defended|failed to|disputed|however)\b', re.I)
@@ -879,14 +1010,18 @@ def build_risk(text: str, subs_a: list[str], subs_b: list[str]) -> dict[str, Any
     else:
         conclusion = fallback_quote
 
-    # Reject signature-block leakage as conclusion/action
+    # Reject signature-block leakage as conclusion/action.
+    # The previous recovery path took the first long sentence of the conclusion
+    # block, which on a dossier is the document's own caption header ("CYBER
+    # CRIME CASE DOCUMENT State of Tamil Nadu v. Suhas Katti ..."). Recover via
+    # render_conclusion, which ranks by actual outcome language, and if that
+    # finds nothing, report nothing rather than the header.
     if re.match(r'^(?:\.{3,}|\[?A|NEW DELHI|Dated\b)', conclusion, re.I) or len(conclusion) < 15:
         if op and SPEC_OUTCOME.search(op):
             conclusion = norm(op)
-        elif concl_block:
-            first = next((s.strip() for s in SENT(norm(concl_block)) if len(s.strip()) > 30), None)
-            if first:
-                conclusion = first
+        else:
+            recovered = render_conclusion({'metadata': {}}, body)
+            conclusion = recovered if recovered and not is_meta_text(recovered) else ''
 
     return {
         'strengths': str_list,
@@ -1230,8 +1365,12 @@ def _court_framed_issues(text: str) -> list[dict[str, Any]]:
         seen.add(key)
         out.append(item)
     # Roman-numeral framing found: return it.
+    # The cap was 4, which silently discarded the LAST issue ("Issue IV",
+    # "Issue V") whenever a court framed more than four - the reported Aarav
+    # Enterprises failure. Raising it is the lesser evil: showing one extra
+    # bullet beats dropping a question the court actually decided.
     if out:
-        return out[:4]
+        return out[:8]
 
     # No "Issue I:" framing. Accept an explicitly enumerated issue list instead
     # ("First, whether ...", "1. whether ..."), which study documents, moot notes
@@ -1347,6 +1486,11 @@ def _rank_disposition(sent: str) -> int:
 def render_conclusion(r: dict[str, Any], text: str) -> str:
     """Report the disposition the document actually states, or an empty string.
 
+    Dossier/meta sections ("CONCLUSION AND REFERENCES", "CASE STUDY FOR
+    LEGAL-AI", bibliographies) describe the document rather than the litigation.
+    On the Suhas Katti dossier they supplied the entire "conclusion" and the
+    action plan, so they are excluded before anything is read from them.
+
     Previously this matched bail/writ keyword templates and, when none matched,
     returned "Relief granted per operative directions of the judgment." - a
     fabricated outcome for any document outside that vocabulary (for example a
@@ -1356,8 +1500,12 @@ def render_conclusion(r: dict[str, Any], text: str) -> str:
     document states no outcome, so the caller shows nothing rather than a
     falsehood.
     """
-    stripped = _strip_signature(text)
-    block = _conclusion_section(text) or stripped
+    from app.agents.doc_meta_guard import is_meta_text, strip_meta_sections
+
+    # Read the record, not the document's own commentary about itself.
+    record_text = strip_meta_sections(text)
+    stripped = _strip_signature(record_text)
+    block = _conclusion_section(record_text) or stripped
 
     # Conclusion-section candidates outrank body candidates, so a sentence seen
     # in both is not penalised for being repeated.
@@ -1373,7 +1521,9 @@ def render_conclusion(r: dict[str, Any], text: str) -> str:
             # Drop a leading all-caps label that the PDF glued to the sentence
             # ("JUDGMENT AND SENTENCE Publicly available accounts state ...").
             cleaned = re.sub(r'^(?:[A-Z][A-Z&]{1,}(?:\s+|$)){2,}', '', cleaned).lstrip(' .:;-')
-            if not cleaned:
+            if not cleaned or is_meta_text(cleaned):
+                # Reject self-referential commentary even when it survived the
+                # section strip (it can appear in a normal-looking paragraph).
                 continue
             if len(cleaned) <= 420:
                 ranked.append((_rank_disposition(cleaned), priority, cleaned))

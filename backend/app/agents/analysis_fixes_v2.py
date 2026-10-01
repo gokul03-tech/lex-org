@@ -217,8 +217,17 @@ build_evidence_items = extract_evidence_items
 
 # ================= 5) ARGUMENTS: EXTRACT REAL SUBMISSIONS =================
 def extract_submissions(text: str) -> tuple[list[str], list[str]]:
-    # Protect honorific abbreviations so `[^.]*\.` never terminates at "Ms."
-    text = re.sub(r'\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|No|Sec|Art|Ex|Rs|Adv|APP|Vs|vs|v)\.', lambda m: m.group(0).replace('.', '<DOT>'), text, flags=re.I)
+    """Delegate to the canonical extractor.
+
+    This was a second, weaker implementation. It returned nothing for a dossier
+    whose arguments live under "DEFENCE CONTENTIONS" with no counsel names, so
+    the API returned empty submission lists and the UI fell back to generic
+    text. presentation_universal's extractor handles judgments (named counsel,
+    (i)-(iv) lists) and dossiers (section headings).
+    """
+    from app.agents.presentation_universal import extract_submissions as _canonical
+
+    return _canonical(text)
     pros_pats = [
         r'(?:The case of the prosecution is that|She argued that|She further pointed out that|On the other hand, the learned APP|prosecution submitted that)\s*([^.]*\.)',
         r'(?:learned counsel appearing for the respondent|respondent contends that|defence raised by the insurer)\s*([^.]*\.)'
@@ -581,9 +590,40 @@ def build_fact_timeline(text: str, decision_date: str | None = None) -> list[dic
     seen: set[str] = set()
     res: list[dict[str, str]] = []
     
-    # Strip signature block first to avoid extracting dates from signature block
+    from app.agents.doc_meta_guard import is_meta_text as _is_meta_text
+
+    def _is_non_event(fact: str) -> bool:
+        """True when a date window is caption/header or self-referential prose."""
+        if not fact:
+            return True
+        # Caption / header text ("... v. Suhas Katti C.C. No. 4680 of 2004
+        # Additional Chief Metropolitan Magistrate").
+        if re.search(
+            r'\bC\.?\s?C\.?\s+No\.|\b(?:Petitioner|Appellant)\s+.*\bversus\b|'
+            r'\bNo\.\s*\d+\s+of\s+\d{4}|\b(?:vs\.?|versus)\s+[A-Z][\w.\s]{3,40}$|'
+            r'Additional\s+Chief\s+\w+\s+Magistrate|^\s*(?:IN\s+THE|CYBER\s+CRIME\s+CASE)',
+            fact, re.I,
+        ):
+            return True
+        # Statutory/transitional commentary, not an event of the case.
+        if _is_meta_text(fact):
+            return True
+        if re.search(
+            r'\bhas\s+since\s+been\s+replaced\b|\breplaced\s+by\s+the\s+'
+            r'Bharatiya|\bBharatiya\s+Naya\s+Sanhita\s*,?\s*2023\b.*\bAct\b', fact, re.I
+        ):
+            return True
+        return False
+
+    # Strip the signature block first, then dossier/meta sections and any
+    # trailing bibliography. Otherwise the References list supplies dates
+    # ("5 November 2004: India Code -- Bharatiya Nyaya Sanhita, 2023") that look
+    # identical to real chronology, and the timeline reports the bibliography.
     text_stripped = _strip_signature(text)
-    
+    from app.agents.doc_meta_guard import strip_meta_sections, strip_reference_blocks
+
+    text_stripped = strip_reference_blocks(strip_meta_sections(text_stripped))
+
     # 1. Match DD-MM-YYYY dates
     for m in re.finditer(r'\b(\d{1,2})[-/](\d{1,2})[-/](\d{4})\b', text_stripped):
         date_str = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
@@ -613,6 +653,11 @@ def build_fact_timeline(text: str, decision_date: str | None = None) -> list[dic
             continue
         seen.add(sort_key)
         fact_text = re.sub(r'\s+', ' ', text_stripped[max(0, m.start() - 120): min(len(text_stripped), m.end() + 120)]).strip()
+        # A date whose surrounding window is caption/header or commentary is not
+        # a chronological event. The decision date itself is appended separately,
+        # so dropping its own caption occurrence is safe.
+        if _is_non_event(fact_text):
+            continue
         res.append({
             'date': f"{day} {m.group(2)} {year}",
             'event': fact_text,

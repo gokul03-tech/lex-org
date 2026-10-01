@@ -113,11 +113,37 @@ function normalizeStatutes(sections: any, statutes: any): StatuteItem[] {
   const seen = new Set<string>();
   // Canonical dedup key: case-insensitive, punctuation/whitespace stripped, "the " dropped,
   // so "NDPS Act, 1985", "The NDPS Act 1985" and "NDPS Act 1985" collapse to a single chip.
+  // Canonical dedup key. Act abbreviations must expand to one form, otherwise
+  // "Section 469 - Indian Penal Code" and "Section 469 - IPC" produced two chips
+  // for the same provision.
   const canon = (s: string) => s.toLowerCase().replace(/\bthe\s+/g, '').replace(/[^a-z0-9]/g, '');
+  const actKey = (act: string) => {
+    const raw = act.toLowerCase();
+    // Map short forms onto the long name so both collapse to the same token.
+    if (/\bipc\b|\bindian penal code\b/.test(raw)) return 'ipc';
+    if (/\bbns\b|\bbharatiya nyaya\b/.test(raw)) return 'bns';
+    if (/\bbnss\b|\bbharatiya nagarik suraksha\b/.test(raw)) return 'bnss';
+    if (/\bbsa\b|\bbharatiya sakshya\b/.test(raw)) return 'bsa';
+    if (/\bcrpc\b|\bcode of criminal procedure\b/.test(raw)) return 'crpc';
+    if (/\biea\b|\bindian evidence act\b/.test(raw)) return 'iea';
+    if (/\bndps\b/.test(raw)) return 'ndps';
+    return canon(act);
+  };
+  // Dedup on (number, canonical act) rather than the whole display string, so
+  // wording differences in the act name never split one provision into two.
+  const keyFor = (num: string, act: string) => {
+    const bare = String(num || '')
+      .replace(/^\s*(?:section|sec\.?|s\.?|article|art\.?)\s*/i, '')
+      .replace(/\s*[-–—]\s*.*$/, '')
+      .replace(/\([^)]*\)/g, (mm) => mm)
+      .trim();
+    const nk = canon(bare);
+    return act ? `${nk}|${actKey(act)}` : nk;
+  };
   const push = (num: string, act: string, context?: string) => {
     if (!num && !act) return;
     const display = num && act ? `Section ${num.replace(/^Section\s+/i, '')} — ${act}` : num || act;
-    const key = canon(display);
+    const key = keyFor(num, act);
     if (seen.has(key)) return;
     seen.add(key);
     out.push({ num, act, display, context });

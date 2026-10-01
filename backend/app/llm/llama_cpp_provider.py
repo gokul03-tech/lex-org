@@ -8,6 +8,7 @@ Requires llama-cpp-python package. Falls back to MockProvider if not installed.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from typing import Any
@@ -20,6 +21,145 @@ from app.llm.provider import LLMProvider
 # reuses the same loaded weights instead of re-mmapping the GGUF per agent.
 _shared_llamas: dict[tuple, Any] = {}
 _load_lock = threading.Lock()
+
+
+_cuda_check: dict[str, bool] = {}
+
+
+def _cuda_available() -> bool:
+    """True only when llama-cpp was built with a usable CUDA backend.
+
+    A CPU-only build silently ignores n_gpu_layers, so setting the env var alone
+    appears to do nothing. This detects that case and says so plainly instead of
+    leaving the configuration looking applied. Memoised because the probe prints
+    a device banner on every call.
+    """
+    cached = _cuda_check.get("ok")
+    if cached is not None:
+        return cached
+    try:
+        from llama_cpp import llama_cpp as _lc
+
+        has_cuda = bool(getattr(_lc, "llama_supports_gpu_offload", lambda: False)())
+    except Exception:
+        has_cuda = False
+    _cuda_check["ok"] = has_cuda
+    return has_cuda
+
+
+def _gpu_memory_by_pid() -> set[int]:
+    """PIDs of processes currently holding GPU memory."""
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return {int(x) for x in out.stdout.split() if x.strip().isdigit()}
+    except Exception:
+        return set()
+
+
+def _free_vram_mb() -> float:
+    """VRAM not in use by anyone.
+
+    Memory held by ANOTHER process on the same GPU is not ours to allocate. A
+    long-running uvicorn that already holds the model still leaves enough
+    headroom, but a second concurrent run does not - which previously made the
+    provider pick 0 layers, fail to create a llama_context, and thrash through
+    its retry ladder.
+    """
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return float(out.stdout.strip().splitlines()[0])
+    except Exception:
+        return 0.0
+
+
+_auto_layers_cache: dict[tuple, int] = {}
+
+
+def _auto_gpu_layers(model_path: str, requested: int, n_ctx: int) -> int:
+    """Choose a layer count that fits the GPU instead of guessing.
+
+    A partial offload fails at load time with a CUDA OOM, and the failure mode is
+    slow and confusing. Budget = free VRAM - KV cache - ~350MB CUDA context, then
+    convert that to layers from the model's own file size. On a 4GB card with a
+    4.7GB model this yields a usable partial offload instead of asking for all
+    layers and dying.
+
+    The result is memoised per (model, requested, n_ctx). Without this the answer
+    changes as transient VRAM use rises and falls, which also changes the
+    shared-model cache key - so the same model was re-mapped from disk on every
+    agent (observed: 21 reloads in one run, 0 MiB actually resident on the GPU).
+    """
+    if requested <= 0:
+        return 0
+    cache_key = (model_path, requested, n_ctx)
+    if cache_key in _auto_layers_cache:
+        return _auto_layers_cache[cache_key]
+    result = _auto_gpu_layers_measure(model_path, requested, n_ctx)
+    _auto_layers_cache[cache_key] = result
+    return result
+
+
+def _auto_gpu_layers_measure(model_path: str, requested: int, n_ctx: int) -> int:
+    """Choose a layer count that fits the GPU instead of guessing.
+
+    A partial offload fails at load time with a CUDA OOM, and the failure mode is
+    slow and confusing. Budget = free VRAM - KV cache - ~350MB CUDA context, then
+    convert that to layers from the model's own file size. On a 4GB card with a
+    4.7GB model this yields a usable partial offload instead of asking for all
+    layers and dying.
+    """
+    if requested <= 0:
+        return 0
+    free_mb = _free_vram_mb()
+
+    if free_mb <= 0:
+        logger.warning("No free VRAM detected; running the model on CPU.")
+        return 0
+
+    # KV cache estimate (GQA, f32) plus CUDA context/workspace headroom.
+    layers, kv_heads, head_dim = 28, 4, 128
+    kv_mb = 2 * layers * kv_heads * head_dim * max(512, n_ctx) * 4 / 1e6
+    budget_mb = free_mb - kv_mb - 350
+    if budget_mb <= 200:
+        logger.warning(
+            f"Only {free_mb:.0f}MB free VRAM; not enough for GPU offload. Using CPU."
+        )
+        return 0
+
+    try:
+        weight_mb = os.path.getsize(model_path) / 1e6
+        total_layers = 28
+        affordable = int(budget_mb / (weight_mb / total_layers))
+        chosen = max(0, min(requested, affordable, total_layers))
+    except Exception:
+        chosen = requested
+
+    holders = _gpu_memory_by_pid()
+    if chosen == 0:
+        if holders:
+            logger.warning(
+                f"Only {free_mb:.0f}MB VRAM free and it is held by process(es) "
+                f"{sorted(holders)}; not enough for this process. Using CPU. "
+                f"Stop the other process (or raise LLM_N_GPU_LAYERS) to use the GPU."
+            )
+        else:
+            logger.warning("Not enough VRAM for any layer; falling back to CPU.")
+    elif chosen < requested:
+        logger.info(
+            f"VRAM budget: {free_mb:.0f}MB free, KV ~{kv_mb:.0f}MB -> "
+            f"offloading {chosen}/{total_layers} layers (requested {requested})."
+        )
+    return chosen
 
 
 def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers: int):
@@ -110,10 +250,31 @@ class LlamaCppProvider(LLMProvider):
     def _load_model(self) -> None:
         """Load the GGUF model via the shared module-level cache."""
         try:
+            gpu_layers = self.n_gpu_layers
+            if gpu_layers > 0:
+                if not _cuda_available():
+                    # A CPU-only build ignores n_gpu_layers. Say so, or the
+                    # operator will believe offload is active when it is not.
+                    logger.warning(
+                        "LLM_N_GPU_LAYERS is set but this llama-cpp-python build has no "
+                        "CUDA backend, so the model will still run entirely on the CPU. "
+                        "Rebuild with: pip install cmake && "
+                        "CMAKE_ARGS='-DGGML_CUDA=on' pip install --force-reinstall "
+                        "--no-cache-dir llama-cpp-python"
+                    )
+                    gpu_layers = 0
+                else:
+                    gpu_layers = _auto_gpu_layers(
+                        self.model_path, self.n_gpu_layers, self.n_ctx
+                    )
+
             self._model = _get_shared_llama(
-                self.model_path, self.n_ctx, self.n_threads, self.n_gpu_layers
+                self.model_path, self.n_ctx, self.n_threads, gpu_layers
             )
-            logger.info(f"Model ready: {self.model_name}")
+            logger.info(
+                f"Model ready: {self.model_name} "
+                f"(gpu_layers={gpu_layers}, n_ctx={self.n_ctx})"
+            )
         except ImportError:
             logger.warning("llama-cpp-python not installed. Using mock fallback.")
             self._model = None
