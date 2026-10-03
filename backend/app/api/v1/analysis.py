@@ -547,7 +547,12 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
         confidence_scores=confidence_scores,
         trust_score=trust_score,
         entities=state.get("entities", {}),
-        legal_issues=state.get("legal_issues", []),
+        # Persist the tagged issue records rather than bare strings. The JSON
+        # column accepts either, but a bare string is rendered by the frontend
+        # as an AI issue, which mislabelled every verbatim document issue. Each
+        # dict keeps issue/text and, for document-sourced items, the verbatim
+        # evidence quote the UI needs for its "Document Fact" badge.
+        legal_issues=state.get("legal_issue_details") or state.get("legal_issues", []),
         applicable_acts=state.get("applicable_acts", []),
         applicable_sections=sections_list,
         precedents=precedents_list,
@@ -900,6 +905,16 @@ async def get_analysis(
         "timeline": live_timeline or [],
         "strategy_options": analysis.strategy_options or [],
         "legal_issues": analysis.legal_issues or [],
+        # Whether the issue list came from the document or from the LLM
+        # fallback, so the UI can badge generated issues.
+        "legal_issues_source": (
+            "ai"
+            if any(
+                isinstance(i, dict) and (i.get("source") == "ai" or i.get("generated"))
+                for i in (analysis.legal_issues or [])
+            )
+            else "document"
+        ),
         "acts": analysis.applicable_acts or [],
         "sections": analysis.applicable_sections or [],
         "articles": (analysis.procedural_status or {}).get("articles") or [],
