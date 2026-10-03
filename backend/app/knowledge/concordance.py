@@ -175,47 +175,6 @@ IEA_TO_BSA: dict[str, dict[str, Any]] = {
 }
 
 
-import re
-
-CONCORDANCE_MAP: dict[str, str] = {
-    "482": "528",      # CrPC to BNSS
-    "65B": "63",       # IEA to BSA
-    "420": "318",      # IPC to BNS
-    "406": "316",      # IPC to BNS
-    "302": "103(1)",   # IPC to BNS
-    "307": "109",      # IPC to BNS
-    "120B": "61(2)",   # IPC to BNS
-    "498A": "85 / 86", # IPC to BNS
-    "124A": "152",     # IPC to BNS
-    "378": "304",      # IPC to BNS
-    "379": "303(2)",   # IPC to BNS
-    "34": "3(5)",      # IPC to BNS
-    "439": "483",      # CrPC to BNSS
-    "438": "482",      # CrPC to BNSS
-    "437": "480",      # CrPC to BNSS
-    "167": "187",      # CrPC to BNSS
-    "41A": "35(3)",    # CrPC to BNSS
-    "154": "173",      # CrPC to BNSS
-    "164": "183",      # CrPC to BNSS
-    "27": "23",        # IEA to BSA
-    "45": "39",        # IEA to BSA
-    "32(1)": "26(a)",  # IEA to BSA
-}
-
-
-def get_concordance(section: str) -> Optional[str]:
-    """Return concordance mapping only if in allowlist."""
-    if not section:
-        return None
-    match = re.search(r'(?:Section\s+|Sec\.?\s*|u\/s\s*)?(\d+[A-Za-z]?(?:\(\d+\))*)', str(section), re.IGNORECASE)
-    if match:
-        section_num = match.group(1).upper()
-        target = CONCORDANCE_MAP.get(section_num) or CONCORDANCE_MAP.get(re.sub(r'\(.*?\)', '', section_num))
-        if target:
-            return f"Section {target}"
-    return None
-
-
 def lookup_concordance(act_name: str, section_number: str) -> Optional[dict[str, Any]]:
     """Look up new corresponding statutory section for an old law citation."""
     act_clean = act_name.upper()
@@ -237,4 +196,3 @@ def lookup_concordance(act_name: str, section_number: str) -> Optional[dict[str,
             return {"old_act": "Indian Evidence Act, 1872", "old_section": sec_clean, **match}
 
     return None
-

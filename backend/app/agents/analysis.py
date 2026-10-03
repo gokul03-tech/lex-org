@@ -27,25 +27,140 @@ from app.llm.llama_cpp_provider import is_mock_fallback_active
 # because nothing told it not to.
 
 ISSUE_EXTRACTION_PROMPT = """
-You are extracting the LEGAL ISSUES framed by the judge in this judgment.
+You are an expert legal AI extracting the core legal or factual questions that the court (or author) must decide in this case file.
+
+CRITICAL INSTRUCTIONS:
+1. DO NOT just look for the word "Issue". Legal documents use many different phrases to frame questions.
+2. You MUST recognize and extract issues from ANY of these alternative headings or phrasing:
+   - "We frame the following issues for our consideration:"
+   - "Issues Framed for Trial"
+   - "Questions considered in the appeal"
+   - "Main question:"
+   - "Legal Issues"
+   - "The case can be organized into several legal and factual questions. First... Second..."
+   - Numbered lists like "Issue 1:", "Issue 2:", "1.", "2."
+
+3. EXTRACTION RULES:
+   - Extract ALL questions listed. Do NOT stop after 2 or 3.
+   - Do NOT truncate mid-sentence. If an issue spans multiple lines, combine them into one complete, coherent sentence.
+   - If the document uses "First,", "Second:", or "Main question:", extract them exactly as written.
+   - DO NOT extract academic commentary, disclaimers, or hypothetical learning points as issues.
+   - DO NOT include section headers like "ANALYSIS AND REASONING" in the extracted issue text.
+
+4. OUTPUT FORMAT:
+   Return a clean, numbered list of ALL issues found.
+   Example:
+   1. Whether the plaintiff proves a binding contract under the Purchase Order.
+   2. Main question: Whether the FIR allegations disclose cognizable offences or are merely a civil dispute.
+"""
+
+# Fallback-only. Issued as a SEPARATE call, and only when the deterministic
+# extractors (_court_framed_issues, _enumerated_issues) return nothing, so a
+# standard judgment never reaches the model and keeps its verbatim,
+# zero-hallucination issues. Academic dossiers and illustrative files that
+# frame no issues at all fall back to this.
+ISSUE_LLM_FALLBACK_PROMPT = """
+You are extracting the LEGAL ISSUES framed for decision in this case file.
 
 CRITICAL RULES:
-1. DO NOT create an issue for every section mentioned. Sections are laws; Issues are questions the judge must answer.
-2. Look for explicit issue-framing language such as:
+1. Look for ANY section that frames the questions the court or author is deciding.
+2. Recognize these alternative headings:
    - "We frame the following issues for our consideration:"
-   - "The issues that arise are:"
-   - "Issue I:", "Issue II:", etc.
-3. Extract ONLY the questions the court is deciding.
-4. If the document explicitly numbers the issues, extract them exactly as numbered.
-5. Do NOT include counsel submissions, factual matrix paragraphs, or "ANALYSIS AND REASONING" headers in the issue text.
-
-RULE FOR ISSUE EXTRACTION:
-- Extract ALL issues framed by the court. Do not stop after 3 issues.
-- Continue extracting until you reach the section titled "ANALYSIS AND REASONING".
-- Do not include the words "ANALYSIS AND REASONING" at the end of the last issue.
-
-OUTPUT: Return a numbered list of the exact issues framed by the court.
+   - "Issues Framed for Trial"
+   - "Questions considered in the appeal"
+   - "Main question:"
+   - "Legal Issues"
+   - "The case can be organized into several legal and factual questions. First... Second..."
+   - Numbered issues (Issue 1, Issue 2, etc.)
+3. Extract ALL issues. Do NOT stop after 2 or 3. Do NOT truncate mid-sentence.
+4. Return a clean, numbered list.
 """
+
+# Issues whose text never appears in the document are not paraphrases of the
+# source, they are inventions, and must be dropped even from an LLM response.
+_ISSUE_NOISE_RE = re.compile(
+    r"^\s*(?:the\s+)?(?:main\s+question|issue|question)s?\b[^:]{0,40}:\s*$",
+    re.IGNORECASE,
+)
+
+
+def _clean_llm_issue(raw: Any) -> str:
+    """Normalise one LLM issue to a single clean sentence."""
+    s = re.sub(r"\s+", " ", str(raw or "")).strip()
+    # Drop list markers: "1.", "2)", "Issue 3 -", "(iv)".
+    s = re.sub(r"^\s*(?:\(?\d{1,2}\)?[.)]|issue\s+[0-9ivx]{1,4}\s*[-–:.]\s*)", "", s, flags=re.IGNORECASE)
+    # Keep the label when the document itself used one ("Main question: ...").
+    if _ISSUE_NOISE_RE.match(s):
+        return ""
+    return s.strip(" -–—:;,")
+
+
+async def llm_extract_issues_as_fallback(text: str) -> list[dict[str, Any]]:
+    """Generate issues with the LLM. Only for documents that state none.
+
+    Returns dicts shaped like the deterministic extractors so downstream
+    consumers (report, KG, API) need no special case, with ``source='ai'`` so
+    the UI badges them as AI-inferred rather than as document facts.
+
+    Any model failure yields ``[]``: a missing issue list is far better than a
+    fabricated one, and the caller falls back to reporting no issues.
+    """
+    text = text or ""
+    if len(text) < 200:
+        return []
+    try:
+        from app.llm.qwen import get_qwen_provider, QWEN_SYSTEM_PROMPT
+
+        provider = get_qwen_provider()
+        result = provider.generate_structured(
+            f"{ISSUE_LLM_FALLBACK_PROMPT}\n\nCase Document:\n{text[:14000]}",
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "legal_issues": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["legal_issues"],
+            },
+            system_prompt=QWEN_SYSTEM_PROMPT,
+            temperature=0.1,
+            # 900 leaves room for ~12 full issues plus the JSON scaffolding;
+            # a tighter budget silently cut the tail mid-issue.
+            max_tokens=900,
+        )
+
+        raw = result.get("legal_issues") or []
+        if isinstance(raw, str):
+            # Grammar-constrained generation can fall back to raw text; recover
+            # the numbered list rather than discarding a usable answer.
+            raw = [ln for ln in re.split(r"\n+", raw) if re.match(r"^\s*(?:\d+[.)]|issue\b)", ln, re.I)]
+
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in raw:
+            cleaned = _clean_llm_issue(item)
+            if len(cleaned) < 15:
+                continue
+            key = re.sub(r"[^a-z0-9]", "", cleaned.lower())[:80]
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({
+                "issue": cleaned,
+                "text": cleaned,
+                # No verbatim quote exists for a generated issue, so `evidence`
+                # is deliberately absent: normalizeIssues treats a missing
+                # quote as AI-sourced rather than as a document fact.
+                "source": "ai",
+                "generated": True,
+            })
+        logger.info(f"[IssueFallback] LLM produced {len(out)} issue(s) (deterministic found none)")
+        return out
+    except Exception as exc:
+        logger.warning(f"[IssueFallback] unavailable, reporting no issues: {exc}")
+        return []
 
 COUNSEL_EXTRACTION_PROMPT = """
 Extract counsel submissions from the legal document.
@@ -547,6 +662,22 @@ Additional Query: {query}
         )
         det_issues = _court_framed_issues(full_text) or _enumerated_issues(full_text)
         state["legal_issues"] = [i.get("text") or i.get("issue") or "" for i in det_issues]
+        state["legal_issue_details"] = det_issues
+        state["legal_issues_source"] = "document" if det_issues else ""
+
+        # Hybrid fallback: only when the document states no issues at all. A
+        # standard judgment always takes the deterministic branch above and
+        # never pays for (or risks) a generation.
+        if not det_issues:
+            ai_issues = await llm_extract_issues_as_fallback(full_text)
+            if ai_issues:
+                state["legal_issues"] = [i["text"] for i in ai_issues]
+                state["legal_issue_details"] = ai_issues
+                state["legal_issues_source"] = "ai"
+                logger.info(
+                    f"[IssueFallback] deterministic extraction found 0 issues; "
+                    f"using {len(ai_issues)} LLM-generated issue(s)"
+                )
         det_date = (state.get("metadata") or {}).get("decision_date")
         dec_date = det_date.get("value") if isinstance(det_date, dict) else det_date
         state["timeline"] = build_fact_timeline(full_text, dec_date)
@@ -831,99 +962,46 @@ async def knowledge_graph_agent(state: AgentState) -> AgentState:
         # 1. Build base local graph structure (Case, Parties, Acts, Sections)
         entities = state.get("entities", {}) or {}
         sections = state.get("applicable_sections", []) or []
-        precedents = state.get("precedents", []) or []
         case_id = state.get("case_id", "case_node")
 
-        # Resolve the actual case title from metadata (petitioner vs respondent)
-        meta = state.get("metadata") or {}
-        def _safe_meta(key: str) -> str:
-            v = meta.get(key)
-            if isinstance(v, dict):
-                v = v.get("value")
-            return str(v).strip() if v and str(v).strip() not in ("", "Not found in document", "None") else ""
+        # Add Case node
+        kg_data["nodes"].append({"id": case_id, "type": "Case", "label": f"Case {case_id[:8]}"})
 
-        pet_name = _safe_meta("petitioner")
-        resp_name = _safe_meta("respondent")
-        case_title = _safe_meta("case_title")
-
-        if pet_name and resp_name:
-            case_label = f"{pet_name} vs {resp_name}"
-        elif case_title:
-            case_label = case_title
-        else:
-            case_label = f"Case {case_id[:8]}"
-
-        # Add Case node with the resolved label
-        kg_data["nodes"].append({"id": case_id, "type": "Case", "label": case_label})
-
-        seen_nodes = {case_id}
-
-        def _add_node(node_id: str, node_type: str, label: str) -> bool:
-            if node_id not in seen_nodes:
-                seen_nodes.add(node_id)
-                kg_data["nodes"].append({"id": node_id, "type": node_type, "label": label})
-                return True
-            return False
-
-        # Add Party nodes (from entities and metadata)
-        petitioner = pet_name or (entities.get("parties", {}) or {}).get("petitioner")
+        # Add Party nodes (from entities)
+        petitioner = entities.get("parties", {}).get("petitioner")
         if petitioner:
-            pid = f"Party|{petitioner}"
-            _add_node(pid, "Party", petitioner)
-            kg_data["edges"].append({"source": case_id, "target": pid, "type": "INVOLVES", "label": "involves"})
+            kg_data["nodes"].append({"id": petitioner, "type": "Party", "label": f"Petitioner: {petitioner}"})
+            kg_data["edges"].append({"source": case_id, "target": petitioner, "type": "PETITIONER"})
 
-        respondent = resp_name or (entities.get("parties", {}) or {}).get("respondent")
+        respondent = entities.get("parties", {}).get("respondent")
         if respondent:
-            rid = f"Party|{respondent}"
-            _add_node(rid, "Party", respondent)
-            kg_data["edges"].append({"source": case_id, "target": rid, "type": "INVOLVES", "label": "involves"})
+            kg_data["nodes"].append({"id": respondent, "type": "Party", "label": f"Respondent: {respondent}"})
+            kg_data["edges"].append({"source": case_id, "target": respondent, "type": "RESPONDENT"})
 
         # Add other parties
-        for party_name in (entities.get("parties", {}) or {}).get("others", []):
-            if party_name and party_name not in (petitioner, respondent):
-                pid2 = f"Party|{party_name}"
-                _add_node(pid2, "Party", party_name)
-
-        # Add judges from metadata
-        judges = _safe_meta("judges") or _safe_meta("presiding_judges")
-        if isinstance(judges, str):
-            judges = [j.strip() for j in re.split(r'[;,&]', judges) if j.strip()]
-        for j in (judges or []):
-            jid = f"Judge|{j}"
-            _add_node(jid, "Judge", j)
-            kg_data["edges"].append({"source": case_id, "target": jid, "type": "DECIDED_BY", "label": "decided_by"})
-
-        # Add court
-        court = _safe_meta("court")
-        if court:
-            cid = f"Court|{court}"
-            _add_node(cid, "Court", court)
-            kg_data["edges"].append({"source": case_id, "target": cid, "type": "HEARD_IN", "label": "heard_in"})
+        for party_name in entities.get("parties", {}).get("others", []):
+            if party_name not in [petitioner, respondent]:
+                kg_data["nodes"].append({"id": party_name, "type": "Party", "label": party_name})
 
         # Add Act nodes
         for act in state.get("applicable_acts", []):
-            aid = f"Act|{act}"
-            _add_node(aid, "Act", act)
-            kg_data["edges"].append({"source": case_id, "target": aid, "type": "APPLIES", "label": "applies"})
+            kg_data["nodes"].append({"id": act, "type": "Act", "label": act})
 
         # Add referenced Section nodes and link them to Case
         for section in sections[:10]:
-            sec_num = section.get('section_number', '') if isinstance(section, dict) else str(section)
-            sec_act = section.get('act', '') if isinstance(section, dict) else ''
-            sec_id = f"Section|{sec_act}_{sec_num}"
-            sec_label = section.get('display') if isinstance(section, dict) else f"Sec {sec_num} {sec_act}"
-            _add_node(sec_id, "Section", sec_label or f"Sec {sec_num}")
-            kg_data["edges"].append({"source": case_id, "target": sec_id, "type": "APPLIES", "label": "applies"})
+            sec_id = f"{section.get('act', '')}_{section.get('section_number', '')}"
+            sec_label = f"Sec {section.get('section_number')} {section.get('act', '')}"
+            kg_data["nodes"].append({"id": sec_id, "type": "Section", "label": sec_label})
+            kg_data["edges"].append({"source": case_id, "target": sec_id, "type": "REFERENCES"})
 
-        # Add precedent/citation nodes
-        for prec in (precedents or [])[:6]:
-            p_name = prec.get("case_name") if isinstance(prec, dict) else str(prec)
-            if p_name and p_name not in ("Precedent Citation", "keyword"):
-                prec_id = f"Citation|{p_name}"
-                _add_node(prec_id, "Citation", p_name)
-                kg_data["edges"].append({"source": case_id, "target": prec_id, "type": "CITES", "label": "cites"})
-
-        # Deduplicate nodes already done via seen_nodes set
+        # Deduplicate nodes to prevent double-rendering
+        seen_nodes = set()
+        unique_nodes = []
+        for n in kg_data["nodes"]:
+            if n["id"] not in seen_nodes:
+                seen_nodes.add(n["id"])
+                unique_nodes.append(n)
+        kg_data["nodes"] = unique_nodes
 
         # 2. Query FalkorDB to enrich the graph if connected
         falkordb = await get_falkordb_client()
@@ -1279,9 +1357,12 @@ Respond with JSON:
                     "confidence": {"type": "number"},
                 },
             },
-            system_prompt=QWEN_SYSTEM_PROMPT,
+system_prompt=QWEN_SYSTEM_PROMPT,
             temperature=0.1,
-            max_tokens=750,
+            # 520 truncated this combined JSON mid-sentence: counsel
+            # submissions are the longest field and the closing brace was being
+            # cut, which discarded summary/facts/parties along with it.
+            max_tokens=1400,
         )
 
         irac_issues = [str(i).strip() for i in (result.get("issues_identified") or []) if str(i).strip()]

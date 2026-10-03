@@ -50,10 +50,6 @@ safe = lambda m, k, fb=None: (
 # ---------- 1) CATEGORY (drives labels/stage/heading — never content) ----------
 def detect_category(t: str) -> str:
     t = (t or '').lower()
-    if re.search(r'\b(?:insolvency and bankruptcy|nclt|nclat|cirp|resolution professional|committee of creditors|corporate insolvency|section 7 ibc|section 9 ibc|section 29a)\b', t):
-        return 'insolvency'
-    if re.search(r'\b(?:national green tribunal|ngt|environment (?:protection)? act|pollution control|deforestation|sand mining|cpcb|neeri|forest conservation)\b', t):
-        return 'environmental'
     if re.search(r'\b(?:regular bail|anticipatory bail|bail application|admitted to bail|released on bail|seeking bail|bail plea)\b', t) or \
        re.search(r'\b(?:section 482 bnss|section 483 bnss|section 437|section 439 crpc)\b', t):
         return 'criminal_bail'
@@ -61,20 +57,18 @@ def detect_category(t: str) -> str:
         return 'writ'
     if re.search(r'\b(?:arbitration and conciliation|section 34|arbitral award|arbitral tribunal|sole arbitrator|arbitration act)\b', t):
         return 'arbitration'
-    if re.search(r'\b(?:specific performance|agreement to sell|sale deed|code of civil procedure|order 39|civil appeal|civil suit|injunction|suit for recovery|contract act|sale of goods)\b', t):
+    if re.search(r'\b(?:specific performance|agreement to sell|sale deed|code of civil procedure|order 39|civil appeal|civil suit|injunction)\b', t):
         return 'civil'
     if re.search(r'\b(?:conviction|sentenced|accused|charge sheet|ndps|contraband|panchanama|penal code|bns)\b', t):
         return 'criminal_trial'
-    return 'civil'
+    return 'criminal_bail'
 
 STAGE = {
     'criminal_bail': 'Regular Bail Petition',
     'criminal_trial': 'Criminal Trial / Appeal',
     'civil': 'Civil Suit / Appeal',
     'arbitration': 'Petition u/s 34 (Setting Aside Award)',
-    'writ': 'Writ Petition (Constitutional)',
-    'insolvency': 'Insolvency & Bankruptcy Appeal (IBC)',
-    'environmental': 'Environmental Matter (NGT / SC)'
+    'writ': 'Writ Petition (Constitutional)'
 }
 
 # (Side A: Petitioner / Applicant / Appellant / Plaintiff, Side B: Respondent / State / Prosecution / Defendant)
@@ -83,52 +77,30 @@ LABELS = {
     'criminal_trial': ('Defense Rebuttals', 'Prosecution Arguments'),
     'civil': ('Appellant / Plaintiff Case', 'Respondent / Defense Case'),
     'arbitration': ('Petitioner Submissions', 'Respondent Submissions'),
-    'writ': ('Petitioner Submissions', 'Respondent / State Submissions'),
-    'insolvency': ('Appellant / Creditor Submissions', 'Respondent / Debtor Case'),
-    'environmental': ('Petitioner / Applicant Submissions', 'Respondent / Authority Contentions')
+    'writ': ('Petitioner Submissions', 'Respondent / State Submissions')
 }
 
 # ---------- 2) METADATA ----------
 def norm_act(n: str) -> str:
     l = nows(n)
-    if 'environmentprotection' in l or 'environmentprotectionact' in l: return 'Environment (Protection) Act, 1986'
-    if 'forestconservation' in l or 'forestprotection' in l: return 'Forest (Conservation) Act, 1980'
-    if 'waterprevention' in l or 'wateract' in l: return 'Water (Prevention and Control of Pollution) Act, 1974'
-    if 'airprevention' in l or 'airact' in l: return 'Air (Prevention and Control of Pollution) Act, 1981'
-    if 'wildlifeprotection' in l or 'wildlife' in l: return 'Wild Life (Protection) Act, 1972'
-    if 'nationalgreentribunal' in l or 'ngtact' in l: return 'National Green Tribunal Act, 2010'
-    if 'insolvency' in l or 'bankruptcy' in l or 'ibc' in l: return 'Insolvency and Bankruptcy Code, 2016'
     if 'specificrelief' in l: return 'Specific Relief Act, 1963'
-    if 'saleofgoods' in l: return 'Sale of Goods Act, 1930'
     if 'contract' in l: return 'Indian Contract Act, 1872'
     if 'civilprocedure' in l or 'cpc' in l: return 'Code of Civil Procedure, 1908'
     if 'registration' in l: return 'Indian Registration Act, 1908'
-    if 'transferofproperty' in l: return 'Transfer of Property Act, 1882'
-    if 'bankingregulation' in l: return 'Banking Regulation Act, 1949'
-    if 'reservebank' in l or 'rbiact' in l: return 'Reserve Bank of India Act, 1934'
-    if 'companiesact' in l: return 'Companies Act, 2013'
     if 'nagarik' in l or 'bnss' in l: return 'Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023'
     if 'nyaya' in l or 'bns' in l: return 'Bharatiya Nyaya Sanhita (BNS), 2023'
     if 'sakshya' in l or 'bsa' in l: return 'Bharatiya Sakshya Adhiniyam (BSA), 2023'
     if 'informationtechnology' in l or 'itact' in l: return 'Information Technology Act, 2000'
     if 'arbitration' in l: return 'Arbitration and Conciliation Act, 1996'
     if 'evidence' in l: return 'Indian Evidence Act, 1872'
-    if 'penal' in l or 'ipc' in l: return 'Indian Penal Code, 1860'
-    if 'criminal' in l or 'crpc' in l: return 'Code of Criminal Procedure, 1973'
-    if 'constitution' in l: return 'Constitution of India'
     if 'narcotic' in l or 'ndps' in l: return 'NDPS Act, 1985'
     return norm(n)
 
 PATS = [
-    r'(C\.?C\.?\s*No\.?\s*[\d/]+(?:\s+of\s+\d{4})?)',
     r'(C\.?R\.? No\.?\s*\d+\s*of\s*\d{4})',
     r'(FIR No\.?\s*[\d/]+(?:\s+of\s+\d{4})?)',
-    r'(Civil Appeal\s*(?:\([A-Za-z]+\))?\s*No\.?\s*[\d/]+(?:\s+of\s+\d{4})?)',
-    r'(Criminal Appeal\s*(?:\([A-Za-z]+\))?\s*No\.?\s*[\d/]+(?:\s+of\s+\d{4})?)',
-    r'(Company Appeal\s*(?:\([A-Za-z]+\))?\s*No\.?\s*[\d/]+(?:\s+of\s+\d{4})?)',
     r'(Appeal No\.?\s*\d+\s*of\s*\d{4})',
     r'(Suit No\.?\s*\d+\s*of\s*\d{4})',
-    r'(Original Application\s*No\.?\s*[\d/]+(?:\s+of\s+\d{4})?)',
     r'(Special Case No\.?\s*\d+\s*of\s*\d{4})',
     r'(Arbitration Petition No\.?\s*\d+\s*of\s*\d{4})',
     r'(Writ Petition\s*(?:\([A-Za-z]+\))?\s*No\.?\s*[\d/]+(?:\s+of\s+\d{4})?)'
@@ -136,37 +108,20 @@ PATS = [
 
 def extract_court_name(head: str, text: str) -> str | None:
     lines = [l.strip() for l in head.split('\n') if l.strip()]
-    for line in lines[:6]:
-        u = line.upper()
-        if 'NATIONAL COMPANY LAW APPELLATE TRIBUNAL' in u or 'NCLAT' in u:
-            return 'National Company Law Appellate Tribunal, New Delhi'
-        if 'NATIONAL COMPANY LAW TRIBUNAL' in u or 'NCLT' in u:
-            return 'National Company Law Tribunal'
-        if 'NATIONAL GREEN TRIBUNAL' in u or 'NGT' in u:
-            return 'National Green Tribunal, Principal Bench, New Delhi'
-        if 'SUPREME COURT' in u:
-            return 'Supreme Court of India'
-        if 'BOMBAY' in u and 'COURT' in u:
-            return 'High Court of Judicature at Bombay'
-        if 'DELHI' in u and 'COURT' in u:
-            return 'High Court of Delhi at New Delhi'
-        if 'MADRAS' in u and 'COURT' in u:
-            return 'High Court of Judicature at Madras'
-        if 'CALCUTTA' in u and 'COURT' in u:
-            return 'High Court of Calcutta'
-        if 'KARNATAKA' in u and 'COURT' in u:
-            return 'High Court of Karnataka'
-        if 'ALLAHABAD' in u and 'COURT' in u:
-            return 'High Court of Judicature at Allahabad'
-        if 'METROPOLITAN MAGISTRATE' in u or 'MAGISTRATE COURT' in u:
+    for line in lines[:4]:
+        if 'COURT' in line.upper():
+            cu = line.upper()
+            if 'BOMBAY' in cu: return 'High Court of Judicature at Bombay'
+            if 'DELHI' in cu: return 'High Court of Delhi at New Delhi'
+            if 'SUPREME COURT' in cu: return 'Supreme Court of India'
+            if 'MADRAS' in cu: return 'High Court of Judicature at Madras'
+            if 'CALCUTTA' in cu: return 'High Court of Calcutta'
+            if 'KARNATAKA' in cu: return 'High Court of Karnataka'
+            if 'ALLAHABAD' in cu: return 'High Court of Judicature at Allahabad'
             return re.sub(r'^IN THE\s+', '', line, flags=re.I).strip().title()
-        if 'COURT' in u or 'TRIBUNAL' in u:
-            return re.sub(r'^IN THE\s+', '', line, flags=re.I).strip().title()
-    m = re.search(r'IN THE ([A-Z\s,]+(?:COURT|TRIBUNAL)[A-Z\s,]*|SUPREME COURT OF INDIA)', head, re.I)
+    m = re.search(r'IN THE ([A-Z\s,]+COURT[A-Z\s,]*|SUPREME COURT OF INDIA)', head, re.I)
     if m:
         cu = m.group(1).upper()
-        if 'NCLAT' in cu: return 'National Company Law Appellate Tribunal, New Delhi'
-        if 'NGT' in cu: return 'National Green Tribunal'
         if 'BOMBAY' in cu: return 'High Court of Judicature at Bombay'
         if 'DELHI' in cu: return 'High Court of Delhi at New Delhi'
         if 'SUPREME COURT' in cu: return 'Supreme Court of India'
@@ -175,49 +130,38 @@ def extract_court_name(head: str, text: str) -> str | None:
 
 def extract_metadata(text: str) -> dict[str, Any]:
     n = norm(text)
-    head = text[:2500]
+    head = text[:1800]
     lines = [l.strip() for l in head.split('\n') if l.strip()]
     
     court_clean = extract_court_name(head, text)
     
-    # 1. Structured dossier headers check
-    pet, resp = None, None
-    pet_m = re.search(r'(?:^|\n)\s*(?:Petitioners?|Appellants?|Plaintiffs?|Complainant|Accused)\s*:\s*([^\n]+)', head, re.I)
-    resp_m = re.search(r'(?:^|\n)\s*(?:Respondents?|Defendants?|Opposite\s+Party|State)\s*:\s*([^\n]+)', head, re.I)
-    if pet_m and resp_m:
-        p_raw = pet_m.group(1).strip()
-        r_raw = resp_m.group(1).strip()
-        if p_raw and r_raw:
-            pet = norm(p_raw)
-            resp = norm(r_raw)
-
     BAD_SEP_ONLY = re.compile(r'^(?:versus|vs\.?|v\.?)$', re.I)
-    if not pet or not resp:
-        for i, l in enumerate(lines[:14]):
-            if BAD_SEP_ONLY.match(l.strip()):
-                if i > 0 and i + 1 < len(lines):
-                    stitch = f"{lines[i - 1]} versus {lines[i + 1]}"
-                    parts = re.split(r'\s+(?:vs\.?|v\.|versus)\s+', stitch, maxsplit=1, flags=re.I)
-                    if len(parts) == 2 and parts[0].strip() and parts[1].strip() \
-                            and not BAD_SEP_ONLY.match(parts[0].strip()) \
-                            and not BAD_SEP_ONLY.match(parts[1].strip()):
-                        pet = norm(parts[0])
-                        resp = norm(parts[1])
-                        break
-                continue
-            if not re.search(r'\b(?:vs\.?|v\.|versus)\b', l, re.I):
-                continue
-            parts = re.split(r'\s+(?:vs\.?|v\.|versus)\s+', l, maxsplit=1, flags=re.I)
-            if len(parts) == 2 and parts[0].strip() and parts[1].strip() \
-                    and not BAD_SEP_ONLY.match(parts[0].strip()) \
-                    and not BAD_SEP_ONLY.match(parts[1].strip()):
-                pet = norm(parts[0])
-                pet = re.sub(r'^(?:IN THE [A-Z\s,]+COURT[A-Z\s,]*|SUPREME COURT OF INDIA)\s*', '', pet, flags=re.I).strip()
-                resp = norm(parts[1])
-                resp = re.sub(r'\s*(?:\.\.\.)?\s*on\s+\d{1,2}.*$', '', resp or '').strip()
-                if not BAD_SEP_ONLY.match(pet or '') and not BAD_SEP_ONLY.match(resp or ''):
+    pet, resp = None, None
+    for i, l in enumerate(lines[:12]):
+        if BAD_SEP_ONLY.match(l.strip()):
+            if i > 0 and i + 1 < len(lines):
+                stitch = f"{lines[i - 1]} versus {lines[i + 1]}"
+                parts = re.split(r'\s+(?:vs\.?|v\.|versus)\s+', stitch, maxsplit=1, flags=re.I)
+                if len(parts) == 2 and parts[0].strip() and parts[1].strip() \
+                        and not BAD_SEP_ONLY.match(parts[0].strip()) \
+                        and not BAD_SEP_ONLY.match(parts[1].strip()):
+                    pet = norm(parts[0])
+                    resp = norm(parts[1])
                     break
-                pet, resp = None, None
+            continue
+        if not re.search(r'\b(?:vs\.?|v\.|versus)\b', l, re.I):
+            continue
+        parts = re.split(r'\s+(?:vs\.?|v\.|versus)\s+', l, maxsplit=1, flags=re.I)
+        if len(parts) == 2 and parts[0].strip() and parts[1].strip() \
+                and not BAD_SEP_ONLY.match(parts[0].strip()) \
+                and not BAD_SEP_ONLY.match(parts[1].strip()):
+            pet = norm(parts[0])
+            pet = re.sub(r'^(?:IN THE [A-Z\s,]+COURT[A-Z\s,]*|SUPREME COURT OF INDIA)\s*', '', pet, flags=re.I).strip()
+            resp = norm(parts[1])
+            resp = re.sub(r'\s*(?:\.\.\.)?\s*on\s+\d{1,2}.*$', '', resp or '').strip()
+            if not BAD_SEP_ONLY.match(pet or '') and not BAD_SEP_ONLY.match(resp or ''):
+                break
+            pet, resp = None, None
     if pet and BAD_SEP_ONLY.match(pet):
         pet = None
     if resp and BAD_SEP_ONLY.match(resp):
@@ -227,23 +171,16 @@ def extract_metadata(text: str) -> dict[str, Any]:
     if resp:
         resp = re.sub(r'\s*\.\.\.\s*(?:Respondent|Defendant)s?\s*$', '', resp, flags=re.I).strip() or resp
 
-    # Prefer signature-block date (last 1000 chars), then header date; accept ALL-CAPS months
+    # Prefer signature-block date (last 500 chars), then header date; accept ALL-CAPS months
     MONTH = r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
     DMY = rf'(\d{{1,2}})(?:st|nd|rd|th)?[ ,.\-]+({MONTH})[ ,.\-]+(\d{{4}})'
-    tail1000 = text[-1000:] if len(text) > 1000 else text
-    dm = re.search(DMY, tail1000, re.I) or \
-         re.search(rf'(?:Date|Dated|decided on|pronounced on)\s*[:\-]?\s*{DMY}', tail1000, re.I) or \
+    tail500 = text[-500:] if len(text) > 500 else text
+    dm = re.search(DMY, tail500, re.I) or \
          re.search(rf'(?:\.\.\.\s*on|on|dated|decided on)\s+{DMY}', head, re.I) or \
          re.search(DMY, head, re.I)
          
     cites = re.findall(r'\(\d{4}\)\s?\d+\s?[A-Z]+\s?\d+|AIR\s?\d{4}\s?[A-Z ]+\d+|\[\d{4}\]\s?\d+\s?SCR\s?\d+|\d{4}\s?Cri\s?LJ\s?\d+', n.split('JUDGMENT')[0], re.I)
     case_no = next((m.group(1) for p in PATS if (m := re.search(p, n))), None)
-    
-    # Also check structured dossier "Case number: C.C. No. 4680 of 2004"
-    if not case_no:
-        cn_m = re.search(r'(?:Case\s+(?:number|no|Number|No)\s*[:\-]\s*)([A-Za-z0-9.\s/]+(?:of|\/)\s*\d{4})', head, re.I)
-        if cn_m:
-            case_no = cn_m.group(1).strip()
     
     judges: list[str] = []
     def _clean_j(raw_j: str) -> str:
@@ -281,7 +218,10 @@ def extract_metadata(text: str) -> dict[str, Any]:
             return False
         return True
 
-    for tag in ('Author', 'Bench', 'Coram', 'Judges', 'Before'):
+    for tag in ('Author', 'Bench', 'Coram', 'Judges'):
+        # A 3-judge bench wraps: "...Hon'ble Mr. Justice" then "J.B. Pardiwala, J."
+        # on the next line. [^\n]+ dropped the third judge, so allow one
+        # continuation line when it looks like the start of a name.
         am = re.search(
             tag + r':\s*([^\n]+(?:\n\s*[A-Z][A-Za-z.]*\s+[A-Z][a-z]+[,.]?(?:\s|$))?)',
             text, re.I,
@@ -322,6 +262,33 @@ def extract_metadata(text: str) -> dict[str, Any]:
     judges_list = _deduped
     title_str = f"{pet} vs {resp}" if pet and resp else (pet or "Legal Matter Dossier")
 
+    # Acts named anywhere in the document. This layer previously exposed no Act
+    # field at all, so the domain-consistency check had nothing to compare the
+    # classifier's expected statutes against and flagged every file as a
+    # mismatch. Delegated to the canonical extractor so the parenthesis-
+    # tolerant patterns live in exactly one place.
+    try:
+        from app.document_pipeline.metadata_extractor import LegalMetadataExtractor
+
+        raw_acts = list(LegalMetadataExtractor().extract(text).get("acts_referenced") or [])
+    except Exception:
+        raw_acts = []
+
+    # "Indian Penal Code", "Indian Penal Code, 1860" and "IPC" are one Act.
+    # Collapse on the name with the year and any trailing alias removed.
+    _act_seen: set[str] = set()
+    acts_list: list[str] = []
+    for a in raw_acts:
+        norm_a = re.sub(r",?\s*\d{4}\s*$", "", str(a).lower()).strip(" ,.")
+        # Abbreviations and full names denote the same Act: IPC/Indian Penal
+        # Code, BNS/Bharatiya Nyaya Sanhita, CrPC/Code of Criminal Procedure.
+        key = _ACT_ALIASES.get(norm_a)
+        if key is None:
+            key = re.sub(r"[^a-z]", "", norm_a)
+        if key and key not in _act_seen:
+            _act_seen.add(key)
+            acts_list.append(str(a))
+
     return {
         'court': F(court_clean, 'extracted' if court_clean else 'not_found'),
         'case_title': F(title_str, 'extracted' if pet else 'not_found'),
@@ -329,12 +296,102 @@ def extract_metadata(text: str) -> dict[str, Any]:
         'respondent': F(resp, 'extracted' if resp else 'not_found'),
         'decision_date': F(f"{dm.group(1)} {dm.group(2)} {dm.group(3)}" if dm else None, 'extracted' if dm else 'not_found'),
         'citation_numbers': F(cites or None, 'extracted' if cites else 'not_found'),
+        'acts_referenced': acts_list,
         'case_number': F(case_no, 'extracted' if case_no else 'not_found'),
         'judges': F(judges_list or None, 'extracted' if judges_list else 'not_found'),
         'presiding_judges': F(judges_list or None, 'extracted' if judges_list else 'not_found')
     }
 
 # ---------- 3) SECTIONS (formatted strings — never raw dicts) ----------
+def _is_plausible_year(token: str) -> bool:
+    """True when a captured token is an Act's year rather than a section.
+
+    Section numbers in Indian statutes top out well below 400 (the highest are
+    in the BNS/BNSS re-numbering), while Act years sit in 1800-2099.
+    """
+    t = str(token).strip()
+    if not t.isdigit() or len(t) != 4:
+        return False
+    try:
+        y = int(t)
+    except ValueError:
+        return False
+    return 1800 <= y <= 2099
+
+
+# ── Act-name aliases: abbreviation and full name are the same statute ──────
+_ACT_ALIASES = {
+    'ipc': 'indianpenalcode',
+    'indianpenalcode': 'indianpenalcode',
+    'penalcode': 'indianpenalcode',
+    'bns': 'bharatiyanyayasanhita',
+    'bharatiyanyayasanhita': 'bharatiyanyayasanhita',
+    'crpc': 'codeofcriminalprocedure',
+    'codeofcriminalprocedure': 'codeofcriminalprocedure',
+    'bnss': 'bharatiyanagariksurakshasanhita',
+    'bharatiyanagariksurakshasanhita': 'bharatiyanagariksurakshasanhita',
+    'iea': 'indianevidenceact',
+    'indianevidenceact': 'indianevidenceact',
+    'bsa': 'bharatiyasakshyaadhiniyam',
+    'bharatiyasakshyaadhiniyam': 'bharatiyasakshyaadhiniyam',
+    'indiancontractact': 'indiancontractact',
+    'specificreliefact': 'specificreliefact',
+    'codecivilprocedure': 'codecivilprocedure',
+    'cpc': 'codecivilprocedure',
+    'ndpsact': 'ndpsact',
+    'companiesact': 'companiesact',
+}
+
+
+def _attach_concordance(sections: list[dict[str, Any]]) -> None:
+    """Add old->new statutory concordance to each section, in place.
+
+    Only provisions present in the vetted concordance table get a mapping. An
+    unrecognised provision is left without a ``concordance`` key so the UI
+    renders no badge at all, rather than a guessed one: a wrong concordance
+    (for example IPC 378 defamation, which is BNS 356 and not 304) is worse
+    than no concordance because the user cannot tell it is wrong.
+    """
+    try:
+        from app.knowledge.concordance import lookup_concordance
+    except Exception:
+        return
+    for sec in sections:
+        act = str(sec.get('act') or '')
+        num = str(sec.get('section_number') or '')
+        if not act or not num:
+            continue
+        # Constitutional articles have no old-law equivalent to map from.
+        if 'constitution' in act.lower():
+            continue
+        hit = lookup_concordance(act, num)
+        if hit and hit.get('new_section'):
+            sec['concordance'] = {
+                'old_act': hit.get('old_act'),
+                'old_section': hit.get('old_section'),
+                'new_act': _CONCORDANCE_NEW_LABEL.get(_concordance_family(act), ''),
+                'new_section': hit.get('new_section'),
+            }
+
+
+def _concordance_family(act: str) -> str:
+    a = act.upper()
+    if 'IPC' in a or 'PENAL' in a or 'BNS' in a:
+        return 'ipc_bns'
+    if 'CRPC' in a or 'CRIMINAL PROCEDURE' in a or 'BNSS' in a:
+        return 'crpc_bnss'
+    if 'EVIDENCE' in a or 'IEA' in a or 'BSA' in a or 'SAKSHYA' in a:
+        return 'iea_bsa'
+    return ''
+
+
+_CONCORDANCE_NEW_LABEL = {
+    'ipc_bns': 'Bharatiya Nyaya Sanhita, 2023',
+    'crpc_bnss': 'Bharatiya Nagarik Suraksha Sanhita, 2023',
+    'iea_bsa': 'Bharatiya Sakshya Adhiniyam, 2023',
+}
+
+
 def bind_sections(text: str) -> list[dict[str, Any]]:
     n = norm(text)
     out = []
@@ -344,6 +401,10 @@ def bind_sections(text: str) -> list[dict[str, Any]]:
     for m in re.finditer(r'(?:Sections?|Sec\.?)\s+([0-9A-Za-z(),\s&and/-]+?)\s+(?:of\s+(?:the\s+)?)?' + ACT_PAT, n):
         act = norm_act(m.group(2))
         secs = re.findall(r'[0-9]+[A-Za-z]?(?:\([0-9A-Za-z]+\))*', m.group(1))
+        # "of the Code of Criminal Procedure, 1973" puts the Act's year in the
+        # same span as the section list, which yielded a phantom "Section 1973
+        # of the CrPC". A bare 4-digit year is never a section number.
+        secs = [s for s in secs if not _is_plausible_year(s)]
         for s in secs:
             out.append({'num': s, 'section_number': s, 'act': act, 'display': f"Section {s} — {act}"})
             
@@ -386,45 +447,9 @@ def bind_sections(text: str) -> list[dict[str, Any]]:
         if key not in seen_keys:
             seen_keys.add(key)
             deduped.append(d)
-    
+
+    _attach_concordance(deduped)
     return deduped
-
-def normalize_statutes(statutes_list: list[Any]) -> list[Any]:
-    """Remove duplicate statutes by extracting the core section/article number."""
-    seen = set()
-    unique_statutes = []
-    
-    for statute in statutes_list:
-        raw_str = statute.get('display', '') if isinstance(statute, dict) else str(statute)
-        match = re.search(r'\d+(?:\(\d+\))?', raw_str)
-        if match:
-            core_id = match.group(0)
-            if core_id not in seen:
-                seen.add(core_id)
-                unique_statutes.append(statute)
-        else:
-            if statute not in unique_statutes:
-                unique_statutes.append(statute)
-            
-    return unique_statutes
-
-def filter_precedents(precedents: list[dict[str, Any]], case_name: str | None) -> list[dict[str, Any]]:
-    """Remove the current case from its own precedent list."""
-    if not case_name:
-        return precedents
-    cn_lower = case_name.lower().strip()
-    parts = [p.strip() for p in re.split(r'\s+(?:vs\.?|v\.?|versus)\s+', cn_lower) if p.strip()]
-    out = []
-    for p in precedents:
-        p_name = (p.get('case_name') or p.get('name') or '').lower().strip()
-        if not p_name:
-            continue
-        if cn_lower in p_name or p_name in cn_lower:
-            continue
-        if len(parts) == 2 and (parts[0][:12] in p_name and parts[1][:12] in p_name):
-            continue
-        out.append(p)
-    return out
 
 # ---------- 4) PRECEDENTS (each name ↔ its OWN citation) ----------
 # Citation shapes: "(2011) 1 SCC 694", "[2023] 4 SCR 710", "1994 Supp (1) SCC 92",
@@ -433,7 +458,7 @@ def filter_precedents(precedents: list[dict[str, Any]], case_name: str | None) -
 # "1994" inside "… Builders v. DDA (1994) …" never mis-parses as a new citation.
 CIT = r'\([12]\d{3}\)\s?\d+\s?[A-Z.]+\s?\d+|\[[12]\d{3}\]\s?\d+\s?SCR\s?\d+|\d{4}\s?(?:Supp\.?\s*)?\(?\d{1,4}\)?\s?SCC\s?\d+|\d{4}\s?SCC\s+OnLine\s+(?:SC|Del|Bom)|\d{4}\s?\d+\s?[A-Z.]+\s?\d+|AIR\s?[12]\d{3}\s?[A-Z ]+\d+'
 
-def extract_precedents(text: str, case_name: str | None = None) -> list[dict[str, Any]]:
+def extract_precedents(text: str) -> list[dict[str, Any]]:
     n = norm(text)
     out = []
     seen = set()
@@ -448,6 +473,18 @@ def extract_precedents(text: str, case_name: str | None = None) -> list[dict[str
     # terminates the name via the lookahead instead of being absorbed.
     NAME = r'[A-Z][A-Za-z.&\' -]+?(?:\s+(?:v\.?|versus)\s+[A-Z][A-Za-z.&\' -]+?)'
 
+    # The judgment's own title line (e.g. "State of Maharashtra v. X") must never
+    # be captured as a cited precedent.
+    #
+    # NAME is greedy and spans lowercase words, so a naive first-match snapshot
+    # can swallow body prose: on "The Court followed (2016) 7 SCC 353 in the case
+    # of Modern Dental College and in Arnesh Kumar v. State of Bihar" it returned
+    # "Modern Dental College and in Arnesh Kumar v. State", whose first 15
+    # squashed characters then suppressed the genuine Modern Dental College
+    # precedent. The snapshot is therefore taken from the caption window only
+    # (before the body starts) and validated; when it is not clearly a caption it
+    # is left empty, which is the safe direction - a missed self-title guard is
+    # caught downstream by the length/prose filters and the citation gate.
     _BODY_MARKER_RE = re.compile(
         r'(?:JUDGMENT|JUDGEMENT|OPINION|ORDER\s+DATED|\([12]\d{3}\)\s*\d|'
         r'\bin the case of\b|\bfollowed\b|\bsupra\b|\bhas held\b|\bwe\s+hold\b)',
@@ -460,10 +497,17 @@ def extract_precedents(text: str, case_name: str | None = None) -> list[dict[str
         re.IGNORECASE,
     )
     title_nows = ""
+    # Scan the RAW text: `n` has had its newlines collapsed, so splitting it on
+    # "\n" yields a single line and the per-line scan below is a no-op.
     caption = text[:800]
     bm = _BODY_MARKER_RE.search(caption)
     if bm:
         caption = caption[: bm.start()]
+    # Scan line by line. NAME is lazy but still spans lower-case words, so a
+    # single search across the caption welded the document's title line
+    # ("CYBER CRIME CASE DOCUMENT") onto the case line and the combined result
+    # failed validation, leaving the judgment's own name uncaptured and letting
+    # it come back later as a "cited precedent" against itself.
     for line in caption.split("\n"):
         if not re.search(r'\s(?:v\.|versus)\s', line, re.IGNORECASE):
             continue
@@ -489,11 +533,14 @@ def extract_precedents(text: str, case_name: str | None = None) -> list[dict[str
             r'|respondent|defendant|prosecution|state)',
             name, re.IGNORECASE):
             return
-        # Reject prose that a greedy name match swallowed
+        # Reject prose that a greedy name match swallowed: "… v. Union of India were
+        # reiterated is not a precedent", etc.
         if re.search(r'\b(?:were|was|held|is\b|not\b|that\b|wherein|reiterat|observed'
                      r'|submitted|contended|case|judgment)\b', name, re.IGNORECASE):
             return
-        # Prefix-superset dedup
+        # Prefix-superset dedup: "Anvar P.V. v. P.K" vs "Anvar P.V. v. P.K. Basheer"
+        # are the same case (a period-initials match truncated the fuller name) —
+        # keep only the fullest form.
         for i, ek in enumerate(key_list):
             if min(len(ek), len(norm_k)) >= 8 and (ek.startswith(norm_k) or norm_k.startswith(ek)):
                 if len(name) > len(out[i]['case_name']):
@@ -521,7 +568,8 @@ def extract_precedents(text: str, case_name: str | None = None) -> list[dict[str
     for m in re.finditer(r'(?:judgment|decision|ruling|case)\s+in\s+(?:the case of\s+)?(' + NAME + r')\s*(' + CIT + r')', n):
         _append(m.group(1), m.group(2).strip())
 
-    # 3. Bare "Name v. Name, (Citation)" references
+    # 3. Bare "Name v. Name, (Citation)" references (headnote citation lists and
+    #    "reported in" entries) — previously missed, making Missing Precedents intermittent
     for m in re.finditer(r'(?<![A-Za-z0-9,])(' + NAME + r')\s*,\s*(' + CIT + r')', n):
         _append(m.group(1), m.group(2).strip())
 
@@ -532,20 +580,24 @@ def extract_precedents(text: str, case_name: str | None = None) -> list[dict[str
         r'(' + NAME + r')(?=$|\s*[,;.])', n):
         _append(m.group(1), "")
 
-    # 5. "in the case of Name v. Name (Citation)"
+    # 5. "in the case of Name v. Name (Citation)" - explicit parenthetical citation.
+    # CIT is a top-level alternation, so it must be wrapped in a group both to
+    # give m.group(2) a value and to stop the alternation escaping the literal
+    # parentheses (it previously raised IndexError on every match).
     for m in re.finditer(r'in the case of\s+(' + NAME + r')\s*\((?:' + CIT + r')\)', n):
         cm = re.search(CIT, m.group(0))
         _append(m.group(1), cm.group(0) if cm else "")
 
-    # 6. "(YEAR) VOLUME REPORTER PAGE in the case of Name"
+    # 6. "(YEAR) VOLUME REPORTER PAGE in the case of Name" - long-form citation style
+    # e.g., "(2016) 7 SCC 353 in the case of Modern Dental College".
+    # NAME contains no capture group and is greedy across lowercase words, so
+    # this rule uses a tight capitalised-token pattern and slices the reporter
+    # citation out of the match instead of reading a group index.
     CIT_LONG_HEAD = r'\([12]\d{3}\)\s+\d+\s+[A-Z]+\s+\d+'
     LONG_NAME = r'[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,4}'
     for m in re.finditer(CIT_LONG_HEAD + r'\s+in the case of\s+(' + LONG_NAME + r')', n):
         cite_m = re.match(CIT_LONG_HEAD, m.group(0))
         _append(m.group(1).strip(), cite_m.group(0) if cite_m else "")
-
-    if case_name:
-        out = filter_precedents(out, case_name)
 
     return out
 
@@ -591,14 +643,8 @@ def _conclusion_section(text: str) -> str:
         return text
     m = re.search(
         r'^[ \t]*(?:\d+\s*[.)]\s*)?'
-        r'(?:CONCLUSION(?: AND|&)?[A-Z ]*'
-        r'|ORDER AND DISPOSITION|OPERATIVE PART|IN THE RESULT'
-        r'|DISPOSITION|FINDINGS?(?: AND CONCLUSIONS?)?'
-        r'|JUDGMENT\s+AND\s+SENTENCE'
-        r'|FINAL\s+ORDER(?:\s+AND\s+DIRECTIONS?)?' 
-        r'|Illustrative\s+Judgment\s+and\s+Decree'
-        r'|OPERATIVE\s+ORDER'
-        r'|RESULT)'
+        r'(?:CONCLUSION(?: AND|&)?[A-Z ]*|ORDER AND DISPOSITION|'
+        r'OPERATIVE PART|IN THE RESULT|DISPOSITION|FINDINGS?(?: AND CONCLUSIONS?)?)'
         r'[ \t]*$\n',
         text, re.I | re.MULTILINE,
     )
@@ -732,18 +778,12 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
     # sentence is kept when it carries real content after the heading.
     SECTION_A = re.compile(
         r'(?:DEFEN[CS]E\s+(?:CONTENTIONS|ARGUMENTS|POSITION)'
-        r'|(?:APPELLANT|PETITIONER|ACCUSED|PLAINTIFF)\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS|POSITION|EVIDENCE|WITNESS\s+STATEMENT)'
-        r'|(?:PLAINTIFF|APPELLANT|PETITIONER)\'?S?\s+FINAL\s+WRITTEN\s+SUBMISSIONS'
-        r'|SUBMISSIONS\s+FOR\s+THE\s+(?:PETITIONER|APPELLANT|PLAINTIFF)S?'
-        r'|PETITIONER\'?S?\s+SUBMISSIONS)\b',
+        r'|(?:APPELLANT|PETITIONER|ACCUSED)\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS))\b',
         re.I,
     )
     SECTION_B = re.compile(
         r'(?:PROSECUTION\s+(?:ARGUMENTS|CONTENTIONS|EVIDENCE|WITNESSES)'
-        r'|(?:RESPONDENT|STATE|DEFENDANT)\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS|POSITION|EVIDENCE|WITNESS\s+STATEMENT)'
-        r'|(?:DEFENDANT|RESPONDENT)\'?S?\s+FINAL\s+WRITTEN\s+SUBMISSIONS'
-        r'|SUBMISSIONS\s+FOR\s+THE\s+(?:RESPONDENT|DEFENDANT)S?'
-        r'|RESPONDENT\'?S?\s+SUBMISSIONS)\b',
+        r'|(?:RESPONDENT|STATE)\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS))\b',
         re.I,
     )
     PAT_B_START = re.compile(
@@ -900,92 +940,45 @@ def _split_long_points(items: list[str], max_len: int = 420) -> list[str]:
 
 # ---------- 6) EVIDENCE (per-item reliability, word-aligned) ----------
 CUES = [
-    # Exhibit registers — look for explicit exhibit labels (P-1, D-1, Ex. P-1)
-    (r'(?:Ex(?:hibit)?[\.\s]*[PD]-?\d+|P-\d+|D-\d+|Exhibit\s+[PD]\s*\d+)', 'Documentary Exhibits Register'),
     (r'Call Detail Records\s*\(CDR\)|cell-site logs|electronic data', 'Electronic Records (CDR / cell-site logs)'),
     (r'panchanama dated [\d-]+|seizure memo|panchas', 'Panchanama / Seizure Memo'),
     (r'bank ledger audits|bank statements|escrow|financial transfer', 'Financial Records & Statements'),
     (r'charge sheet|investigation is complete', 'Charge Sheet / Investigation Record'),
-    (r'correspondence dated [\d-]+|letters dated|contemporaneous correspondence', 'Contemporaneous Correspondence'),
-    (r'agreement to sell|conveyance deed|sale deed|purchase order|quotation dated', 'Title / Contract Documents'),
-    (r'delivery challan|tax invoice|challan|invoice', 'Delivery Challans & Invoices'),
+    (r'Ex\.\s*[PD]-?\d+|documentary exhibits', 'Documentary Exhibits'),
+    (r'correspondence dated [\d-]+|letters dated', 'Contemporaneous Correspondence'),
+    (r'agreement to sell|conveyance deed|sale deed', 'Title / Contract Documents'),
     (r'recovery of contraband|contraband was recovered|450 grams', 'Contraband Recovery & Forensic Record'),
     (r'statutory notifications|data localization|executive interception', 'Official Notifications & Directives'),
-    (r'impugned notification|impugned order|impugned action|impugned measure', 'Impugned Order / Notification'),
-    (r'NEERI\s+[Rr]eport|CPCB|pollution\s+(?:report|data)|environmental\s+(?:impact|report)', 'Environmental / Expert Reports'),
-    (r'satellite imagery|aerial photograph|geo-spatial|remote sensing', 'Satellite Imagery & Geo-spatial Evidence'),
-    (r'affidavit of compliance|compliance affidavit|sworn affidavit', 'Compliance Affidavits'),
+    (r'impugned notification|impugned order|impugned action|impugned measure', 'Impugned Order / Notification')
 ]
-
-# Patterns to find documentary exhibit registers (a whole section listing P-1..P-n, D-1..D-n)
-_EXHIBIT_SECTION_RE = re.compile(
-    r'(?:Documentary\s+Exhibits?(?:\s+and\s+Evidence)?\s+Register'
-    r'|Exhibit\s+Register'
-    r'|Evidence\s+on\s+Record'
-    r'|List\s+of\s+Documents'
-    r'|LIST\s+OF\s+EXHIBITS?)',
-    re.I,
-)
-_EXHIBIT_ITEM_RE = re.compile(
-    r'^\s*((?:Ex(?:hibit)?[\.\s]*)?(?:P|D)-?\s*\d+[A-Za-z]?)\s*[:\-–—]?\s*(.+?)$',
-    re.I | re.MULTILINE,
-)
 
 def extract_evidence(text: str) -> list[dict[str, Any]]:
     n = norm(text)
     items = []
-    seen_labels: set[str] = set()
-
-    # --- Priority 1: scan for explicit exhibit register sections ---
-    exhibit_m = _EXHIBIT_SECTION_RE.search(text)
-    if exhibit_m:
-        # Extract up to 500 chars after the section heading
-        region = text[exhibit_m.end():exhibit_m.end() + 2000]
-        for em in _EXHIBIT_ITEM_RE.finditer(region):
-            ex_label = em.group(1).strip()
-            ex_desc = em.group(2).strip()[:200]
-            key = ex_label.upper().replace(' ', '').replace('-', '')
-            if key in seen_labels or len(ex_desc) < 5:
-                continue
-            seen_labels.add(key)
-            items.append({
-                'label': ex_label,
-                'reliability': 'HIGH',
-                'detail': ex_desc,
-            })
-            if len(items) >= 12:
-                break
-
-    # --- Priority 2: if no exhibit register found, fall back to CUES ---
-    if not items:
-        for pat, label in CUES:
-            m = re.search(pat, n, re.I)
-            if not m or label in seen_labels:
-                continue
-            seen_labels.add(label)
-            win = n[max(0, m.start()-220):m.end()+220]
-            st = n.rfind('. ', 0, m.start())
-            st = st + 2 if st != -1 else 0
-            raw_end = min(len(n), m.end() + 190)
-            e_pos = n.find('. ', raw_end)
-            end = e_pos + 2 if e_pos != -1 else raw_end
-            snip = re.sub(r'^\d+\.\s*', '', n[st:end]).strip()
-            items.append({
-                'label': label,
-                'reliability': 'DISPUTED' if re.search(
-                    r'without compliance|certification under Section|not certified|inadmissible|in custody|without judicial oversight',
-                    win, re.I) else 'HIGH',
-                'detail': snip,
-            })
-
-    if not items:
+    seen = set()
+    for pat, label in CUES:
+        m = re.search(pat, n, re.I)
+        if not m or label in seen:
+            continue
+        seen.add(label)
+        win = n[max(0, m.start()-220):m.end()+220]
+        
+        # Word-aligned snippet window — closes on the next sentence boundary so
+        # the quote stays a contiguous substring of the source (no "..." marker
+        # that would break verbatim grounding checks).
+        st = n.rfind('. ', 0, m.start())
+        st = st + 2 if st != -1 else 0
+        raw_end = min(len(n), m.end() + 190)
+        e_pos = n.find('. ', raw_end)
+        end = e_pos + 2 if e_pos != -1 else raw_end
+        snip = re.sub(r'^\d+\.\s*', '', n[st:end]).strip()
+        
         items.append({
-            'label': 'No specific exhibits listed in the document.',
-            'reliability': 'N/A',
-            'detail': '',
+            'label': label,
+            'reliability': 'DISPUTED' if re.search(r'without compliance|certification under Section|not certified|inadmissible|in custody|without judicial oversight', win, re.I) else 'HIGH',
+            'detail': snip
         })
-
-    return items[:12]
+    return items[:4]
 
 # ---------- 7) TIMELINE + OUTCOME ----------
 def build_timeline(text: str, date: str | None) -> list[dict[str, Any]]:
@@ -1010,20 +1003,7 @@ def build_timeline(text: str, date: str | None) -> list[dict[str, Any]]:
         return False
 
     ev = [{'date': m.group(0), 'fact': n[snap(n, m.start()-140):m.end()+140], 'page': '1-2'}
-          for m in re.finditer(r'\d{2}[-./]\d{2}[-./]\d{4}', n)]
-    # Also match DD.MM.YYYY / DD-MM-YYYY style
-    for m in re.finditer(r'\b(\d{1,2})[./](\d{1,2})[./](\d{4})\b', n):
-        fact = n[snap(n, m.start()-140):m.end()+140]
-        if not _SIG_BLOCK.search(fact) and not _bad_fact(fact):
-            ev.append({'date': m.group(0), 'fact': fact, 'page': '1-2'})
-    # Month YYYY (e.g. "February 2004")
-    for m in re.finditer(
-        r'\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b',
-        n, re.I,
-    ):
-        fact = n[snap(n, m.start()-140):m.end()+140]
-        if not _SIG_BLOCK.search(fact) and not _bad_fact(fact):
-            ev.append({'date': m.group(0), 'fact': fact, 'page': '1-2'})
+          for m in re.finditer(r'\d{2}-\d{2}-\d{4}', n)]
     for m in re.finditer(
         r'\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b',
         n, re.I,
@@ -1336,6 +1316,7 @@ def build_kg(*args: Any, **kwargs: Any) -> dict[str, Any]:
     for j in (safe(meta, 'judges') or safe(meta, 'presiding_judges') or []):
         e = add('Judge', j)
         if e: edges.append({'source': 'case', 'target': e, 'type': 'DECIDED_BY', 'label': 'decided_by'})
+        if e: edges.append({'source': 'case', 'target': e, 'type': 'DECIDED_BY', 'label': 'decided_by'})
 
     court_val = safe(meta, 'court')
     if court_val:
@@ -1507,16 +1488,9 @@ def _court_framed_issues(text: str) -> list[dict[str, Any]]:
         body = re.split(r'\n(?:\.{5,}|…{3,})', body)[0].strip()
         if not body or len(body) < 15:
             continue
-        # Skip pure meta-procedural lines that are not substantive legal questions.
-        # Note: do NOT skip issues that ask "whether the court has jurisdiction" or
-        # "whether the appeal was maintainable" – those are genuine legal issues.
+        # Skip procedural/duplicate issues
         body_lower = body.lower()
-        # Only skip if the body is ONLY "whether the court [exists/is here]"
-        # i.e. essentially no substance beyond the procedural opener.
-        if re.fullmatch(
-            r'whether\s+the\s+(court|appeal|petition)\s+(?:can|may|should|shall|would|is|was|has|have)?\s*\.?',
-            body_lower.strip(), re.I
-        ):
+        if any(skip in body_lower for skip in ['whether the court', 'whether the appeal', 'whether the petition']):
             continue
         # Prefer a nearby verbatim sentence as evidence
         quote = None
@@ -1765,6 +1739,30 @@ def lint(*strings: Any) -> None:
                     raise ValueError(f"LEAK '{b}' detected in rendered output: {item[:80]}")
 
 # ---------- ENTRY POINT ----------
+def _act_named(expected_act: str, pool: str) -> bool:
+    """True when an expected Act appears in the document's Act pool.
+
+    Matched on significant tokens rather than a fixed prefix: Act names vary
+    ("Environment (Protection) Act" vs "Environment Protection Act"), and a
+    prefix match silently failed on exactly those variants.
+    """
+    if not expected_act or not pool:
+        return False
+    exp = str(expected_act).lower()
+    if exp in pool:
+        return True
+    stop = {'the', 'of', 'and', 'act', 'code', 'rules', 'regulation'}
+    tokens = [t for t in re.split(r'[^a-z]+', exp) if t and t not in stop]
+    if not tokens:
+        return False
+    # Require the distinctive tokens (year aside) to be present.
+    core = [t for t in tokens if not t.isdigit()]
+    if not core:
+        core = tokens
+    hits = sum(1 for t in core if t in pool)
+    return hits >= max(1, len(core) - 1)
+
+
 def build_analysis(text: str) -> dict[str, Any]:
     cat = detect_category(text)
     meta = extract_metadata(text)
@@ -1773,6 +1771,36 @@ def build_analysis(text: str) -> dict[str, Any]:
     evi = extract_evidence(text)
     tl = build_timeline(text, meta['decision_date']['value'])
     risk = build_risk(text, sa, sb)
+
+    # Document type + legal domain, scored structurally. Kept beside (not
+    # instead of) `category`, which drives the submission labels the UI needs.
+    try:
+        from app.agents.document_classifier import (
+            classify_document, expected_statute_families,
+        )
+        classification = classify_document(text)
+    except Exception:
+        classification = {}
+    if classification:
+        expected = expected_statute_families(
+            classification.get('document_type_key', ''),
+            classification.get('legal_domain_key', ''),
+        )
+        # Compare against every Act the document names, not only section-bound
+        # ones: a judgment routinely names the Environment Act without ever
+        # citing "Section X of" it, and scoring against sections alone reported
+        # a false domain mismatch.
+        found_pool = ' | '.join(
+            [s['act'] for s in secs]
+            + [str(a) for a in (meta.get('acts_referenced') or [])]
+        ).lower()
+        matched = [f for f in expected if _act_named(f, found_pool)]
+        classification['expected_statutes'] = expected
+        classification['domain_statute_match'] = round(len(matched) / len(expected), 3) if expected else None
+        classification['domain_flag'] = (
+            'statutes do not match the detected domain'
+            if expected and not matched else ''
+        )
     
     statutes_hdr = " • ".join(sorted({s['act'] for s in secs})) or "Applicable Statutes"
     evidence_hdr = "Evidence Integrity & Reliability Matrix"
@@ -1785,6 +1813,7 @@ def build_analysis(text: str) -> dict[str, Any]:
         'statutes_header': statutes_hdr,
         'evidence_header': evidence_hdr,
         'metadata': meta,
+        'classification': classification,
         'sections': secs,
         'precedents': precs,
         'evidence': evi,

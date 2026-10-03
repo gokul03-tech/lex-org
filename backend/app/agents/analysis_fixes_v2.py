@@ -257,6 +257,40 @@ CUES = [
     (r'policy \(Ex\. [^)]+\)|proposal \(Ex\. [^)]+\)|correspondence Exs?\.', 'Contractual & policy exhibits')
 ]
 
+# Exhibit registers: "P-1: Quotation dated 12 January 2024", "D-3 - Bill of
+# Quantities", "Ex.P.12 Quotation", "Annexure A-2". The prefix letter carries
+# the tendering side (P = plaintiff/prosecution/petitioner, D = defendant/
+# defence/respondent), which is exactly the attribution the UI needs.
+_EXHIBIT_RE = re.compile(
+    r'(?<![A-Za-z0-9])'
+    r'(?:Ex(?:h)?ibit)?\.?\s*'
+    r'(?P<side>[PDKA]|PW|DW)'
+    r'\s*[-.–]?\s*'
+    r'(?P<num>\d{1,4})'
+    r'\s*(?:[-–:.]\s*|\s+)(?=[A-Za-z(])'
+    r'(?P<desc>[^\n]{3,180}?)'
+    r'(?=(?:\n\s*(?:[A-Z][A-Z0-9 .()/&-]{2,40}){0,3}\s*$)|(?:\n\s*(?:[PDKA]|PW|DW)\s*[-–.]?\s*\d)|\Z)',
+    re.IGNORECASE,
+)
+
+_SIDE_ROLE = {
+    'P': 'Prosecution / Plaintiff / Petitioner',
+    'PW': 'Prosecution Witness',
+    'D': 'Defence / Defendant / Respondent',
+    'DW': 'Defence Witness',
+    'K': 'Complainant',
+    'A': 'Annexure',
+}
+
+# Labels that describe the *record* rather than a specific item. Emitting one
+# of these as evidence is the "Case records, pleadings, and annexures placed
+# on record" placeholder this module is supposed to eliminate.
+_GENERIC_EVIDENCE_RE = re.compile(
+    r'^\s*(?:the\s+)?(?:case\s+)?(?:records?|pleadings?|annexures?|documents?|papers?|file)\b'
+    r'[^.]{0,60}\b(?:placed\s+on\s+record|on\s+record|are\s+on\s+record)\b',
+    re.IGNORECASE,
+)
+
 def extract_evidence_items(doc_or_meta: Any = None, category: str = 'criminal') -> list[dict[str, str]]:
     text = ""
     if isinstance(doc_or_meta, str):
@@ -266,12 +300,32 @@ def extract_evidence_items(doc_or_meta: Any = None, category: str = 'criminal') 
         
     items: list[dict[str, str]] = []
     seen_labels = set()
+
+    # Pass 1: explicit exhibit register. These are the strongest evidence items
+    # because the document itself enumerates them with an identifier.
+    for m in _EXHIBIT_RE.finditer(text or ''):
+        desc = re.sub(r'\s+', ' ', m.group('desc')).strip(' -–—:;,.')
+        if not desc or _GENERIC_EVIDENCE_RE.match(desc):
+            continue
+        label = f"{m.group('side').upper()}-{m.group('num')}"
+        if label in seen_labels:
+            continue
+        seen_labels.add(label)
+        items.append({
+            'type': f'Exhibit {label}',
+            'description': desc,
+            'exhibit': label,
+            'tendered_by': _SIDE_ROLE.get(m.group('side').upper(), 'Record'),
+            'reliability': 'HIGH — exhibit identified in the document',
+        })
+
+    # Pass 2: narrative evidence cues that carry no exhibit number.
     for pat, label in CUES:
         m = re.search(pat, text, re.IGNORECASE) if text else None
         if not m or label in seen_labels:
             continue
         seen_labels.add(label)
-        
+
         # Word-align window boundaries so text never starts mid-word
         raw_start = max(0, m.start() - 110)
         raw_end = min(len(text), m.end() + 110)
@@ -288,11 +342,15 @@ def extract_evidence_items(doc_or_meta: Any = None, category: str = 'criminal') 
             'description': win,
             'reliability': 'DISPUTED — certification u/s 63 BSA not shown' if disputed else 'HIGH — contemporaneous official record'
         })
+
     if not items:
+        # Report the absence instead of inventing a placeholder exhibit. A
+        # fabricated "Case records ... placed on record" row reads as a real
+        # evidence item to the user and to the UI.
         items.append({
-            'type': 'Documentary Record',
-            'description': 'Case records, pleadings, and annexures placed on record.',
-            'reliability': 'High — contemporaneous court record'
+            'type': 'No specific exhibits',
+            'description': 'No specific exhibits listed in the document.',
+            'reliability': 'N/A — no exhibit register found',
         })
     return items
 

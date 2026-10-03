@@ -17,58 +17,20 @@ from typing import Any
 from app.llm.provider import get_llm_provider
 
 
-DOCUMENT_CLASSIFIER_PROMPT = """
-You are a legal document classifier. Read the FIRST 500 words of the document and classify it:
-
-1. Document Type: Choose ONE:
-   - Standard Court Judgment (Supreme Court/High Court/Tribunal)
-   - Academic Case Dossier/Study
-   - Illustrative/Fictional Case File
-   - Bail Application
-   - Writ Petition
-   - Civil Suit
-   - Insolvency/IBC Appeal
-   - Criminal Appeal
-   - Arbitration Award
-
-2. Legal Domain: Choose ONE:
-   - Constitutional Law
-   - Criminal Law
-   - Civil/Contract Law
-   - Commercial/Corporate Law
-   - Insolvency/Bankruptcy (IBC)
-   - Environmental Law
-   - Intellectual Property
-   - Family Law
-   - Labour Law
-   - Tax Law
-
-3. Key Indicators: List 3-5 phrases from the text that support your classification.
-
-OUTPUT STRICT JSON ONLY.
-"""
-
 METADATA_EXTRACTION_PROMPT = """
-You are a legal metadata extractor. Read the HEADER and SIGNATURE BLOCK of the provided legal document and extract the following:
+You are a legal metadata extractor. Read the HEADER and SIGNATURE BLOCK of the provided legal document and extract the following exactly as written:
 
-CRITICAL RULES:
-1. Case Name: Format as "Petitioner Name vs Respondent Name". Do NOT use "VERSUS" as a name.
-2. Petitioner/Applicant Name: The party before "VERSUS" or "vs". For academic dossiers, look for "Petitioners:" or "Appellant:" labels.
-3. Respondent/Defense Name: The party after "VERSUS" or "vs". For academic dossiers, look for "Respondents:" or "Defendant:" labels.
-4. Court Name: Extract the FULL court name from the header. Do NOT use generic "Court" or "Tribunal".
-5. Judge(s)/Bench Name: Extract ALL judges listed. Look for patterns like:
-   - "HON'BLE MR. JUSTICE X, CJI"
-   - "HON'BLE MR. JUSTICE Y"
-   - "HON'BLE MS. JUSTICE Z"
-   Include ALL judges separated by semicolons or "and". Do NOT stop after the first judge.
-6. Decision Date: Look for the date at the very END of the judgment (signature block area). Format: DD Month YYYY. Do NOT use dates from appeal numbers or citations.
-7. Case Number: Extract the MAIN case number from the header (e.g., "CIVIL APPEAL NO. 4521 OF 2024", "Writ Petition (Civil) No. 456 of 2023"). Do NOT use IA numbers or High Court WP numbers mentioned in the body.
-8. Report Reference: Extract the case's OWN citation if present in the header. Do NOT extract citations of precedents mentioned in the text or references section.
-
-FOR ACADEMIC DOSSIERS: Look for structured labels like:
-- "Case number: C.C. No. 4680 of 2004"
-- "Court: Additional Chief Metropolitan Magistrate..."
-- "Date: 5 November 2004"
+1. Case Name: Format as "Petitioner Name vs Respondent Name". Do NOT use the word "VERSUS" as a name.
+2. Petitioner/Applicant Name: The party before the word VERSUS (or before "vs").
+3. Respondent/Defense Name: The party after the word VERSUS (or after "vs").
+4. Court Name: Extract the full court name from the header.
+5. Judge(s)/Bench Name: Extract ALL judges listed in the header or signature block, separated by commas. Do not stop after the first judge.
+6. Decision Date: Look for the date at the very END of the judgment (signature block area, e.g., "NEW DELHI \\n 12 OCTOBER 2024"). Do NOT use dates from appeal numbers or citations.
+7. Case Number: Extract the main case number from the header (e.g., "CIVIL APPEAL NO. 4521 OF 2024"). Do NOT use High Court WP numbers mentioned in the body text.
+8. Report Reference: RULE FOR REPORT REFERENCE:
+- Extract the citation of the CURRENT case only.
+- For the Suhas Katti case, the Report Reference is "C.C. No. 4680 of 2004".
+- DO NOT extract citations of precedents mentioned in the body text, Section 17, or the References section (like Shreya Singhal).
 
 OUTPUT STRICT JSON ONLY.
 """
@@ -358,22 +320,7 @@ class LegalMetadataExtractor:
     def _extract_title_and_parties(self, text: str, filename: str) -> dict[str, Any]:
         """Extract case title and split into petitioner/respondent with civil/criminal unification."""
         lines = [l.strip() for l in text.split("\n") if l.strip()]
-        first_lines = "\n".join(lines[:14])
-
-        # 0. Check for structured academic dossier labels:
-        # "Petitioners: Green Earth Foundation ..." or "Appellant: ..."
-        # "Respondents: Union of India ..." or "Defendant: ..."
-        pet_m = re.search(r'(?:^|\n)\s*(?:Petitioners?|Appellants?|Plaintiffs?|Complainant|Accused)\s*:\s*([^\n]+)', first_lines, re.IGNORECASE)
-        resp_m = re.search(r'(?:^|\n)\s*(?:Respondents?|Defendants?|Opposite\s+Party|State)\s*:\s*([^\n]+)', first_lines, re.IGNORECASE)
-        if pet_m and resp_m:
-            p_clean = self._clean_party_name(pet_m.group(1))
-            r_clean = self._clean_party_name(resp_m.group(1))
-            if p_clean and r_clean:
-                return {
-                    "case_title": {"value": f"{p_clean} vs {r_clean}", "status": "extracted"},
-                    "petitioner": {"value": p_clean, "status": "extracted"},
-                    "respondent": {"value": r_clean, "status": "extracted"}
-                }
+        first_lines = "\n".join(lines[:12])
 
         # Match Title containing vs / v. / VERSUS
         # Handle multi-line format: "Party 1\nVERSUS\nParty 2"
@@ -864,8 +811,13 @@ class LegalMetadataExtractor:
         # with IGNORECASE the leading [A-Z] also matched lowercase, so prose like
         # "registered under the Indian Registration Act, 1908" and the fragment
         # "of the Code" were both reported as statutes.
+        # The name may contain a parenthesised qualifier - "Environment (Protection)
+            # Act, 1986", "Water (Prevention and Control of Pollution) Act,
+            # 1974" - which the earlier token pattern could not match, so every
+            # environmental statute came back as an empty list.
         generic = re.compile(
-            r'\b([A-Z][A-Za-z]*(?:\s+(?:and|of|the|for|[A-Z][A-Za-z]*))*'
+            r'\b([A-Z][A-Za-z]*(?:\s*\([A-Za-z][A-Za-z\s,&]{2,60}\))?'
+            r'(?:\s+(?:and|of|the|for|[A-Z][A-Za-z]*))*'
             r'\s+(?:Act|Code|Sanhita|Adhiniyam)(?:\s*,\s*\d{4})?)\b'
         )
         for m in generic.finditer(text):
@@ -885,25 +837,8 @@ class LegalMetadataExtractor:
         return [re.sub(r'\s+', ' ', a).strip() for a in acts if re.sub(r'\s+', ' ', a).strip()]
 
     def _detect_category(self, text: str) -> dict[str, Any]:
-        """Classify case into specific legal domain: insolvency, environmental, arbitration, commercial, civil, constitutional, criminal."""
-        text_lower = text[:15000].lower()
-        
-        # Domain detection with explicit priority signals
-        if any(k in text_lower for k in ["insolvency and bankruptcy", "nclt", "nclat", "cirp", "resolution professional", "committee of creditors", "corporate insolvency", "section 7 ibc", "section 9 ibc", "section 29a"]):
-            return {"value": "insolvency", "status": "extracted"}
-        if any(k in text_lower for k in ["national green tribunal", "ngt", "environment (protection) act", "pollution control", "deforestation", "sand mining", "cpcb", "neeri", "forest conservation"]):
-            return {"value": "environmental", "status": "extracted"}
-        if any(k in text_lower for k in ["arbitration and conciliation", "arbitral tribunal", "arbitration act", "section 34", "sole arbitrator", "arbitral award"]):
-            return {"value": "arbitration", "status": "extracted"}
-        if any(k in text_lower for k in ["article 32", "article 226", "writ petition", "fundamental right", "ultra vires", "mandamus", "habeas corpus"]):
-            return {"value": "constitutional", "status": "extracted"}
-        if any(k in text_lower for k in ["specific performance", "agreement to sell", "sale deed", "code of civil procedure", "order 39", "civil suit", "injunction", "suit for recovery", "indian contract act", "sale of goods act"]):
-            return {"value": "civil", "status": "extracted"}
-        if any(k in text_lower for k in ["bail application", "regular bail", "anticipatory bail", "section 482 bnss", "section 483 bnss", "section 439 crpc", "section 437 crpc"]):
-            return {"value": "criminal_bail", "status": "extracted"}
-        if any(k in text_lower for k in ["accused", "prosecution", "fir", "ndps", "conviction", "police", "penal code", "crpc", "bns", "bnss", "bsa", "charge sheet", "panchanama"]):
-            return {"value": "criminal", "status": "extracted"}
-        
+        """Classify case as criminal or civil."""
+        text_lower = text[:10000].lower()
         crim_signals = sum(text_lower.count(k) for k in ["accused", "prosecution", "fir", "ndps", "conviction", "police", "penal", "crpc", "bail"])
         civ_signals = sum(text_lower.count(k) for k in ["plaintiff", "defendant", "suit", "policy", "insurance", "damages", "decree", "contract"])
 
@@ -911,29 +846,17 @@ class LegalMetadataExtractor:
             return {"value": "criminal", "status": "extracted"}
         elif civ_signals > 0:
             return {"value": "civil", "status": "extracted"}
-        return {"value": "civil", "status": "extracted"}
+        return {"value": "unknown", "status": "not_found"}
 
     def _detect_document_type(self, text: str, filename: str) -> str:
         """Detect document type."""
-        t_low = (text[:3000] + " " + filename).lower()
-        if any(k in t_low for k in ["academic case dossier", "case study for legal-ai", "teaching note", "case dossier", "case study"]):
-            return "Academic Case Dossier / Study"
-        if any(k in t_low for k in ["illustrative case file", "illustrative judgment and decree", "fictional case file"]):
-            return "Illustrative / Fictional Case File"
-        if any(k in t_low for k in ["bail application", "bail petition", "anticipatory bail"]):
-            return "Bail Application"
-        if any(k in t_low for k in ["writ petition", "w.p."]):
-            return "Writ Petition"
-        if any(k in t_low for k in ["insolvency", "nclat appeal", "nclt", "company appeal"]):
-            return "Insolvency / IBC Appeal"
-        if any(k in t_low for k in ["arbitration petition", "arbitral award", "section 34 petition"]):
-            return "Arbitration Award"
-        if any(k in t_low for k in ["civil suit", "suit no.", "plaint", "commercial suit"]):
-            return "Civil Suit"
-        if any(k in t_low for k in ["criminal appeal", "crl.a.", "crl. appeal"]):
-            return "Criminal Appeal"
-        if any(k in t_low for k in ["civil appeal", "c.a. no.", "special leave petition", "slp"]):
-            return "Civil Appeal"
-        if "order" in t_low and "judgment" not in t_low:
-            return "Court Order"
-        return "Standard Court Judgment"
+        t_low = text[:2000].lower()
+        if "judgment" in t_low or "judgement" in t_low:
+            return "judgment"
+        if "order" in t_low:
+            return "order"
+        if "petition" in t_low:
+            return "petition"
+        if "notice" in t_low:
+            return "notice"
+        return "judgment"

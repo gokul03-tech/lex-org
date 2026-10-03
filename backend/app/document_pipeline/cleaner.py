@@ -81,7 +81,7 @@ def clean_html_tags(text: str) -> str:
     Returns:
         The same text with markup removed and entities decoded.
     """
-    if not text or ("<" not in text and "&" not in text):
+    if not text or "<" not in text and "&" not in text:
         return text or ""
 
     # 1. Drop non-prose elements together with their content.
@@ -105,28 +105,58 @@ def clean_html_tags(text: str) -> str:
     return cleaned.strip()
 
 
+# Characters that mojibake produces when a PDF's UTF-8 punctuation is decoded
+# as latin-1/cp1252. Kept as raw literals because the point is to match the
+# corrupted bytes, not the intended codepoints.
+_MOJIBAKE_MAP = {
+    "â€˜": "'", "â€™": "'", "â€œ": '"', "â€": '"',
+    "â€“": "-", "â€”": "-", "â€¢": "-", "Â ": " ", "Â": "",
+}
+
+
 def normalize_whitespace(text: str) -> str:
-    """Fix spacing issues like 'Aarav Enterprises& Ors.' -> 'Aarav Enterprises & Ors.'"""
+    """Repair spacing that PDF extraction collapses around legal punctuation.
+
+    Indian Kanoon exports routinely render party names as "Aarav Enterprises&
+    Ors." and section references as "Section29A(c)" / "Act,2016". Those breaks
+    the party split, the section regex and the citation regex downstream, so
+    they are repaired before any extraction runs.
+
+    Only whitespace is inserted - no characters are dropped or reordered - and
+    the substitutions are anchored so real operators are left alone
+    ("A&B" as a company name is untouched unless a letter sits on both sides).
+    """
     if not text:
         return ""
-    text = re.sub(r'(\w)&(\w)', r'\1 & \2', text)
-    text = re.sub(r'(\w)\((\w)', r'\1 (\2', text)
-    text = re.sub(r'\)(\w)', r') \1', text)
+    # word&word  ->  word & word      (party names, exhibit lists)
+    text = re.sub(r"(\w)&(\w)", r"\1 & \2", text)
+    # " &Word"    ->  " & Word"       (tag stripping can leave the space on
+    #                                 one side only, e.g. "</b>&Ors.")
+    text = re.sub(r"(?<=\s)&(?=\w)", "& ", text)
+    # word(word  ->  word (word       (Section29A, Article21(3))
+    text = re.sub(r"(\w)\((\w)", r"\1 (\2", text)
+    # )word      ->  ) word          (Act482BNSS)
+    text = re.sub(r"\)(\w)", r") \1", text)
+    # Act,2016   ->  Act, 2016       (citation year); only before a 4-digit
+    #                                year so "1,000" and "12,34" survive.
+    text = re.sub(r",(?=\d{4}\b)", ", ", text)
     return text
 
 
 def clean_pdf_text(text: str) -> str:
-    """Master text cleaning function - call this FIRST."""
+    """Master single-pass cleaner: call this first, on every extracted document.
+
+    Order matters. HTML is stripped before whitespace repair so that markup
+    boundaries ("</b>And") do not defeat the spacing rules, and mojibake is
+    repaired last so a corrupted em dash cannot be mistaken for a word break.
+    """
     if not text:
         return ""
     text = clean_html_tags(text)
     text = normalize_whitespace(text)
-    # Fix em-dash and en-dash encoding issues
-    text = text.replace('â€"', '—')
-    text = text.replace('â€“', '–')
-    text = text.replace('â€', '—')
-    text = text.replace('\u2013', '–')
-    text = text.replace('\u2014', '—')
+    for bad, good in _MOJIBAKE_MAP.items():
+        if bad in text:
+            text = text.replace(bad, good)
     return text
 
 
@@ -162,14 +192,12 @@ class TextCleaner:
         if not text or not text.strip():
             return ""
 
-        # Remove HTML markup (Indian Kanoon and portal extracts are HTML-wrapped)
-        text = clean_html_tags(text)
+        # Remove HTML markup (Indian Kanoon and portal extracts are HTML-wrapped),
+        # repair collapsed punctuation spacing, and fix mojibake in one pass.
+        text = clean_pdf_text(text)
 
         if not text or not text.strip():
             return ""
-
-        # Fix common encoding issues
-        text = self._fix_encoding(text)
 
         # Remove page numbers
         text = self._remove_page_numbers(text)
@@ -257,6 +285,14 @@ class TextCleaner:
     def _fix_encoding(self, text: str) -> str:
         """Fix common PDF extraction encoding issues."""
         replacements = {
+            "â€˜": "'",  # mojibake left single quote
+            "â€™": "'",  # mojibake right single quote (U+2019)
+            "â€œ": '"',  # mojibake left double quote (U+201C)
+            "â€": '"',  # mojibake right double quote (U+201D)
+            "â€“": "-",  # mojibake en dash (U+2013)
+            "â€”": "-",  # mojibake em dash (U+2014)
+            "Â": "",      # stray non-breaking-space marker
+            "â€¢": "-",  # mojibake bullet
             "\u2018": "'",  # Left single quote
             "\u2019": "'",  # Right single quote
             "\u201c": '"',  # Left double quote

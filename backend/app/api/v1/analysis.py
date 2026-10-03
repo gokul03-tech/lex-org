@@ -738,6 +738,18 @@ async def get_analysis(
 
             if live_analysis.get('category'):
                 doc_info["category"] = live_analysis['category']
+            # Surface the structural classifier (document type + legal domain).
+            # Previously only the keyword `category` reached the UI, so a civil
+            # or insolvency file displayed as "judgment" with no domain.
+            cls = live_analysis.get('classification') or {}
+            if cls:
+                doc_info["document_type"] = cls.get("document_type")
+                doc_info["legal_domain"] = cls.get("legal_domain")
+                doc_info["document_type_confidence"] = cls.get("document_type_confidence")
+                doc_info["legal_domain_confidence"] = cls.get("legal_domain_confidence")
+                doc_info["classification_indicators"] = cls.get("indicators")
+                if cls.get("domain_flag"):
+                    doc_info["domain_flag"] = cls["domain_flag"]
             if live_analysis.get('procedural_stage'):
                 doc_info["procedural_stage"] = live_analysis['procedural_stage']
                 doc_info["case_type"] = live_analysis['procedural_stage']

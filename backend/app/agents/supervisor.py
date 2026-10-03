@@ -43,6 +43,11 @@ class AgentState(TypedDict, total=False):
 
     # Legal Research outputs
     legal_issues: list[str]
+    # Per-issue provenance for the hybrid extractor: dicts with issue/text and a
+    # `source` of "document" (verbatim) or "ai" (LLM fallback), so the UI can
+    # badge generated issues instead of presenting them as quoted facts.
+    legal_issue_details: list[dict]
+    legal_issues_source: str
     applicable_acts: list[str]
     applicable_sections: list[dict[str, Any]]
     precedents: list[dict[str, Any]]

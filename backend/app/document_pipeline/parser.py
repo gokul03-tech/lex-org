@@ -112,11 +112,16 @@ class DocumentParser:
 
     @staticmethod
     def _clean_text(text: str) -> str:
-        """Normalize common PDF-extraction mojibake, HTML tags, whitespace, and encoding before LLM processing."""
+        """Normalize common PDF-extraction mojibake before it reaches the UI.
+
+        Templates frequently encode em/en dashes as a spaced question mark
+        ("fails the standard ? legality, ..."). Fixing this at the parse layer
+        keeps the report text and the grounding source consistent so verbatim
+        checks remain green while the UI stops showing stray "?" glyphs.
+        Ligature glyphs from PDF text extraction are also unwound.
+        """
         if not text:
-            return ""
-        from app.document_pipeline.cleaner import clean_pdf_text
-        text = clean_pdf_text(text)
+            return text
         text = re.sub(r"([A-Za-z0-9])\s\?\s(?=[A-Za-z0-9])", r"\1 — ", text)
         for ligature in ("ﬂ", "ﬃ", "ﬁ", "ﬀ", "œ", "ﬀ"):
             replacement = {
