@@ -268,7 +268,15 @@ export default function OverviewPage() {
                       </span>
                     ) : (
                       <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-violet-700">
-                        AI Legal Analysis
+                        AI-generated
+                      </span>
+                    )}
+                    {issue.source === 'ai' && !issue.evidence && (
+                      <span
+                        className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-amber-700"
+                        title="This document states no issues, so these were inferred by the model. Verify against the source."
+                      >
+                        Unverified
                       </span>
                     )}
                     <span className="inline-flex items-center gap-0.5 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[9px] text-slate-500 opacity-0 group-hover:opacity-100 transition">

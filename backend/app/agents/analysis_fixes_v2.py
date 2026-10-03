@@ -261,16 +261,49 @@ CUES = [
 # Quantities", "Ex.P.12 Quotation", "Annexure A-2". The prefix letter carries
 # the tendering side (P = plaintiff/prosecution/petitioner, D = defendant/
 # defence/respondent), which is exactly the attribution the UI needs.
+#
+# The prefix ("Exhibit"/"Ex.") is OPTIONAL on purpose. A stricter pattern that
+# requires it finds only "Exhibit P-3" and silently misses the bare "P-1:" form
+# that most Indian exhibit registers actually use, which is the whole point of
+# this pass. Bare labels are also disambiguated by the negative lookbehind so a
+# date or section number cannot be read as an exhibit.
+# One "line" of an exhibit description: either a non-newline character, or a
+# newline whose following line is NOT a fresh exhibit label and NOT an ALL-CAPS
+# heading. Real registers wrap each description over two or three lines, so a
+# description confined to a single line ("[^\n]") could never terminate: the
+# lookahead that used to close it only accepted a heading or the next exhibit,
+# and mid-register there is neither. Hence P-1..P-4 parsed as nothing.
+_EX_DASH = r'[-–—‐-―]'
+# Separator after an exhibit number. Must accept every form the corpus uses:
+# "P-1: ", "P-1. ", "P-1 - ", "P-1 — ", "P-1 ". The colon and period are
+# listed as standalone alternatives because "P-1:" has no dash at all, and
+# requiring a dash (or a dash-then-colon) silently dropped every such line.
+_EX_SEP = r'(?:' + _EX_DASH + r'[.:]?\s*|[.:]\s*|\s+)'
+_EX_LABEL = (
+    r'(?:(?:Ex(?:h)?ibit|Ex)\.?\s*)?(?:PW|DW|[PDKA])\s*' + _EX_DASH + r'?\s*\d{1,4}' + _EX_SEP
+)
+_EX_DESC_CONT = (
+    r'(?:[^\n]'
+    r'|\n(?![ \t]*' + _EX_LABEL + r')'
+    r'(?![ \t]*[A-Z][A-Z0-9 .()/&—-]{4,}[ \t]*$))'
+)
+
 _EXHIBIT_RE = re.compile(
     r'(?<![A-Za-z0-9])'
-    r'(?:Ex(?:h)?ibit)?\.?\s*'
-    r'(?P<side>[PDKA]|PW|DW)'
-    r'\s*[-.–]?\s*'
+    # "Ex" must be its own alternative: "Ex(?:h)?ibit" cannot match the bare
+    # abbreviation "Ex.", so the optional prefix silently failed and any
+    # "Exhibit P-3"-style label was skipped.
+    r'(?:(?:Ex(?:h)?ibit|Ex)\.?\s*)?'
+    r'(?P<side>PW|DW|[PDKA])'
+    # Dash classes must include the EM dash (U+2014) and the minus/hyphen
+    # variants. These study files set exhibits as "Exhibit P-1 - FIR ..."; a
+    # class of only [-–] missed every one of them and the register parsed as
+    # empty, which is what dropped Evidence to 20%.
+    r'\s*' + _EX_DASH + r'?\s*'
     r'(?P<num>\d{1,4})'
-    r'\s*(?:[-–:.]\s*|\s+)(?=[A-Za-z(])'
-    r'(?P<desc>[^\n]{3,180}?)'
-    r'(?=(?:\n\s*(?:[A-Z][A-Z0-9 .()/&-]{2,40}){0,3}\s*$)|(?:\n\s*(?:[PDKA]|PW|DW)\s*[-–.]?\s*\d)|\Z)',
-    re.IGNORECASE,
+    r'\s*' + _EX_SEP + r'(?=[A-Za-z(])'
+    r'(?P<desc>' + _EX_DESC_CONT + r'{3,400}?)'
+    r'(?=\n|[ \t]*$)',    re.IGNORECASE,
 )
 
 _SIDE_ROLE = {

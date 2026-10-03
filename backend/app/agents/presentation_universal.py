@@ -296,7 +296,10 @@ def extract_metadata(text: str) -> dict[str, Any]:
         'respondent': F(resp, 'extracted' if resp else 'not_found'),
         'decision_date': F(f"{dm.group(1)} {dm.group(2)} {dm.group(3)}" if dm else None, 'extracted' if dm else 'not_found'),
         'citation_numbers': F(cites or None, 'extracted' if cites else 'not_found'),
-        'acts_referenced': acts_list,
+        # Shaped like every other metadata field. It was a bare list, so the
+        # grounding validator (V04) read status=None and flagged the field on
+        # every document, and the UI had no value/status pair to render.
+        'acts_referenced': F(acts_list or None, 'extracted' if acts_list else 'not_found'),
         'case_number': F(case_no, 'extracted' if case_no else 'not_found'),
         'judges': F(judges_list or None, 'extracted' if judges_list else 'not_found'),
         'presiding_judges': F(judges_list or None, 'extracted' if judges_list else 'not_found')
@@ -465,13 +468,27 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
     key_list: list[str] = []
 
     def _clean_name(raw: str) -> str:
-        """Trim numbered-clause/trailing junk a greedy name may have absorbed."""
-        return re.split(r'\s\.\s*\d', raw)[0].strip(' ,;.')
+        """Trim numbered-clause/trailing junk a greedy name may have absorbed.
+
+        A name split across lines is rejoined: this string is stored and shown,
+        so an embedded newline ("Anvar P.V.\\nv. P.K. Basheer") would render as
+        two broken lines in the precedent list.
+        """
+        name = re.split(r'\s\.\s*\d', raw)[0].strip(' ,;.')
+        return re.sub(r'\s*\n\s*', ' ', name).strip()
 
     # Case-name charset excludes digits so "v. State. 4. It was further urged …"
     # can never swallow the following clause; a numbered-clause period (". 4.")
     # terminates the name via the lookahead instead of being absorbed.
-    NAME = r'[A-Z][A-Za-z.&\' -]+?(?:\s+(?:v\.?|versus)\s+[A-Z][A-Za-z.&\' -]+?)'
+    #
+    # The class must include the newline: PDF text wraps mid-name, so a real
+    # citation reads "in the case of Anvar P.V.\nv. P.K. Basheer". Without \n
+    # the name stopped at the line break and was captured as "Anvar P.V. v. P",
+    # losing the surname entirely. The superset dedup could not repair it: the
+    # truncated key is 6 characters, below its own minimum, so the full name was
+    # never recorded and the short fragment survived as a second "precedent" on
+    # the same citation.
+    NAME = r'[A-Z][A-Za-z.&\' \n-]+?(?:\s+(?:v\.?|versus)\s+[A-Z][A-Za-z.&\' \n-]+?)'
 
     # The judgment's own title line (e.g. "State of Maharashtra v. X") must never
     # be captured as a cited precedent.
@@ -541,8 +558,15 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
         # Prefix-superset dedup: "Anvar P.V. v. P.K" vs "Anvar P.V. v. P.K. Basheer"
         # are the same case (a period-initials match truncated the fuller name) —
         # keep only the fullest form.
+        #
+        # The comparison floor is deliberately short (4). Requiring 8 let a badly
+        # truncated key such as "anvarp" through as a separate precedent, which
+        # then shared a citation with the real case and was reported as a
+        # citation-binding violation. A 4-character prefix is already specific
+        # enough to be the same party pair, and the "keep the longer" rule below
+        # guarantees the fuller name is the one that survives.
         for i, ek in enumerate(key_list):
-            if min(len(ek), len(norm_k)) >= 8 and (ek.startswith(norm_k) or norm_k.startswith(ek)):
+            if min(len(ek), len(norm_k)) >= 4 and (ek.startswith(norm_k) or norm_k.startswith(ek)):
                 if len(name) > len(out[i]['case_name']):
                     yr = (re.search(r'(19\d{2}|20\d{2})', cite) or [None, None])[1]
                     out[i] = {'case_name': name, 'citation': cite or out[i].get('citation', ''),
@@ -604,23 +628,67 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
 def split_sentences(t: str) -> list[str]:
     return SENT(t)
 
+
+def _join_sentences(point: str, sentence: str) -> str:
+    """Append ``sentence`` to ``point``, preserving the sentence boundary.
+
+    SENT() consumes the terminating period when it splits, so joining the units
+    with a bare space welded two sentences together ("...opposed the bail plea
+    She argued that..."). The result was not verbatim anywhere in the source, so
+    the grounding check flagged it, and a rendered submission read as one run-on
+    sentence. The period is restored unless the text already ends a sentence.
+    """
+    point, sentence = point.strip(), sentence.strip()
+    if not point:
+        return sentence
+    if not sentence:
+        return point
+    joiner = "" if point[-1] in ".!?:" else "."
+    return f"{point}{joiner} {sentence}"
+
 SPEC_OUTCOME = re.compile(r'\b(?:allowed|set aside|disposed|dismissed)\b', re.I)
 ANY_OUTCOME = re.compile(r'\b(?:allowed|set aside|disposed|dismissed|directed|quashed|decreed|granted)\b', re.I)
 AGREE_LINE = re.compile(r'-\s*I agree', re.I)
+
+# A bench attestation line: a judge name followed by an initial, then "I agree".
+# This is the signature of the decision, so it and everything after it are not
+# part of the Court's reasoning and must never surface as a conclusion.
+_ATTESTATION_RE = re.compile(
+    r'(?m)^[ \t]*[A-Z][A-Za-z]*(?:[ \t]+[A-Z][A-Za-z]*){0,3}[ \t]*,[ \t]*J\.[ \t]*'
+    r'(?:-[ \t]*I agree\.?)?[ \t]*$',
+)
 
 def _substantive_sentences(n: str, min_len: int = 60) -> list[str]:
     return [s.strip() for s in SENT(n) if len(s.strip()) >= min_len and not AGREE_LINE.search(s)]
 
 _SIG_BLOCK = re.compile(
-    r'(?:\.{10,}\s*J\.?|CHIEF JUSTICE OF INDIA|JUSTICE OF INDIA|\[?\s*[A-Z][A-Za-z.\s]+\]?\s*$'
+    r'(?:\.{10,}\s*J\.?|CHIEF JUSTICE OF INDIA|JUSTICE OF INDIA'
+    # The bracketed/standalone signature line must be matched case-SENSITIVELY
+    # and anchored to a whole line. Under the outer re.I, "[A-Z][A-Za-z.\s]+$"
+    # also matched lowercase, so it fired on essentially any sentence ending in
+    # a letter ("The Trial Court reportedly rejected the bail application") and
+    # silently discarded every real chronology fact.
+    r'|(?-i:^\[?\s*(?:J|JUSTICE|CHIEF|District|Session|Additional|Principal)\b[A-Za-z.,\s]{0,40}\]?\s*$)'
     r'|NEW DELHI\s+\d{1,2}\s+[A-Z]{3,9}\s+\d{4})',
-    re.I,
+    re.I | re.M,
 )
 
 def _strip_signature(text: str) -> str:
     """Drop judge signature/date tail so it never leaks into conclusion/timeline."""
     if not text:
         return text
+    # A judicial attestation line ("Gauri Godse, J. - I agree.") is a signature
+    # even without dots or a bracketed name, and the end-anchored signature
+    # search below never sees it. Cut from the last such line onward: everything
+    # after an attestation is bench commentary, not an operative direction.
+    #
+    # Restricted to the closing fifth of the document. A judge also appears in
+    # the "Bench:" line and under the heading at the very top; cutting there
+    # discarded the entire judgment body and left only the caption, which
+    # silently emptied every downstream field (timeline, strengths, order).
+    att = [m for m in _ATTESTATION_RE.finditer(text) if m.start() >= len(text) * 0.8]
+    if att:
+        text = text[: att[0].start()]
     m = _SIG_BLOCK.search(text[-800:])
     if m and m.start() > 0:
         return text[: max(0, len(text) - 800) + m.start()]
@@ -776,14 +844,23 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
     # ("DEFENCE CONTENTIONS Public descriptions of the defence state ..."), so
     # these are searched anywhere in the sentence, not anchored to it. The
     # sentence is kept when it carries real content after the heading.
+    #
+    # The apostrophe is optional and matches BOTH the straight and the curly
+    # form. These files write "10. PETITIONERS' SUBMISSIONS" with U+2019, and a
+    # pattern demanding "\s+" straight after the noun missed every such heading,
+    # which is why the State side came back with zero arguments. The plural "S"
+    # and the apostrophe appear in either order across this corpus
+    # ("PETITIONERS'" = S then mark, "STATE'S" = mark then S), so both are
+    # optional and both orders are accepted.
+    _PLURAL_MARK = r'(?:S?[\u2019\'\u02bc]?S?)'
     SECTION_A = re.compile(
         r'(?:DEFEN[CS]E\s+(?:CONTENTIONS|ARGUMENTS|POSITION)'
-        r'|(?:APPELLANT|PETITIONER|ACCUSED)\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS))\b',
+        rf'|(?:APPELLANT|PETITIONER|ACCUSED){_PLURAL_MARK}\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS))\b',
         re.I,
     )
     SECTION_B = re.compile(
         r'(?:PROSECUTION\s+(?:ARGUMENTS|CONTENTIONS|EVIDENCE|WITNESSES)'
-        r'|(?:RESPONDENT|STATE)\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS))\b',
+        rf'|(?:RESPONDENT|STATE){_PLURAL_MARK}\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS))\b',
         re.I,
     )
     PAT_B_START = re.compile(
@@ -823,8 +900,13 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
                 # Dossier prose has no reporting verb, so mark this section as
                 # emitting one point per sentence instead of merging the whole
                 # section into a single argument.
-                section_mode = True
                 current_point = tail_text
+            # The heading often stands alone ("10. PETITIONERS' SUBMISSIONS"
+            # on its own line), leaving no tail to carry the flag above. The
+            # section is still a section: without setting this here, everything
+            # below it was merged into one truncated argument and the side
+            # rendered as a single bullet instead of its separate points.
+            section_mode = True
             continue
 
         if re.search(r'\b(?:We have heard|We hold|In our considered view|The petition is|Bail is allowed|Award is set aside)\b', s_clean, re.I):
@@ -886,13 +968,13 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
             if is_list_item and current_point.strip():
                 # A new marker starts a new argument.
                 _finalize(cur)
-            current_point = f"{current_point} {clean_s}".strip() if current_point else clean_s
+            current_point = _join_sentences(current_point, clean_s) if current_point else clean_s
         elif cur and current_point.strip() and not section_mode and not has_verb and not is_list_item:
             # Continuation prose inside an already-open argument. Keep it with
             # the point it belongs to: splitting it out turned one argument
             # ("(i) ... relied on X. The certificate was produced only during
             # the arguments.") into two half-arguments in the UI.
-            current_point = f"{current_point} {clean_s}".strip()
+            current_point = _join_sentences(current_point, clean_s)
         elif cur:
             # A new sentence that opens a fresh point: either it carries a
             # reporting verb, or it begins a new sentence with no open point.
@@ -928,10 +1010,25 @@ def _split_long_points(items: list[str], max_len: int = 420) -> list[str]:
         text = re.sub(r'\s+', ' ', item or '').strip()
         if not text:
             continue
-        sentences = [s.strip() for s in SENT(text) if len(s.strip()) > 40 and not _is_meta(s)]
-        if not sentences:
+        # A point that opens with punctuation is a fragment of the sentence
+        # before it ("... and the court's conclusions"), not an argument.
+        if not re.match(r'[A-Z"\'\u2018(\[]', text):
+            continue
+        sents = [s.strip() for s in SENT(text) if s.strip()]
+        kept = [s for s in sents if len(s) > 40 and not _is_meta(s)]
+        if not kept:
+            # Every sentence here was either too short to stand alone or was
+            # flagged as commentary about the document rather than the case.
+            # The old code fell back to the raw text here, which resurrected
+            # precisely the meta prose the filter exists to remove ("The actual
+            # contract is not included in the supplied text") and attributed it
+            # to a party. Only a wholly non-meta item may pass on the fallback.
+            if not any(not _is_meta(s) for s in sents):
+                continue
             sentences = [text[:max_len - 1] + '…'] if len(text) > max_len else [text]
-        elif len(sentences) == 1 and len(sentences[0]) <= max_len:
+        else:
+            sentences = kept
+        if len(sentences) == 1 and len(sentences[0]) <= max_len:
             out.append(sentences[0])
             continue
         for s in sentences:
@@ -1002,16 +1099,118 @@ def build_timeline(text: str, date: str | None) -> list[dict[str, Any]]:
             return True
         return False
 
-    ev = [{'date': m.group(0), 'fact': n[snap(n, m.start()-140):m.end()+140], 'page': '1-2'}
-          for m in re.finditer(r'\d{2}-\d{2}-\d{4}', n)]
+    ev: list[dict[str, Any]] = []
+    seen_ev: set[tuple[str, str]] = set()
+    seen_dates: set[str] = set()
+
+    def _dated_fact(start: int, end: int) -> str:
+        """The sentence enclosing a date, not a blind character window.
+
+        A fixed +/-140 character slice attached to a date routinely spanned a
+        sentence boundary, so an exhibit's fact was the PREVIOUS exhibit's
+        description and a chronology entry read as unrelated prose. Worse, a
+        date could be discarded merely because unrelated commentary happened to
+        fall inside its window. Expanding to the enclosing sentence keeps the
+        fact and its date together.
+        """
+        left = start
+        while left > 0 and n[left - 1] not in '.;:!?\n':
+            left -= 1
+            if start - left > 200:
+                break
+        right = end
+        # A chronology entry introduces its event with a colon
+        # ("15 March 2023: FIR No. 112/2023 was registered"). Treating that colon
+        # as a sentence terminator collapsed every entry to the bare date, which
+        # then failed the minimum-length check and was discarded - the direct
+        # cause of an almost empty timeline. Skip continuation punctuation and
+        # run on to a real terminator.
+        probe = end
+        while probe < len(n) and n[probe] in ':,':
+            probe += 1
+        right = probe
+        # A period only ends the sentence when it is not the full stop of a
+        # known abbreviation. "FIR No. 112/2023 was registered" otherwise ended
+        # at "No.", and once the leading date was stripped the fact collapsed
+        # to "FIR No" and was discarded as too short to be an event.
+        _ABBREV = (
+            r'(?:No|Ex|Sec|Art|Arti|Para|Ord|App|cl|v|s|pp|Dr|Mr|Ms|Mrs|Jt|'
+            r'Const|Reg|Ref|Vol|Pp|Sched|Annex|Ins|Cl)'
+        )
+        while right < len(n):
+            ch = n[right]
+            if ch == '.':
+                if re.search(r'\b' + _ABBREV + r'\.?$', n[max(0, right - 14):right], re.I):
+                    right += 1
+                    continue
+                break
+            if ch in '!?\n;':
+                break
+            right += 1
+            if right - end > 220:
+                break
+        fact = n[left:right].strip(' .,:;-')
+        # Prefer a clause that opens at the date ("On 15 March 2023, the FIR
+        # was registered") over the whole sentence.
+        lead = n[left:start].strip()
+        if len(lead) <= 28 and lead:
+            fact = n[start:right].strip(' .,:;-')
+        # The date already has its own column; drop a leading restatement of it
+        # so the fact reads as the event, not "15 March 2023: 15 March 2023 ...".
+        # If stripping would leave too little to stand as a fact, keep the date:
+        # a redundant prefix beats losing the chronology entry altogether.
+        stripped = re.sub(
+            r'^(?:On|By|Before|Around|On\s+or\s+about)?\s*'
+            r'(?:\d{1,2}\s+[A-Za-z]+\s+\d{4}|\d{1,2}[./-]\d{1,2}[./-]\d{4})\s*[:,]?\s*',
+            '',
+            fact,
+            count=1,
+        ).strip(' .,:;-')
+        return stripped if len(stripped) >= 20 else fact
+
+    def _add(date: str, fact: str) -> None:
+        key = (date.lower(), re.sub(r'\s+', ' ', fact)[:70].lower())
+        d = date.lower()
+        # A date restated in a later section (exhibit register, checklist) is
+        # the same event; the first substantive mention is the one to keep.
+        if key in seen_ev or d in seen_dates:
+            return
+        seen_ev.add(key)
+        seen_dates.add(d)
+        ev.append({'date': date, 'fact': fact, 'page': '1-2'})
+
+    for m in re.finditer(r'\d{2}-\d{2}-\d{4}', n):
+        _add(m.group(0), _dated_fact(m.start(), m.end()))
+
+    # Long-form dates are matched BEFORE the numeric form on purpose. Both
+    # branches resolve to the same "15 March 2023" key, and these files state a
+    # real chronology as "15 March 2023: FIR ... was registered" while restating
+    # the same date as "15.03.2023" inside the exhibit register. Running the
+    # numeric branch first let the register claim the date and the actual
+    # chronology entry was dropped, which is what left the timeline near empty.
     for m in re.finditer(
         r'\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b',
         n, re.I,
     ):
-        fact = n[snap(n, m.start()-140):m.end()+140]
+        fact = _dated_fact(m.start(), m.end())
         if _SIG_BLOCK.search(fact) or _bad_fact(fact):
             continue
-        ev.append({'date': m.group(0), 'fact': fact, 'page': '1-2'})
+        _add(m.group(0), fact)
+
+    # Numeric dates written "15.03.2023" / "18/03/2023". These study files state
+    # many dated events this way and only the dashed ISO form was matched.
+    _MONTH_NAMES = (
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December',
+    )
+    for m in re.finditer(r'(?<!\d)(\d{1,2})[./](\d{1,2})[./](\d{4})(?!\d)', n):
+        day, mon, yr = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if not (1 <= mon <= 12 and 1 <= day <= 31):
+            continue
+        fact = _dated_fact(m.start(), m.end())
+        if _SIG_BLOCK.search(fact) or _bad_fact(fact):
+            continue
+        _add(f'{day} {_MONTH_NAMES[mon - 1]} {yr}', fact)
     # Keep only date events with usable facts
     ev = [e for e in ev if not _bad_fact(e['fact'])]
     op = _operative_sentence(n) or _last_substantive(n) or n[-160:].strip()
@@ -1369,18 +1568,27 @@ def gate(report: dict[str, Any], text: str) -> dict[str, Any]:
 # ---------- 10) LEGACY & GROUNDED ISSUES HELPERS ----------
 # Headings that introduce an explicit list of issues, whether in a judgment
 # ("ISSUES FOR CONSIDERATION") or a study document ("9. LEGAL ISSUES").
+# The heading may carry a trailing qualifier: study files write
+# "12. ISSUES AND COURT'S REASONING", which the old end-anchored pattern
+# rejected, so the region was never bounded and the issues below it were lost.
 _ISSUE_SECTION_RE = re.compile(
     r'^[ \t]*(?:\d+\s*[.)]\s*)?'
-    r'(?:LEGAL\s+ISSUES?|ISSUES?\s+(?:FOR\s+CONSIDERATION|ARISING|DISCUSSED)'
-    r'|QUESTIONS?\s+(?:ARISING|CONSIDERED|IN\s+ISSUE)|ISSUES?\s+RAISED)\s*$\n',
+    r'(?:LEGAL\s+ISSUES?|ISSUES?\s+(?:FOR\s+CONSIDERATION|ARISING|DISCUSSED|RAISED)'
+    r'|QUESTIONS?\s+(?:ARISING|CONSIDERED|IN\s+ISSUE))'
+    # Optional trailing qualifier, e.g. "ISSUES AND COURT'S REASONING".
+    r'(?:\s+AND\s+[A-Z][A-Z \'’]{2,30})?'
+    r'[ \t]*$\n',
     re.I | re.MULTILINE,
 )
 
 # Enumerated issue items. Ordinal words and Arabic/roman numerals are all
 # accepted because the framing varies by court and by academic source.
+# "Main question:" is included because study files state the single issue that
+# way, under an issues heading, with no numeral at all.
 _ISSUE_ITEM_RE = re.compile(
     r'^\s*(?:'
     r'(?P<roman>(?:Issue|Question|Point)\s*(?:[IVXLC]+|\d+))\s*[:.)-]\s*'
+    r'|(?P<main>(?:Main\s+question|Central\s+question|Key\s+question))\s*[:.)-]\s*'
     r'|(?P<ordinal>(?:First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth))\s*,\s*'
     r'|\(?([0-9]{1,2})\)\s*'
     r'|\[([0-9]{1,2})\]\s*'
@@ -1433,7 +1641,7 @@ def _enumerated_issues(text: str) -> list[dict[str, Any]]:
             continue
         if len(body) < 20:
             continue
-        label = (item.group('roman') or item.group('ordinal') or '').strip(" :.)-")
+        label = (item.group('roman') or item.group('main') or item.group('ordinal') or '').strip(" :.)-")
         text_out = f"{label}: {body}" if label else body
         key = nows(body)[:60]
         if key in seen:
@@ -1792,7 +2000,9 @@ def build_analysis(text: str) -> dict[str, Any]:
         # a false domain mismatch.
         found_pool = ' | '.join(
             [s['act'] for s in secs]
-            + [str(a) for a in (meta.get('acts_referenced') or [])]
+            + [
+                str(a) for a in ((meta.get('acts_referenced') or {}).get('value') or [])
+            ]
         ).lower()
         matched = [f for f in expected if _act_named(f, found_pool)]
         classification['expected_statutes'] = expected

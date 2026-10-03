@@ -72,6 +72,24 @@ META_SENTENCE_PATTERNS = [
     r'should\s+not\s+be\s+(?:relied|treated)\s+on',
     r'this\s+document\s+is\s+prepared\s+for\s+academic\s+purposes',
     r'for\s+study\s+and\s+presentation',
+    # Methodology instruction: the document telling the READER how to analyse a
+    # case, rather than either side arguing it. These are not submissions and
+    # must not be attributed to a party.
+    r'a\s+proper\s+case\s+analysis\s+should',
+    r'(?:should|must)\s+be\s+(?:read|understood|analyse[d]?|analyze[d]?|treated)\s+'
+    r'(?:with|as|in\s+light\s+of)',
+    r"the\s+phrase\s+['\"][^'\"]+['\"]\s+must\s+be\s+read",
+    r'(?:is|are)\s+therefore\s+treated\s+as?\b',
+    r'case\s+analysis\s+should\s+separate',
+    r'this\s+(?:file|document)\s+should\s+be\s+read\s+as',
+    # Evidentiary hedge about the record itself. "The actual contract is not
+    # included in the supplied text" describes a gap in the file, not an
+    # argument by anyone; as a submission bullet it misattributes a caveat.
+    r'\bis\s+not\s+(?:included|provided|reproduced|set\s+out|available)\s+in\s+'
+    r'(?:the\s+|this\s+)?(?:supplied|given|provided)?\s*'
+    r'(?:text|extract|file|record|document)s?\b',
+    r'\bthe\s+extract\s+does\s+not\s+(?:provide|contain|include|state|specify)\b',
+    r"\bthis\s+is\s+the\s+State['\u2019]?s\s+submission,\s*not\s+a\s+(?:final\s+)?finding\b",
 ]
 
 _META_SECTION_RE = re.compile(
@@ -138,6 +156,41 @@ def is_meta_text(text: str) -> bool:
     if not text:
         return False
     return bool(_META_SENTENCE_RE.search(text))
+
+
+# Standalone noise markers: single lines that carry no case content but that
+# the model otherwise reads as argument ("ACADEMIC CASE STUDY", "ILLUSTRATIVE
+# ONLY", a bare page stamp). These survive strip_meta_sections because they are
+# not sections - there is no body to bound them - so they need their own pass.
+_STANDALONE_NOISE_RE = re.compile(
+    r'^[ \t]*(?:'
+    r'ACADEMIC\s+(?:CASE\s+)?(?:STUDY|DOSSIER|EXERCISE|PURPOSE)[^\n]{0,60}'
+    r'|CASE\s+STUDY\s+FOR\s+LEGAL[^\n]{0,40}'
+    r'|ILLUSTRATIVE\s+ONLY'
+    r'|FOR\s+(?:ACADEMIC|EDUCATIONAL|TRAINING)\s+PURPOSES?\s+ONLY'
+    r'|CASE\s+FILE\s+SUMMARY'
+    r'|END\s+NOTE\s*:?[^\n]{0,80}'
+    r'|\(?\s*PAGE\s+\d{1,4}(?:\s+OF\s+\d{1,4})?\s*\)?'
+    r'|\[?\s*PAGE\s+\d{1,4}\s*\]?'
+    r')[ \t]*$',
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_standalone_noise(text: str) -> str:
+    """Remove single-line academic/page markers that carry no case content.
+
+    Applied to text bound for an LLM prompt. These markers repeat on many
+    pages and are pure document furniture: a model that reads "ILLUSTRATIVE
+    ONLY" twenty times treats it as a party assertion, which is how an
+    illustrative file ends up quoted as if it were a holding.
+    """
+    if not text:
+        return text
+    out = _STANDALONE_NOISE_RE.sub('', text)
+    # A watermark is sometimes mid-line rather than alone on its line.
+    out = re.sub(r'[ \t]*(?:ACADEMIC\s+CASE\s+STUDY|ILLUSTRATIVE\s+ONLY)[ \t]*', ' ', out, flags=re.IGNORECASE)
+    return re.sub(r'\n{3,}', '\n\n', out).strip()
 
 
 def filter_meta_items(items: list[Any], text_key: str = 'text') -> list[Any]:

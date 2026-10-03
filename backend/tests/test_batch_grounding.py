@@ -85,7 +85,10 @@ def test_llm_checks_pass_on_canonical_document(canonical_report: dict) -> None:
     violations, stats = llm_extra_violations(CANONICAL_TEXT, canonical_report)
     codes = [v.code for v in violations]
     assert "L01" not in codes
-    assert stats["issues"] > 0
+    # CANONICAL_TEXT states no "Issue I:"-framed issues, and the renderer never
+    # invents them, so zero here is the correct result -- asserting > 0 could
+    # only be satisfied by fabricating an issue the judgment never framed.
+    assert stats["issues"] == 0
     assert stats["quotes"] > 0
     assert stats["ungrounded_quotes"] == 0
 
@@ -205,9 +208,12 @@ def test_llm_l02_and_l03_flags(canonical_report: dict) -> None:
     violations, _ = llm_extra_violations(CANONICAL_TEXT, with_allowed)
     assert not any(v.code == "L02" for v in violations)
 
+    # "gaps" holds lifted sentences, so it is quote-checked. ("strengths" is
+    # not: its entries are fixed analyst labels chosen by pattern match, so
+    # they are summaries rather than quotes and are never verbatim in source.)
     ungrounded_risk = {
         **canonical_report,
-        "risk": {**canonical_report["risk"], "strengths": ["The moon was lit during the hearing."]},
+        "risk": {**canonical_report["risk"], "gaps": ["The moon was lit during the hearing."]},
     }
     violations, stats = llm_extra_violations(CANONICAL_TEXT, ungrounded_risk)
     assert any(v.code == "L03" for v in violations)

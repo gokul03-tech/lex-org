@@ -438,6 +438,14 @@ def validate_report(report: dict[str, Any], stem: str, filename: str) -> list[Vi
 # --------------------------------------------------------------------------- #
 # Optional LLM-mode checks (L01-L03)
 # --------------------------------------------------------------------------- #
+_FRAMED_ISSUE_RE = re.compile(r"\bIssue\s+[IVXLC]+\s*:", re.I)
+
+
+def _frames_issues(text: str) -> bool:
+    """True when the judgment itself enumerates issues for determination."""
+    return bool(_FRAMED_ISSUE_RE.search(text or ""))
+
+
 def supporting_quotes(report: dict[str, Any]) -> list[str]:
     """Collect document-derived strings that must exist verbatim in the source."""
     quotes: list[str] = []
@@ -448,7 +456,13 @@ def supporting_quotes(report: dict[str, Any]) -> list[str]:
         if isinstance(item, dict) and item.get("fact"):
             quotes.append(str(item["fact"]))
     risk = report.get("risk") or {}
-    for key in ("strengths", "gaps", "action_plan"):
+    # Only fields that are expected to be verbatim extracts belong here.
+    # "strengths" holds fixed analyst labels ("Investigation complete; charge
+    # sheet filed - no risk of evidence tampering.") chosen by pattern match,
+    # so demanding they appear verbatim in the source flagged every strength on
+    # every document. "gaps" and "action_plan" are lifted sentences, so they
+    # are still checked.
+    for key in ("gaps", "action_plan"):
         for item in risk.get(key) or []:
             if isinstance(item, str) and item.strip():
                 quotes.append(item)
@@ -462,9 +476,17 @@ def llm_extra_violations(
     from app.agents.presentation_universal import render_issues
 
     violations: list[Violation] = []
-    issues = render_issues(report)
-    if not issues:
-        violations.append(Violation("L01", "issues[] is empty"))
+    # The document text must be passed: render_issues reads only what the
+    # document states and returns nothing without it, so calling it with the
+    # report alone reported L01 on every document regardless of its content.
+    issues = render_issues(report, text)
+    # L01 flags a *rendering* failure, so it may only fire when the document
+    # actually framed issues that the renderer then dropped. Demanding a
+    # non-empty list unconditionally made the rule unsatisfiable without
+    # fabricating issues: most judgments state none, and the renderer
+    # deliberately never invents them.
+    if not issues and _frames_issues(text):
+        violations.append(Violation("L01", "issues[] is empty despite framed issues"))
 
     conclusion = str((report.get("risk") or {}).get("conclusion") or "")
     if not OPERATIVE_VERB_RE.search(conclusion):

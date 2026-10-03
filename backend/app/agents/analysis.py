@@ -84,11 +84,33 @@ _ISSUE_NOISE_RE = re.compile(
 )
 
 
+def _llm_clean(text: str) -> str:
+    """Text as an LLM should see it: meta sections and standalone noise removed.
+
+    Applied at every prompt entry point rather than once at parse time, because
+    a caller may hold pre-cleaned or partially-cleaned text. Failures are
+    swallowed: an uncleaned prompt is better than no analysis.
+    """
+    if not text:
+        return text or ""
+    try:
+        from app.agents.doc_meta_guard import strip_meta_sections, strip_standalone_noise
+
+        return strip_standalone_noise(strip_meta_sections(text))
+    except Exception:
+        return text
+
+
 def _clean_llm_issue(raw: Any) -> str:
     """Normalise one LLM issue to a single clean sentence."""
     s = re.sub(r"\s+", " ", str(raw or "")).strip()
-    # Drop list markers: "1.", "2)", "Issue 3 -", "(iv)".
-    s = re.sub(r"^\s*(?:\(?\d{1,2}\)?[.)]|issue\s+[0-9ivx]{1,4}\s*[-–:.]\s*)", "", s, flags=re.IGNORECASE)
+    # Drop list markers: "1.", "2)", "(iv)", "Issue 3 -", "Q1:".
+    s = re.sub(
+        r"^\s*(?:\(?\d{1,2}\)?[.)]|\([0-9ivx]{1,4}\)|issue\s+[0-9ivx]{1,4}\s*[-–:.]|q\s*[0-9]{1,2}\s*[-–:])\s*",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    )
     # Keep the label when the document itself used one ("Main question: ...").
     if _ISSUE_NOISE_RE.match(s):
         return ""
@@ -113,7 +135,7 @@ async def llm_extract_issues_as_fallback(text: str) -> list[dict[str, Any]]:
 
         provider = get_qwen_provider()
         result = provider.generate_structured(
-            f"{ISSUE_LLM_FALLBACK_PROMPT}\n\nCase Document:\n{text[:14000]}",
+            f"{ISSUE_LLM_FALLBACK_PROMPT}\n\nCase Document:\n{_llm_clean(text)[:14000]}",
             output_schema={
                 "type": "object",
                 "properties": {
@@ -168,9 +190,28 @@ Extract counsel submissions from the legal document.
 RULES:
 1. Look for paragraphs starting with "Mr. [Name], learned Senior Counsel..." or "Per contra, Mr. [Name]...".
 2. Extract the actual numbered arguments `(i)`, `(ii)`, `(iii)`, `(iv)` that follow these names.
-3. If the specific name of the counsel is not mentioned, DO NOT use generic fallback text like "Petitioner contends allegations warrant relief." Instead, summarize the actual legal arguments made on behalf of each side based on the text.
+3. If the specific name of the counsel is not mentioned, DO NOT use generic fallback text like "Petitioner contends
 4. Ensure strict separation between Prosecution/Respondent arguments and Defense/Appellant arguments.
 5. Do NOT include the court's framed issues in counsel submissions.
+
+ROLE-BASED SECTIONS (do not rely on "Per contra" alone):
+Academic and illustrative files carry no counsel names, but they label each
+side's arguments by ROLE. Match the label, not the phrasing:
+- Petitioner / Appellant / Plaintiff / Defence side:
+  "PETITIONERS' SUBMISSIONS", "APPELLANT'S POSITION", "PLAINTIFF'S FINAL WRITTEN
+  SUBMISSIONS", "DEFENCE CONTENTIONS", "APPELLANT'S SUBMISSIONS",
+  "PLAINTIFF'S EVIDENCE AND WITNESS STATEMENT"
+- Respondent / State / Prosecution side:
+  "RESPONDENTS' SUBMISSIONS", "STATE'S SUBMISSIONS", "RESPONDENT'S POSITION",
+  "PROSECUTION WRITNESSES AND EVIDENCE", "PROSECUTION'S EVIDENCE",
+  "DEFENDANT'S FINAL WRITTEN SUBMISSIONS"
+- Numbered party sections also count: "10. PETITIONERS' SUBMISSIONS".
+Extract the arguments written under those headings for that side.
+
+DO NOT extract as a submission:
+- The court's own reasoning or analysis.
+- The plaint prayer or "relief sought" clause.
+- Any section that describes the document rather than a party's case.
 
 RULES FOR ACADEMIC DOSSIERS (no counsel names present):
 - For academic dossiers, look for sections titled "DEFENCE CONTENTIONS" (Section 8) or "PROSECUTION WITNESSES AND EVIDENCE" (Section 7).
@@ -581,6 +622,19 @@ async def case_understanding_agent(state: AgentState) -> AgentState:
         doc_texts = "\n\n---\n\n".join(
             d.get("text", d.get("parsed_text", ""))[:14000] for d in documents[:1]
         ) if documents else query
+
+        # Layer 1 (noise filter): academic dossiers and illustrative files
+        # repeat "ACADEMIC CASE STUDY" / "ILLUSTRATIVE ONLY" / page stamps on
+        # many pages. Fed to the model verbatim they read as party assertions,
+        # so an illustrative disclaimer gets quoted as if it were a holding.
+        # Both the standalone markers and the meta sections are removed here,
+        # at the single point where text enters a prompt.
+        try:
+            from app.agents.doc_meta_guard import strip_meta_sections, strip_standalone_noise
+
+            doc_texts = strip_standalone_noise(strip_meta_sections(doc_texts))
+        except Exception as _noise_exc:  # never block analysis on cleaning
+            logger.warning(f"[NoiseFilter] skipped: {_noise_exc}")
 
         # Layer 1: Deterministic Metadata Extraction
         from app.agents.metadata_extractor import extract_metadata
@@ -1177,7 +1231,7 @@ Respond with JSON: {{"contradictions": [{{"type": "", "statement_a": "", "statem
 """
         else:
             # Single document: perform intra-document inconsistency analysis (e.g. claims vs findings, date conflicts, petitioner vs respondent positions)
-            doc_text = documents[0].get('text', documents[0].get('parsed_text', ''))[:6000]
+            doc_text = _llm_clean(documents[0].get('text', documents[0].get('parsed_text', '')))[:6000]
             prompt = f"""Analyze this legal document for internal contradictions, inconsistencies, or conflicting factual positions.
 
 Examine:
@@ -1820,7 +1874,7 @@ async def report_generation_agent(state: AgentState) -> AgentState:
         )
         from app.agents.presentation_universal import _strip_signature
 
-        doc_text_full = "\n\n".join(d.get("text", "") for d in documents)
+        doc_text_full = _llm_clean("\n\n".join(d.get("text", "") for d in documents))
         page_chunks = build_page_chunks(doc_text_full) if doc_text_full else []
         case_category = state.get("case_category", "criminal")
         meta_dict = state.get("metadata") or {}

@@ -551,12 +551,23 @@ class LegalMetadataExtractor:
 
     def _extract_decision_date(self, text: str) -> dict[str, Any]:
         """Extract judgment delivery date normalized to 'DD Month YYYY'.
-        
+
         Priority:
         1. Signature-block date at the very end of the document (e.g., "NEW DELHI 12 OCTOBER 2024")
         2. Explicit "decided on/dated/pronounced on" dates in the tail
         3. Any DD Month YYYY date in the tail (last 2000 chars)
         4. Fallback to header/first 6000 chars
+
+        DO NOT replace this with a "last date mentioned wins" rule. That was
+        tried and it is wrong twice over:
+          * it reads the citation date of a *cited precedent*, a bibliography
+            entry, or a reference work as the judgment's own date, and
+          * the obvious regex for it, r'\\d{1,2}[.\\s]MONTH[.\\s]\\d{4}',
+            does not even match the corpus's dominant "16 April, 2024" form,
+            so it silently returned nothing and the rule fell through to
+            whatever was extracted first.
+        Structured priority beats positional guessing: a signature block is
+        evidence, "the last date in the file" is an assumption.
         """
         # 1. Signature-block / tail dates (last 2000 chars) - highest priority
         tail = text[-2000:] if len(text) > 2000 else text
