@@ -103,7 +103,42 @@ STATUTES: dict[str, dict[str, Any]] = {
         "penal": None,
     },
     "sc_st": {
-        "aliases": ("scheduled castes and the scheduled tribes (prevention of atrocities) act", "sc/st act", "sc st act"),
+        "aliases": ("scheduled castes and scheduled tribes (prevention of atrocities) act", "sc/st act", "sc st act", "prevention of atrocities act"),
+        "max": 23,
+        "penal": None,
+    },
+    "pmla": {
+        "aliases": ("prevention of money laundering act", "prevention of money laundering act, 2002", "pmla"),
+        "max": 75,
+        "penal": set(range(3, 10)),
+    },
+    "pca": {
+        "aliases": ("prevention of corruption act", "prevention of corruption act, 1988", "pc act"),
+        "max": 31,
+        "penal": set(range(7, 16)),
+    },
+    "sarfaesi": {
+        "aliases": ("securitisation and reconstruction of financial assets and enforcement of security interest act", "sarfaesi act", "sarfaesi"),
+        "max": 42,
+        "penal": None,
+    },
+    "consumer_protection": {
+        "aliases": ("consumer protection act", "consumer protection act, 2019", "copra"),
+        "max": 107,
+        "penal": None,
+    },
+    "tpa": {
+        "aliases": ("transfer of property act", "transfer of property act, 1882", "tpa"),
+        "max": 137,
+        "penal": None,
+    },
+    "limitation": {
+        "aliases": ("limitation act", "limitation act, 1963"),
+        "max": 32,
+        "penal": None,
+    },
+    "commercial_courts": {
+        "aliases": ("commercial courts act", "commercial courts act, 2015", "commercial courts, commercial division and commercial appellate division of high courts act"),
         "max": 23,
         "penal": None,
     },
@@ -140,20 +175,83 @@ def _section_number(num: str | None) -> str:
 
 # ── Canonical precedents: verified case name -> correct record ─────────────
 VERIFIED_CASES: dict[str, dict[str, Any]] = {
-    "sughar singh v hari singh": {"citation": "2021 SCC OnLine SC 975", "year": 2021, "court": "Supreme Court of India"},
-    "state of punjab v balbir singh": {"citation": "(1994) 3 SCC 299", "year": 1994, "court": "Supreme Court of India"},
-    "balbir singh v state": {"citation": "(1994) 3 SCC 299", "year": 1994, "court": "Supreme Court of India"},
-    "ssangyong engineering construction v nhai": {"citation": "(2019) 15 SCC 131", "year": 2019, "court": "Supreme Court of India"},
-    "delhi airport metro express v dmrc": {"citation": "(2022) 1 SCC 131", "year": 2022, "court": "Supreme Court of India"},
-    "delhi airport metro express v dmrc": {"citation": "(2022) 1 SCC 131", "year": 2022, "court": "Supreme Court of India"},
-    "chand rani v kamal rani": {"citation": "(1993) 1 SCC 519", "year": 1993, "court": "Supreme Court of India"},
+    # Criminal & Bail Jurisprudence
     "sanjay chandra v cbi": {"citation": "(2012) 1 SCC 40", "year": 2012, "court": "Supreme Court of India"},
     "arnesh kumar v state of bihar": {"citation": "(2014) 8 SCC 273", "year": 2014, "court": "Supreme Court of India"},
-    "anvar p v v p k basheer": {"citation": "(2014) 10 SCC 473", "year": 2014, "court": "Supreme Court of India"},
+    "satender kumar antil v cbi": {"citation": "(2022) 10 SCC 51", "year": 2022, "court": "Supreme Court of India"},
+    "gurbaksh singh sibbia v state of punjab": {"citation": "(1980) 2 SCC 565", "year": 1980, "court": "Supreme Court of India"},
+    "sushila aggarwal v state nct of delhi": {"citation": "(2020) 5 SCC 1", "year": 2020, "court": "Supreme Court of India"},
+    "d k basu v state of west bengal": {"citation": "(1997) 1 SCC 416", "year": 1997, "court": "Supreme Court of India"},
+    "lalita kumari v govt of up": {"citation": "(2014) 2 SCC 1", "year": 2014, "court": "Supreme Court of India"},
+    "p chidambaram v directorate of enforcement": {"citation": "(2020) 13 SCC 791", "year": 2020, "court": "Supreme Court of India"},
+    "vijay madanlal choudhary v union of india": {"citation": "2022 SCC OnLine SC 929", "year": 2022, "court": "Supreme Court of India"},
+    "manish sisodia v directorate of enforcement": {"citation": "2024 SCC OnLine SC 1920", "year": 2024, "court": "Supreme Court of India"},
+    "state of haryana v bhajan lal": {"citation": "1992 Supp (1) SCC 335", "year": 1992, "court": "Supreme Court of India"},
+    "neeharika infrastructure v state of maharashtra": {"citation": "(2021) 19 SCC 401", "year": 2021, "court": "Supreme Court of India"},
+    "sharad birdhichand sarda v state of maharashtra": {"citation": "(1984) 4 SCC 116", "year": 1984, "court": "Supreme Court of India"},
+    "babu singh v state of up": {"citation": "(1978) 1 SCC 579", "year": 1978, "court": "Supreme Court of India"},
+    "kalyan chandra sarkar v rajesh ranjan": {"citation": "(2004) 7 SCC 528", "year": 2004, "court": "Supreme Court of India"},
+    "chhotu ram v state of haryana": {"citation": "(2013) 4 SCC 401", "year": 2013, "court": "Supreme Court of India"},
+
+    # NDPS Jurisprudence
+    "state of punjab v balbir singh": {"citation": "(1994) 3 SCC 299", "year": 1994, "court": "Supreme Court of India"},
+    "balbir singh v state": {"citation": "(1994) 3 SCC 299", "year": 1994, "court": "Supreme Court of India"},
     "state of punjab v baldev singh": {"citation": "(1999) 6 SCC 172", "year": 1999, "court": "Supreme Court of India"},
+    "vijaysinh chandubha jadeja v state of gujarat": {"citation": "(2011) 1 SCC 609", "year": 2011, "court": "Supreme Court of India"},
+    "mohan lal v state of punjab": {"citation": "(2018) 17 SCC 627", "year": 2018, "court": "Supreme Court of India"},
+    "tofan singh v state of tamil nadu": {"citation": "(2021) 4 SCC 1", "year": 2021, "court": "Supreme Court of India"},
+    "union of india v mohd nawaz khan": {"citation": "(2021) 10 SCC 100", "year": 2021, "court": "Supreme Court of India"},
+    "arif khan v state of uttarakhand": {"citation": "(2018) 18 SCC 380", "year": 2018, "court": "Supreme Court of India"},
+
+    # Electronic Evidence & Procedure
+    "anvar p v v p k basheer": {"citation": "(2014) 10 SCC 473", "year": 2014, "court": "Supreme Court of India"},
+    "arjun panditrao khotkar v kailash kushanrao gorantyal": {"citation": "(2020) 7 SCC 1", "year": 2020, "court": "Supreme Court of India"},
+    "shafhi mohammad v state of hp": {"citation": "(2018) 2 SCC 801", "year": 2018, "court": "Supreme Court of India"},
+    "selvi v state of karnataka": {"citation": "(2010) 7 SCC 263", "year": 2010, "court": "Supreme Court of India"},
+
+    # Constitutional Jurisprudence
     "maneka gandhi v union of india": {"citation": "(1978) 1 SCC 248", "year": 1978, "court": "Supreme Court of India"},
     "kesavananda bharati v state of kerala": {"citation": "(1973) 4 SCC 225", "year": 1973, "court": "Supreme Court of India"},
+    "k s puttaswamy v union of india": {"citation": "(2017) 10 SCC 1", "year": 2017, "court": "Supreme Court of India"},
+    "navtej singh johar v union of india": {"citation": "(2018) 10 SCC 1", "year": 2018, "court": "Supreme Court of India"},
+    "joseph shine v union of india": {"citation": "(2019) 3 SCC 39", "year": 2019, "court": "Supreme Court of India"},
+    "shreya singhal v union of india": {"citation": "(2015) 5 SCC 1", "year": 2015, "court": "Supreme Court of India"},
+    "anuradha bhasin v union of india": {"citation": "(2020) 3 SCC 637", "year": 2020, "court": "Supreme Court of India"},
+    "indira nehru gandhi v raj narain": {"citation": "1975 Supp SCC 1", "year": 1975, "court": "Supreme Court of India"},
+
+    # Arbitration & Commercial Jurisprudence
+    "ssangyong engineering construction v nhai": {"citation": "(2019) 15 SCC 131", "year": 2019, "court": "Supreme Court of India"},
+    "delhi airport metro express v dmrc": {"citation": "(2022) 1 SCC 131", "year": 2022, "court": "Supreme Court of India"},
+    "associates builders v dda": {"citation": "(2015) 3 SCC 49", "year": 2015, "court": "Supreme Court of India"},
+    "vidya drolia v durga trading corp": {"citation": "(2021) 2 SCC 1", "year": 2021, "court": "Supreme Court of India"},
+    "in re interplay between arbitration agreements and stamp act": {"citation": "2023 SCC OnLine SC 1666", "year": 2023, "court": "Supreme Court of India"},
+    "perkins eastman architects v hscc": {"citation": "(2020) 20 SCC 760", "year": 2020, "court": "Supreme Court of India"},
+    "duro felguera sa v gangavaram port ltd": {"citation": "(2017) 9 SCC 729", "year": 2017, "court": "Supreme Court of India"},
+    "oil and natural gas corp v saw pipes ltd": {"citation": "(2003) 5 SCC 705", "year": 2003, "court": "Supreme Court of India"},
+
+    # Civil, Contracts & Specific Relief
+    "sughar singh v hari singh": {"citation": "2021 SCC OnLine SC 975", "year": 2021, "court": "Supreme Court of India"},
+    "chand rani v kamal rani": {"citation": "(1993) 1 SCC 519", "year": 1993, "court": "Supreme Court of India"},
+    "kamal kumar v prema": {"citation": "(2019) 14 SCC 304", "year": 2019, "court": "Supreme Court of India"},
+    "satyabrata ghose v mugneeram bangur": {"citation": "1954 SCR 310", "year": 1954, "court": "Supreme Court of India"},
+    "kailash nath associates v dda": {"citation": "(2015) 4 SCC 136", "year": 2015, "court": "Supreme Court of India"},
+
+    # Insolvency & Bankruptcy (IBC)
+    "innoventive industries ltd v icici bank": {"citation": "(2018) 1 SCC 407", "year": 2018, "court": "Supreme Court of India"},
+    "swiss ribbons pvt ltd v union of india": {"citation": "(2019) 4 SCC 17", "year": 2019, "court": "Supreme Court of India"},
+    "committee of creditors of essar steel v satish kumar gupta": {"citation": "(2020) 8 SCC 531", "year": 2020, "court": "Supreme Court of India"},
+    "arcelormittal india pvt ltd v satish kumar gupta": {"citation": "(2019) 2 SCC 1", "year": 2019, "court": "Supreme Court of India"},
+
+    # Cheque Bounce / Negotiable Instruments (NI Act S.138)
+    "rangappa v sri mohan": {"citation": "(2010) 11 SCC 441", "year": 2010, "court": "Supreme Court of India"},
+    "dashrath roopsingh rathod v state of maharashtra": {"citation": "(2014) 9 SCC 129", "year": 2014, "court": "Supreme Court of India"},
+    "bir singh v mukesh kumar": {"citation": "(2019) 4 SCC 197", "year": 2019, "court": "Supreme Court of India"},
+    "triyambak s hegde v sripad": {"citation": "(2022) 1 SCC 742", "year": 2022, "court": "Supreme Court of India"},
+
+    # Women's Rights & POCSO
     "vishaka v state of rajasthan": {"citation": "(1997) 6 SCC 241", "year": 1997, "court": "Supreme Court of India"},
+    "independent thought v union of india": {"citation": "(2017) 10 SCC 800", "year": 2017, "court": "Supreme Court of India"},
+    "aparna bhat v state of madhya pradesh": {"citation": "2021 SCC OnLine SC 230", "year": 2021, "court": "Supreme Court of India"},
 }
 
 _SCC_CITE_RE = re.compile(r"^\s*\((\d{4})\)\s*(\d{1,3})\s*SCC(?:|[\s:,-]+(\d{1,4}(?:-\d{1,4})?))?\s*$")

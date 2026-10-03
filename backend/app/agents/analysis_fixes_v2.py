@@ -8,11 +8,57 @@ from datetime import datetime
 from typing import Any
 
 from app.agents.presentation_universal import _strip_signature
+from app.agents.doc_meta_guard import is_meta_text as _is_meta_text
 
 # ================= 1) ACT NORMALIZER & SANHITA-AWARE BINDINGS =================
+# Environmental / social / revenue statutes. Without these an environmental
+# judgment resolved every provision to "Statute (verify)", which is why the
+# statutes module scored ~30% on a mining/deforestation case.
 def norm_act(name: str) -> str:
     n = re.sub(r'[^a-z0-9]', '', name.lower())
-    if 'nyaya' in n or 'bns' in n:
+    if 'environmentprotection' in n or 'environmentprotectionact' in n:
+        return "Environment (Protection) Act, 1986"
+    if 'forestconservation' in n or 'forestprotection' in n:
+        return "Forest (Conservation) Act, 1980"
+    if 'waterpreventionandcontrolofpollution' in n or 'wateract' in n:
+        return "Water (Prevention and Control of Pollution) Act, 1974"
+    if 'airpreventionandcontrolofpollution' in n or 'airact' in n:
+        return "Air (Prevention and Control of Pollution) Act, 1981"
+    if 'wildlifeprotection' in n or 'wildlife' in n:
+        return "Wild Life (Protection) Act, 1972"
+    if 'forestconservation' in n:
+        return "Forest (Conservation) Act, 1980"
+    if 'disastermanagement' in n:
+        return "Disaster Management Act, 2005"
+    if 'righttoeducation' in n or 'educationact' in n:
+        return "Right of Children to Free and Compulsory Education Act, 2009"
+    if 'consumerprotection' in n or 'consumeract' in n:
+        return "Consumer Protection Act, 2019"
+    if 'companiesact' in n:
+        return "Companies Act, 2013"
+    if 'incometax' in n or 'incometaxact' in n:
+        return "Income-tax Act, 1961"
+    if 'minimumwage' in n:
+        return "Minimum Wages Act, 1948"
+    if 'maternitybenefit' in n:
+        return "Maternity Benefit Act, 1961"
+    if 'negotiableinstrument' in n:
+        return "Negotiable Instruments Act, 1881"
+    if 'specificrelief' in n:
+        return "Specific Relief Act, 1963"
+    if 'transferofproperty' in n:
+        return "Transfer of Property Act, 1882"
+    if 'copyright' in n:
+        return "Copyright Act, 1970"
+    if 'patent' in n:
+        return "Patents Act, 1970"
+    if 'trademark' in n:
+        return "Trade Marks Act, 1999"
+    if 'electricity' in n:
+        return "Electricity Act, 2003"
+    if 'telecommunication' in n or 'telecom' in n:
+        return "Telecommunications Act, 1995"
+    if 'newyaya' in n or 'nyaya' in n or n == 'bns':
         return "Bharatiya Nyaya Sanhita (BNS), 2023"
     if 'nagarik' in n or 'suraksha' in n or 'bnss' in n:
         return "Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023"
@@ -71,7 +117,32 @@ BNSS_DEFAULT = {480, 482, 483, 528}
 BSA_DEFAULT = {61, 62, 63, 64, 65}
 IT_DEFAULT = {"66", "66A", "66B", "66C", "66D", "67", "67A", "43"}
 
-def map_section_to_act(sec: str, binds: dict[str, str], category: str = 'criminal') -> str:
+# Constitutional articles. Articles belong to the Constitution unless the
+# document names another instrument; without this an environmental judgment
+# reported "Article 21" against an arbitrary statute.
+CONSTITUTION_ARTICLES = {
+    "12", "13", "14", "15", "16", "17", "18", "19", "19A", "20", "21", "21A",
+    "22", "23", "24", "25", "26", "27", "28", "29", "29A", "30", "31", "32",
+    "32A", "33", "34", "35", "35A", "36", "37", "38", "39", "39A", "40",
+    "41", "42", "43", "43A", "44", "45", "46", "47", "48", "49", "50", "51",
+    "51A", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62",
+}
+
+# Environmental-instrument provisions commonly cited by number in such cases.
+ENVIRONMENT_DEFAULTS = {
+    "Environment (Protection) Act, 1986": {3, 5, 6, 15, 19, 21, 25, 26},
+    "Forest (Conservation) Act, 1980": {2, 3, 4, 8, 9, 10},
+    "Water (Prevention and Control of Pollution) Act, 1974": {24, 25, 26, 33},
+    "Air (Prevention and Control of Pollution) Act, 1981": {19, 21, 31},
+    "Wild Life (Protection) Act, 1972": {2, 3, 9},
+}
+
+def map_section_to_act(
+    sec: str,
+    binds: dict[str, str],
+    category: str = "criminal",
+    is_article: bool = False,
+) -> str:
     act = binds.get(sec) or binds.get(_num(sec))
     if act:
         if act.strip().lower() in ('the act', 'act'):
@@ -80,8 +151,16 @@ def map_section_to_act(sec: str, binds: dict[str, str], category: str = 'crimina
 
     num_str = _num(sec)
     n = int(num_str) if num_str.isdigit() else 0
+    root = num_str.upper()
 
-    if num_str in IT_DEFAULT or sec.upper() in IT_DEFAULT:
+    # An Article number is constitutional unless the document bound it otherwise.
+    if is_article or sec in CONSTITUTION_ARTICLES or root in CONSTITUTION_ARTICLES:
+        if not is_article and not (sec in CONSTITUTION_ARTICLES or root in CONSTITUTION_ARTICLES):
+            pass  # fall through to the statutory tables
+        else:
+            return "Constitution of India"
+
+    if num_str in IT_DEFAULT or root in IT_DEFAULT:
         return "Information Technology Act, 2000"
     if n in BNSS_DEFAULT:
         return "Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023"
@@ -89,6 +168,11 @@ def map_section_to_act(sec: str, binds: dict[str, str], category: str = 'crimina
         return "Bharatiya Nyaya Sanhita (BNS), 2023"
     if n in BSA_DEFAULT:
         return "Bharatiya Sakshya Adhiniyam (BSA), 2023"
+
+    if category in ("civil", "environment", "environmental"):
+        for act_name, numbers in ENVIRONMENT_DEFAULTS.items():
+            if n in numbers:
+                return act_name
 
     if category == 'criminal':
         if n in NDPS_DEFAULT:
@@ -531,11 +615,12 @@ def _extract_procedural_directions(text: str) -> str:
     """Extract actionable next steps the document itself states.
 
     Two shapes are accepted, because not every document is a judgment:
-      * court directions  - "The Registry is directed to ...", "the appellants shall ..."
-      * study/next steps  - "the original judgment should be preferred", "must establish ..."
+      * court directions - "The Registry is directed to ...", "the appellants shall ..."
+      * study/next steps - "the original judgment should be preferred", "must establish ..."
     Anything else returns '' so a fabricated action plan is never rendered.
     """
     from app.agents.presentation_universal import SENT
+    from app.agents.doc_meta_guard import strip_meta_sections as _strip_meta
 
     # Court directions: keep the operative clause, highest priority.
     court_patterns = [
@@ -544,21 +629,44 @@ def _extract_procedural_directions(text: str) -> str:
         r'(?:bond of|sureties of|bail bond)\s+[^.;]+',
         r'(?:surrender|appear before|report to)\s+[^.;]+',
     ]
-    directions: list[str] = []
-    tail = text[-2000:] if len(text) > 2000 else text
+    directions: list[tuple[int, str]] = []
+    # Court directions can sit anywhere: a judgment puts them in the order, an
+    # academic compilation puts them in a "directions" section mid-document.
+    # Scanning only the tail missed every order outside the last 2,000 chars.
+    body = _strip_meta(text)
     for pat in court_patterns:
-        for m in re.finditer(pat, tail, re.I):
-            directions.append(re.sub(r'\s+', ' ', m.group(0)).strip())
-            if len(directions) >= 3:
+        for m in re.finditer(pat, body, re.I):
+            clause = re.sub(r'\s+', ' ', m.group(0)).strip()
+            if _is_meta_text(clause) or len(clause) < 20:
+                continue
+            # A party's own submission is not a court order.
+            if re.match(
+                r"^(?:[Tt]heir|[Ii]ts|[Tt]he\s+\w+'?s)\s+submission\b"
+                r"|^(?:the\s+)?(?:appellant|respondent|petitioner|counsel)\s+"
+                r"(?:submitted|argued|contended)",
+                clause, re.I,
+            ):
+                continue
+            if clause not in [d for _, d in directions]:
+                directions.append((m.start(), clause))
+            if len(directions) >= 6:
                 break
-        if len(directions) >= 3:
+        if len(directions) >= 6:
             break
 
     if directions:
-        return "; ".join(directions[:3])
+        # Later directives are the operative ones (they add to or modify earlier
+        # ones), so order by document position descending.
+        directions.sort(key=lambda t: -t[0])
+        return "; ".join(d for _, d in directions[:3])
 
     # No court order in the document. Use the next steps the document itself
-    # prescribes, rather than a generic sentence that belongs to no source line.
+# prescribes, rather than a generic sentence that belongs to no source line.
+    # Meta/dossier sections are excluded first: an academic compilation's
+    # "This case file is based on the case material supplied with the task"
+    # disclaimer otherwise matched the "should" cue and became the action plan.
+    from app.agents.doc_meta_guard import strip_meta_sections
+
     next_step = re.compile(
         r'\b(?:should\s+(?:be\s+preferred|not\s+be|consult|rely|be\s+verified)|'
         r'must\s+(?:be\s+preferred|establish|be\s+verified)|ought\s+to|'
@@ -568,9 +676,13 @@ def _extract_procedural_directions(text: str) -> str:
     )
     steps: list[str] = []
     seen: set[str] = set()
-    for raw in SENT(text):
+    for raw in SENT(strip_meta_sections(text)):
         s = _clean_sentence(raw)
         if len(s) < 30 or _NON_SUBSTANTIVE_RE.match(s):
+            continue
+        # Reject self-referential commentary and disclaimers outright. They can
+        # sit outside a meta section and still satisfy the "should" cue.
+        if _is_meta_text(s):
             continue
         if not next_step.search(s):
             continue
@@ -590,7 +702,6 @@ def build_fact_timeline(text: str, decision_date: str | None = None) -> list[dic
     seen: set[str] = set()
     res: list[dict[str, str]] = []
     
-    from app.agents.doc_meta_guard import is_meta_text as _is_meta_text
 
     def _is_non_event(fact: str) -> bool:
         """True when a date window is caption/header or self-referential prose."""
@@ -766,10 +877,10 @@ def _enclosing_sentence(text: str, start: int, end: int, cap: int = 400) -> str:
     """The sentence containing [start, end].
 
     Boundaries are sentence punctuation only - not newlines - because a PDF line
-    wrap splits phrases ("struck\\ndown", "declared unconstitutional\\nby the
-    Supreme Court"). Cutting at a newline hid the very cue being searched for.
-    Scoping matters too: a fixed window lets one "declared unconstitutional"
-    elsewhere in the document mark every other provision as invalid.
+    wrap splits phrases such as "struck down" across a line break. Cutting at a
+    newline hid the very cue being searched for. Scoping matters too: a fixed
+    window lets one "declared unconstitutional" elsewhere in the document mark
+    every other provision as invalid.
     """
     lo = max(0, start - cap)
     hi = min(len(text), end + cap)

@@ -81,7 +81,7 @@ def clean_html_tags(text: str) -> str:
     Returns:
         The same text with markup removed and entities decoded.
     """
-    if not text or "<" not in text and "&" not in text:
+    if not text or ("<" not in text and "&" not in text):
         return text or ""
 
     # 1. Drop non-prose elements together with their content.
@@ -103,6 +103,31 @@ def clean_html_tags(text: str) -> str:
     cleaned = re.sub(r" *\n *", "\n", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
+
+
+def normalize_whitespace(text: str) -> str:
+    """Fix spacing issues like 'Aarav Enterprises& Ors.' -> 'Aarav Enterprises & Ors.'"""
+    if not text:
+        return ""
+    text = re.sub(r'(\w)&(\w)', r'\1 & \2', text)
+    text = re.sub(r'(\w)\((\w)', r'\1 (\2', text)
+    text = re.sub(r'\)(\w)', r') \1', text)
+    return text
+
+
+def clean_pdf_text(text: str) -> str:
+    """Master text cleaning function - call this FIRST."""
+    if not text:
+        return ""
+    text = clean_html_tags(text)
+    text = normalize_whitespace(text)
+    # Fix em-dash and en-dash encoding issues
+    text = text.replace('â€"', '—')
+    text = text.replace('â€“', '–')
+    text = text.replace('â€', '—')
+    text = text.replace('\u2013', '–')
+    text = text.replace('\u2014', '—')
+    return text
 
 
 class TextCleaner:
@@ -169,6 +194,19 @@ class TextCleaner:
 
     # ── Running headers / footers across pages ────────────────────────
     _PAGE_LABEL_RE = re.compile(r'^\s*(?:page\s+)?\d{1,4}(?:\s+of\s+\d{1,4})?\s*$', re.I)
+    # A trailing page marker inside a header line ("... v. State | Page 7").
+    # The marker changes on every page, so counting whole lines never matched a
+    # repeated header and it survived into the caption, corrupting the bench,
+    # the case title and the precedent list.
+    _PAGE_MARKER_RE = re.compile(
+        r'\s*[|\-–—_]?\s*\b(?:page\s+)?\d{1,4}(?:\s+of\s+\d{1,4})?\s*[|\-–—_]?\s*$',
+        re.I,
+    )
+
+    def _header_key(self, line: str) -> str:
+        """Comparison key for a running header, ignoring its page marker."""
+        stripped = self._PAGE_MARKER_RE.sub('', line or '')
+        return re.sub(r'\s+', ' ', stripped).strip().lower()
 
     def clean_pages(self, pages: list[str]) -> list[str]:
         """Clean a page list and drop headers/footers that repeat across pages.
@@ -191,7 +229,10 @@ class TextCleaner:
             if len(lines) < 3:
                 continue
             for ln in {*lines[:2], *lines[-2:]}:
-                key = re.sub(r'\s+', ' ', ln).strip().lower()
+                # Compare on the page-marker-stripped key: the same header
+                # repeats on every page but its "| Page 7" suffix does not, so
+                # comparing whole lines never reached the repeat threshold.
+                key = self._header_key(ln)
                 if key and not self._PAGE_LABEL_RE.match(ln):
                     edge_counts[key] = edge_counts.get(key, 0) + 1
 
@@ -205,8 +246,9 @@ class TextCleaner:
             kept = [
                 ln for ln in page.split("\n")
                 if not (
-                    re.sub(r'\s+', ' ', ln).strip().lower() in running
+                    self._header_key(ln) in running
                     or self._PAGE_LABEL_RE.match(ln.strip())
+                    or self._PAGE_MARKER_RE.fullmatch(ln.strip() or 'x')
                 )
             ]
             out.append("\n".join(kept).strip())

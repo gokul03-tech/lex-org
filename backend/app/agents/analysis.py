@@ -17,6 +17,7 @@ from typing import Any
 from loguru import logger
 
 from app.agents.supervisor import AgentState
+from app.llm.llama_cpp_provider import is_mock_fallback_active
 
 
 # ── Extraction prompts ──────────────────────────────────────
@@ -458,8 +459,12 @@ async def case_understanding_agent(state: AgentState) -> AgentState:
         # 10+ minute call. A single 6,000-char slice is enough for the summary,
         # parties and entities this agent produces; facts, timeline, issues and
         # evidence are all re-derived from the FULL document downstream.
+        # Use up to 14 000 chars of the first document (was 6 000, which cut off
+        # ~80% of a 30-page judgment before the foundational agent even saw it).
+        # We still limit to 1 document at this stage to keep the prompt tight;
+        # the full multi-doc text is used by later agents that need it.
         doc_texts = "\n\n---\n\n".join(
-            d.get("text", d.get("parsed_text", ""))[:6000] for d in documents[:1]
+            d.get("text", d.get("parsed_text", ""))[:14000] for d in documents[:1]
         ) if documents else query
 
         # Layer 1: Deterministic Metadata Extraction
@@ -948,9 +953,15 @@ async def evidence_reliability_agent(state: AgentState) -> AgentState:
             state["evidence_assessment"] = evidence
             return _record_completion(state, "evidence_reliability", 0.5, "evidence_assessment", evidence)
 
+        # Feed comprehensive document context (up to 6,000 chars across documents)
+        doc_context = "\n\n---\n\n".join(
+            f"DOC {i+1} ({d.get('filename', 'document')}):\n{d.get('text', d.get('parsed_text', ''))[:4000]}"
+            for i, d in enumerate(documents[:3])
+        )
+
         prompt = f"""Assess the reliability of evidence in the following case documents.
 
-For each piece of evidence, score on:
+For each piece of evidence (oral testimony, documentary, electronic, forensic, panchnama, FIR, seizure memo), score on:
 - Source credibility (0-1)
 - Corroboration level (0-1)
 - Chain of custody (0-1)
@@ -959,10 +970,10 @@ For each piece of evidence, score on:
 Provide an overall reliability score (0-1).
 
 Documents:
-{chr(10).join(d.get('text', '')[:1000] for d in documents[:3])}
+{doc_context}
 
 Respond with JSON:
-{{"overall_score": 0.0, "items": [{{"description": "", "source_score": 0.0, "corroboration": 0.0, "chain_of_custody": 0.0, "consistency": 0.0, "relevance": 0.0, "overall": 0.0, "notes": ""}}], "summary": ""}}
+{{"overall_score": 0.0, "items": [{{"description": "", "type": "documentary|oral|electronic|forensic", "source_score": 0.0, "corroboration": 0.0, "chain_of_custody": 0.0, "consistency": 0.0, "relevance": 0.0, "overall": 0.0, "notes": ""}}], "summary": ""}}
 """
         provider = get_deepseek_provider()
         result = provider.generate_structured(
@@ -977,11 +988,11 @@ Respond with JSON:
             },
             system_prompt=DEEPSEEK_SYSTEM_PROMPT,
             temperature=0.1,
-            max_tokens=520,
+            max_tokens=650,
         )
 
         state["evidence_assessment"] = result
-        confidence = result.get("overall_score", 0.5)
+        confidence = max(0.2, min(1.0, float(result.get("overall_score", 0.75))))
         duration_ms = (time.monotonic() - start_time) * 1000
         logger.info(f"[EvidenceReliability] Overall score: {confidence:.2f} ({duration_ms:.0f}ms)")
         return _record_completion(state, "evidence_reliability", confidence, "evidence_assessment", result)
@@ -995,9 +1006,9 @@ Respond with JSON:
 
 # ── Agent 5: Contradiction Detection Agent ─────────────────
 async def contradiction_detection_agent(state: AgentState) -> AgentState:
-    """Cross-reference statements and evidence to detect contradictions.
+    """Cross-reference statements, submissions, and evidence to detect contradictions.
 
-    Uses DeepSeek-R1 for pairwise contradiction analysis.
+    Performs multi-document cross-referencing or intra-document consistency analysis.
     Input: state.documents, state.evidence_assessment
     Output: contradictions
     """
@@ -1008,30 +1019,49 @@ async def contradiction_detection_agent(state: AgentState) -> AgentState:
         from app.llm.deepseek import get_deepseek_provider, DEEPSEEK_SYSTEM_PROMPT
 
         documents = state.get("documents", [])
-        if len(documents) < 2:
-            contradictions: list[dict[str, Any]] = [{"type": "insufficient_data", "message": "Need at least 2 documents for contradiction analysis."}]
+        if not documents:
+            contradictions: list[dict[str, Any]] = []
             state["contradictions"] = contradictions
-            return _record_completion(state, "contradiction_detection", 0.9, "contradictions", contradictions)
+            return _record_completion(state, "contradiction_detection", 0.8, "contradictions", contradictions)
 
-        prompt = f"""Analyze these legal documents for contradictions between statements, evidence, and facts.
+        if len(documents) >= 2:
+            prompt = f"""Analyze these legal documents for contradictions between statements, evidence, and facts.
 
-Compare each pair of documents and identify:
+Compare the documents and identify:
 1. Direct contradictions (one says X, another says not-X)
-2. Material inconsistencies (differences that affect case outcome)
-3. Minor discrepancies (timeline differences, terminology mismatches)
+2. Material inconsistencies (differences in dates, names, sequences, or amounts)
+3. Testimony discrepancies vs documentary evidence
 4. Implicit contradictions (one implies what another denies)
 
 For each contradiction found, provide:
-- The conflicting statements (with document references)
+- Conflicting statements (with document references)
 - Severity (high/medium/low)
-- Confidence in the contradiction (0-1)
+- Confidence (0-1)
 - Whether it's resolvable
 
 Documents:
-{chr(10).join(f"DOC {i+1}: {d.get('text', '')[:800]}" for i, d in enumerate(documents[:5]))}
+{chr(10).join(f"DOC {i+1}: {d.get('text', d.get('parsed_text', ''))[:1500]}" for i, d in enumerate(documents[:5]))}
 
 Respond with JSON: {{"contradictions": [{{"type": "", "statement_a": "", "statement_b": "", "severity": "", "confidence": 0.0, "resolvable": false, "notes": ""}}], "overall_contradiction_score": 0.0}}
 """
+        else:
+            # Single document: perform intra-document inconsistency analysis (e.g. claims vs findings, date conflicts, petitioner vs respondent positions)
+            doc_text = documents[0].get('text', documents[0].get('parsed_text', ''))[:6000]
+            prompt = f"""Analyze this legal document for internal contradictions, inconsistencies, or conflicting factual positions.
+
+Examine:
+1. Inconsistencies between rival submissions (Petitioner/Appellant vs Respondent/State)
+2. Discrepancies between allegations/FIR and witness statements or evidentiary records
+3. Internal chronological or date/timeline inconsistencies
+4. Gaps between statutory requirements and factual claims made
+
+Document text:
+{doc_text}
+
+Respond with JSON:
+{{"contradictions": [{{"type": "rival_submission_conflict|evidentiary_inconsistency|temporal_discrepancy", "statement_a": "First assertion", "statement_b": "Conflicting assertion", "severity": "high|medium|low", "confidence": 0.85, "resolvable": false, "notes": "Explanation of inconsistency"}}], "overall_contradiction_score": 0.1}}
+"""
+
         provider = get_deepseek_provider()
         result = provider.generate_structured(
             prompt,
@@ -1044,15 +1074,14 @@ Respond with JSON: {{"contradictions": [{{"type": "", "statement_a": "", "statem
             },
             system_prompt=DEEPSEEK_SYSTEM_PROMPT,
             temperature=0.1,
-            max_tokens=520,
+            max_tokens=650,
         )
 
         contradictions_found = result.get("contradictions", [])
-        overall_score = result.get("overall_contradiction_score", 0.0)
+        overall_score = float(result.get("overall_contradiction_score", 0.0))
         state["contradictions"] = contradictions_found
 
-        # High contradiction score = more contradictions found = lower confidence in case
-        confidence = max(0.1, 1.0 - overall_score)
+        confidence = max(0.2, min(0.98, 1.0 - (overall_score * 0.5)))
         duration_ms = (time.monotonic() - start_time) * 1000
         logger.info(f"[ContradictionDetection] Found {len(contradictions_found)} contradictions, score={overall_score:.2f} ({duration_ms:.0f}ms)")
         return _record_completion(state, "contradiction_detection", confidence, "contradictions", contradictions_found)
@@ -1146,6 +1175,20 @@ async def legal_reasoning_agent(state: AgentState) -> AgentState:
         sections = state.get("applicable_sections", [])
         facts = state.get("case_facts", {})
         issues = state.get("legal_issues", [])
+        articles = state.get("articles") or []
+        provisions = sections[:5]
+        if not provisions and articles:
+            # Article-based matters (e.g. constitutional writs citing
+            # Articles 21/32) have no "Section N" at all. Feeding an empty
+            # provision list is what made the model answer with empty IRAC.
+            provisions = [
+                {
+                    "section_number": a.get("num") or a.get("article"),
+                    "act": "Constitution of India",
+                    "relevance": a.get("meaning") or "Constitutional provision.",
+                }
+                for a in articles[:5]
+            ]
 
         prompt = f"""Apply IRAC (Issue, Rule, Application, Conclusion) methodology to this legal case.
 
@@ -1154,8 +1197,8 @@ RULE: State applicable legal provisions
 APPLICATION: Apply law to facts
 CONCLUSION: Reach a reasoned conclusion
 
-Applicable Sections:
-{json.dumps(sections[:5], indent=2)}
+Applicable Provisions:
+{json.dumps(provisions, indent=2)}
 
 Legal Issues:
 {json.dumps(issues, indent=2)}
@@ -1188,9 +1231,40 @@ Respond with JSON:
             max_tokens=750,
         )
 
+        irac_issues = [str(i).strip() for i in (result.get("issues_identified") or []) if str(i).strip()]
+        irac_conclusion = str(result.get("conclusion") or "").strip()
+
+        # An empty IRAC body is worse than a grounded one: the report was
+        # rendering "ISSUES:\n\n\nCONCLUSION:\n" while five real issues sat
+        # in state. Fall back to the extracted issues and a document-grounded
+        # disposition rather than persisting empty headings.
+        doc_text = ""
+        for d in state.get("documents") or []:
+            if isinstance(d, dict):
+                doc_text += str(d.get("text") or d.get("parsed_text") or "") + "\n"
+        if not irac_issues:
+            irac_issues = [
+                str(i.get("issue") if isinstance(i, dict) else i).strip()
+                for i in issues or []
+            ]
+            irac_issues = [i for i in irac_issues if i]
+        if not irac_conclusion and doc_text:
+            try:
+                from app.agents.presentation_universal import render_conclusion
+
+                meta = state.get("metadata") or {}
+                irac_conclusion = str(render_conclusion(meta, doc_text) or "").strip()
+            except Exception:
+                irac_conclusion = ""
+        if irac_issues or irac_conclusion:
+            result["issues_identified"] = irac_issues
+            result["conclusion"] = irac_conclusion
+
         state["irac_analysis"] = result
-        state["legal_reasoning"] = f"ISSUES:\n{chr(10).join(result.get('issues_identified', []))}\n\nCONCLUSION:\n{result.get('conclusion', '')}"
-        confidence = result.get("confidence", 0.7)
+        state["legal_reasoning"] = (
+            f"ISSUES:\n{chr(10).join(irac_issues)}\n\nCONCLUSION:\n{irac_conclusion}"
+        )
+        confidence = result.get("confidence") or (0.7 if (irac_issues or irac_conclusion) else 0.0)
         duration_ms = (time.monotonic() - start_time) * 1000
         logger.info(f"[LegalReasoning] IRAC complete, confidence={confidence:.2f} ({duration_ms:.0f}ms)")
         return _record_completion(state, "legal_reasoning", confidence, "legal_reasoning", state["legal_reasoning"])
@@ -1463,6 +1537,19 @@ async def confidence_fusion_agent(state: AgentState) -> AgentState:
         if hallucinated:
             trust_score -= 0.05 * hallucinated
             logger.warning(f"[ConfidenceFusion] {hallucinated} hallucinated citation(s) detected")
+
+        # If the GGUF could not be allocated, every LLM field above is mock text.
+        # A high trust score on invented content is worse than an explicit zero.
+        if is_mock_fallback_active():
+            trust_score = 0.0
+            msg = (
+                "LLM unavailable: the model could not be loaded, so LLM-generated "
+                "sections are placeholder text and must not be relied upon. "
+                "Free GPU/RAM (stop other processes holding the model) and re-run."
+            )
+            logger.error(f"[ConfidenceFusion] {msg}")
+            if msg not in (state.get("errors") or []):
+                state["errors"] = (state.get("errors") or []) + [msg]
 
         state["trust_score"] = max(0.0, min(1.0, trust_score))
         state["agent_confidence"] = {**confidences, "confidence_fusion": trust_score}
@@ -1744,22 +1831,10 @@ async def report_generation_agent(state: AgentState) -> AgentState:
                     "source_document": "legal_corpus"
                 })
         
-        if not grounded_precedents:
-            grounded_precedents = [{
-                "case_name": "No sufficiently relevant precedent found",
-                "court": "Not available",
-                "year": "Not available",
-                "citation": "Not available",
-                "relevance_score": 0.0,
-                "score": 0.0,
-                "acts": primary_act,
-                "sections": primary_secs,
-                "reason": "None of the indexed precedents exceeded the relevance threshold for the current case details.",
-                "matching_issue": "None",
-                "evidence": "Not available",
-                "source_type": "precedent",
-                "source_document": "legal_corpus"
-            }]
+        # If no precedents found above the threshold, return an empty list.
+        # Previously this wrote a fake "No sufficiently relevant precedent found"
+        # entry that appeared in the report as if it were a real case — corrupting
+        # the citation section. The UI handles an empty list gracefully.
             
         state["precedents"] = grounded_precedents  # type: ignore[typeddict-item-key]
 

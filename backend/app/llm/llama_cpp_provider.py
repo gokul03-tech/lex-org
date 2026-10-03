@@ -162,6 +162,40 @@ def _auto_gpu_layers_measure(model_path: str, requested: int, n_ctx: int) -> int
     return chosen
 
 
+_MOCK_FALLBACK_ACTIVE = False
+_MOCK_FALLBACK_WARNED = False
+
+
+def is_mock_fallback_active() -> bool:
+    """True when any generation in this process was served by MockProvider.
+
+    Callers surface this on the case record: without it a failed model load
+    yields fluent, entirely invented analysis that looks like a real result.
+    """
+    return _MOCK_FALLBACK_ACTIVE
+
+
+def reset_mock_fallback() -> None:
+    global _MOCK_FALLBACK_ACTIVE, _MOCK_FALLBACK_WARNED
+    _MOCK_FALLBACK_ACTIVE = False
+    _MOCK_FALLBACK_WARNED = False
+
+
+def _warn_mock_once(op: str) -> None:
+    """Emit one unmissable warning per process, not one per call."""
+    global _MOCK_FALLBACK_WARNED
+    if _MOCK_FALLBACK_WARNED:
+        return
+    _MOCK_FALLBACK_WARNED = True
+    logger.error(
+        "LLM UNAVAILABLE - returning MOCK output for {op}. Every LLM-generated "
+        "field in this run is synthetic, not analysed. This usually means the "
+        "GGUF could not be allocated (another process holds the GPU/RAM, or "
+        "LLM_N_GPU_LAYERS exceeds free VRAM). Stop the other process or lower "
+        "LLM_N_GPU_LAYERS; the case record is now flagged as degraded.".format(op=op)
+    )
+
+
 def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers: int):
     """Load (once) and return a shared Llama instance for the given config."""
     key = (model_path, n_ctx, n_threads, n_gpu_layers)
@@ -288,6 +322,18 @@ class LlamaCppProvider(LLMProvider):
             self._load_model()
         return self._model is not None
 
+    def _mock_fallback(self, op: str) -> None:
+        """Record that a real generation is being replaced by mock output.
+
+        This used to happen silently: when the GGUF could not be allocated the
+        provider returned canned text and the run still reported success, so
+        fabricated analysis was indistinguishable from a real one. The flag
+        below is what analysis.py records in the case state.
+        """
+        global _MOCK_FALLBACK_ACTIVE
+        _MOCK_FALLBACK_ACTIVE = True
+        _warn_mock_once(op)
+
     def _cap_max_tokens(self, full_prompt: str, requested: int) -> int:
         """Clamp max_tokens so prompt + output fit in the context window.
 
@@ -321,6 +367,7 @@ class LlamaCppProvider(LLMProvider):
         if not self._ensure_model():
             from app.llm.mock_provider import MockProvider
 
+            self._mock_fallback("generate")
             return MockProvider(self.model_name).generate(
                 prompt, system_prompt, max_tokens, temperature, stop
             )
@@ -363,6 +410,7 @@ class LlamaCppProvider(LLMProvider):
         if not self._ensure_model():
             from app.llm.mock_provider import MockProvider
 
+            self._mock_fallback("generate_structured")
             return MockProvider(self.model_name).generate_structured(
                 prompt, output_schema, system_prompt, temperature, max_tokens
             )
@@ -427,6 +475,7 @@ class LlamaCppProvider(LLMProvider):
         if not self._ensure_model():
             from app.llm.mock_provider import MockProvider
 
+            self._mock_fallback("stream_generate")
             yield from MockProvider(self.model_name).stream_generate(
                 prompt, system_prompt, max_tokens, temperature
             )

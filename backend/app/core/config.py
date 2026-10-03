@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     """Application-wide settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "backend/.env", "../.env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -76,10 +76,10 @@ class Settings(BaseSettings):
 
     # ── LLM Configuration ───────────────────────────────────────
     LLM_BACKEND: Literal["llama_cpp", "mock", "openai_compatible", "transformers"] = "llama_cpp"
-    QWEN_MODEL_PATH: str = "/home/gokul/Downloads/final-year-project/models/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
-    DEEPSEEK_MODEL_PATH: str = "/home/gokul/Downloads/final-year-project/models/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
-    LLM_N_CTX: int = 4096
-    LLM_N_THREADS: int = 4
+    QWEN_MODEL_PATH: str = "/home/gokul/Downloads/final-year-project/models/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+    DEEPSEEK_MODEL_PATH: str = "/home/gokul/Downloads/final-year-project/models/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+    LLM_N_CTX: int = 8192
+    LLM_N_THREADS: int = 8
     LLM_N_GPU_LAYERS: int = 15
     LLM_TEMPERATURE: float = 0.0
     LLM_MAX_TOKENS: int = 2048

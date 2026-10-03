@@ -34,6 +34,10 @@ META_SECTION_PATTERNS = [
     r'HOW\s+TO\s+USE\s+THIS\s+(?:DOCUMENT|DOSSIER)',
     r'NOTE\s+FOR\s+(?:STUDENTS|READERS)',
     r'ABOUT\s+THIS\s+(?:DOCUMENT|DOSSIER)',
+    r'AUTHORITIES\s+AND\s+SOURCE\s+NOTE',
+    r'^\s*LIST\s+OF\s+AUTHORITIES',
+    r'TABLE\s+OF\s+(?:CONTENTS|AUTHORITIES)',
+    r'CERTIFICATE\s+AND\s+DECLARATION',
 ]
 
 # Phrases that betray self-referential commentary when they appear mid-text.
@@ -62,6 +66,12 @@ META_SENTENCE_PATTERNS = [
     r'\bcertified\s+original\b',
     r'quoting\s+conventions?',
     r'is\s+intended\s+to\s+provide\s+a\s+clear',
+    # Academic-compilation disclaimers: self-description, not case outcome.
+    r'this\s+case\s+file\s+is\s+an?\s+academic\s+compilation',
+    r'based\s+on\s+the\s+case\s+material\s+supplied\s+with\s+the\s+task',
+    r'should\s+not\s+be\s+(?:relied|treated)\s+on',
+    r'this\s+document\s+is\s+prepared\s+for\s+academic\s+purposes',
+    r'for\s+study\s+and\s+presentation',
 ]
 
 _META_SECTION_RE = re.compile(

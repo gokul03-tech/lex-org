@@ -123,7 +123,8 @@ def score_metadata(text: str, meta: dict[str, Any], gold: dict[str, Any]) -> tup
     return 100.0 * passed / len(checks), notes
 
 
-def score_statutes(text: str, sections: list[dict[str, Any]], gold: dict[str, Any]) -> tuple[float, list[str]]:
+def score_statutes(text: str, sections: list[dict[str, Any]], gold: dict[str, Any],
+                    article_nums: list[str] | None = None) -> tuple[float, list[str]]:
     """Sections are scored two ways: required ones present, and extras defensible.
 
     An extra provision is only penalised when it is neither in the golden set nor
@@ -134,6 +135,13 @@ def score_statutes(text: str, sections: list[dict[str, Any]], gold: dict[str, An
     notes: list[str] = []
     required = gold.get("required_sections", [])
     forbidden_hallucinated = gold.get("hallucinated_sections", [])
+
+    articles = gold.get("required_articles", [])
+    got_articles = {str(a) for a in (article_nums or [])}
+    article_hit = [a for a in articles if a in got_articles]
+    article_miss = [a for a in articles if a not in got_articles]
+    for m in article_miss:
+        notes.append(f"missing required article {m}")
 
     got_nums = {str(s.get("section_number") or "") for s in sections}
     got_nows = {nows(n) for n in got_nums if n}
@@ -153,10 +161,10 @@ def score_statutes(text: str, sections: list[dict[str, Any]], gold: dict[str, An
             notes.append(f"HALLUCINATED section {h} (absent from document)")
             unbacked.append(h)
 
-    total = len(required) + len(extras)
+    total = len(required) + len(extras) + len(articles)
     if total == 0:
-        return (100.0, ["no sections extracted"]) if not required else (0.0, ["no sections extracted"])
-    passed = len(hit) + (len(extras) - len(unbacked))
+        return (100.0, ["nothing required and nothing extracted"])
+    passed = len(hit) + (len(extras) - len(unbacked)) + len(article_hit)
     return 100.0 * passed / total, notes
 
 
@@ -398,9 +406,33 @@ CORPORA: dict[str, dict[str, Any]] = {
             "required_concepts": ["bail"],
             "must_not_invent": ["vicarious conspiracy"],
             "kg_case_label": "Vikram Dev",
-            "kg_party_sides": ["petitioner", "respondent"],
+"kg_party_sides": ["petitioner", "respondent"],
             "required_dates": ["15 AUGUST 2024"],
-            "procedure_concepts": ["bail"],
+        },
+    },
+    "green_earth": {
+        "file": "data/uploads/429783676c4146599286e39b9486e223_Green_Earth_Foundation_Case_File_20_Pages.pdf",
+        "label": "Environmental WP (24p, Art 21/32, 3-judge bench)",
+        "gold": {
+            "parties": [
+                {"side": "petitioner", "value": "Green Earth Foundation"},
+                {"side": "respondent", "value": "State of Uttarakhand"},
+            ],
+            "court": "SUPREME COURT",
+            "case_number": "456",
+            "decision_date": "15 MARCH 2024",
+            "required_sections": [],
+            "required_articles": ["21", "32"],
+            "hallucinated_sections": [],
+            "required_topics": ["environment"],
+            "non_empty": True,
+            "max_issues": 8,
+            "required_concepts": ["direct"],
+            "must_not_invent": ["mens rea"],
+            "kg_case_label": "Green Earth",
+            "kg_party_sides": ["petitioner", "respondent"],
+            "required_dates": ["15 March 2024"],
+            "procedure_concepts": ["direct"],
         },
     },
 }
@@ -475,8 +507,13 @@ def evaluate(path: str, gold: dict[str, Any], label: str) -> dict[str, Any]:
             seen_sec.add(num)
             sections.append({"section_number": num, "act": act, "explicitly_mentioned": True})
 
+    from app.agents.analysis_fixes_v2 import extract_articles
+
+    article_nums = extract_articles(text)
+
     r_ctx = {
         "metadata": meta_for_report,
+        "articles": article_nums,
         "sections": [s["section_number"] for s in sections],
         "articles": [],
         "precedents": [],
@@ -491,7 +528,7 @@ def evaluate(path: str, gold: dict[str, Any], label: str) -> dict[str, Any]:
 
     scorers: list[tuple[str, Callable[[], tuple[float, list[str]]]]] = [
         ("metadata", lambda: score_metadata(text, meta_for_report, gold)),
-        ("statutes", lambda: score_statutes(text, sections, gold)),
+        ("statutes", lambda: score_statutes(text, sections, gold, article_nums)),
         ("issues", lambda: score_issues(text, issues, gold)),
         ("conclusion", lambda: score_conclusion(text, conclusion, gold)),
         ("devils_advocate", lambda: score_devils_advocate(text, risk, gold)),

@@ -350,7 +350,7 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
     }
     
     for agent_id, agent_name in agent_name_map.items():
-        status_str = "Completed" if agent_id in completed_agents else "Completed"
+        status_str = "Completed" if agent_id in completed_agents else "Failed"
         conf = agent_confidence.get(agent_id, 0.92)
         measured_time = agent_timings.get(agent_id) or f"{timing_defaults.get(agent_id, 120)}ms"
         agent_results.append({
@@ -582,7 +582,15 @@ async def analyze_case(
     current_user_id: str = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Trigger the full multi-agent analysis pipeline for a case."""
+    """Trigger the full multi-agent analysis pipeline for a case.
+
+    Re-runs automatically when:
+    - No analysis exists yet
+    - A newer document was uploaded after the last analysis was created
+
+    Old analysis rows are purged before inserting the fresh result so that
+    subsequent GET calls never serve stale data.
+    """
     # Verify case ownership with fallback
     result = await db.execute(
         select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
@@ -596,31 +604,51 @@ async def analyze_case(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Case directory not found",
         )
-        
-    # Check if analysis already exists
-    a_result = await db.execute(
-        select(Analysis).where(Analysis.case_id == case_id)
+
+    # Always get the latest document so we can check staleness.
+    d_result = await db.execute(
+        select(Document).where(Document.case_id == case_id).order_by(Document.created_at.desc())
     )
-    analysis = a_result.scalar_one_or_none()
-    
-    if not analysis:
-        # Get active document for case
-        d_result = await db.execute(
-            select(Document).where(Document.case_id == case_id).order_by(Document.created_at.desc())
+    doc = d_result.scalars().first()
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No documents found in case directory for analysis.",
         )
-        doc = d_result.scalars().first()
-        if not doc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No documents found in case directory for analysis.",
+
+    # Check for existing analysis
+    a_result = await db.execute(
+        select(Analysis).where(Analysis.case_id == case_id).order_by(Analysis.created_at.desc())
+    )
+    analysis = a_result.scalars().first()
+
+    # Determine if we must re-run:
+    # 1. No analysis exists yet
+    # 2. A newer document was uploaded after the last analysis was created
+    should_rerun = analysis is None
+    if analysis and doc.created_at and analysis.created_at:
+        if doc.created_at > analysis.created_at:
+            logger.info(
+                f"Document (uploaded {doc.created_at}) is newer than analysis "
+                f"(created {analysis.created_at}) — forcing re-analysis for case {case_id}."
             )
-        
+            should_rerun = True
+
+    if should_rerun:
+        # Delete all old analysis + report rows for this case before inserting
+        # fresh ones. Without this, stale cached results keep surfacing on GET.
+        all_a = await db.execute(select(Analysis).where(Analysis.case_id == case_id))
+        for old in all_a.scalars().all():
+            await db.delete(old)
+        all_r = await db.execute(select(Report).where(Report.case_id == case_id))
+        for old in all_r.scalars().all():
+            await db.delete(old)
+        await db.flush()
+
         documents_list = [
             {
                 "filename": doc.filename,
                 "text": _stored_doc_text(doc),
-                # Pass stored metadata through so the pipeline keeps page
-                # boundaries for provenance (metadata_ contains "pages").
                 "metadata": doc.metadata_ or {},
             }
         ]
@@ -631,16 +659,16 @@ async def analyze_case(
             query=case.description or "",
             documents=documents_list
         )
-        
+
         # Map and save
         analysis, report = map_pipeline_result_to_analysis(state, case, doc)
         db.add(analysis)
         db.add(report)
-        
+
         case.status = "analysis_complete"
         await db.commit()
         await db.refresh(analysis)
-        
+
     return {"status": "success", "analysis_id": analysis.id}
 
 
@@ -665,13 +693,16 @@ async def get_analysis(
             detail="Case directory not found",
         )
         
+    # Several analysis rows can exist per case (re-runs, re-uploads).
+    # scalar_one_or_none raises MultipleResultsFound for exactly that case,
+    # which is what the frontend hit on every second analysis.
     a_result = await db.execute(
         select(Analysis).where(Analysis.case_id == case_id).order_by(Analysis.created_at.desc())
     )
-    analysis = a_result.scalar_one_or_none()
+    analysis = a_result.scalars().first()
     if not analysis:
         return None
-        
+
     # Get active document
     d_result = await db.execute(
         select(Document).where(Document.case_id == case_id).order_by(Document.created_at.desc())
@@ -682,11 +713,12 @@ async def get_analysis(
     r_result = await db.execute(
         select(Report).where(Report.case_id == case_id).order_by(Report.created_at.desc())
     )
-    report = r_result.scalar_one_or_none()
+    report = r_result.scalars().first()
     
     summary = ""
     opinion = ""
     arguments = {}
+    live_timeline: list = []
     if report:
         for s in report.sections:
             if s["title"] == "Summary":
@@ -715,54 +747,55 @@ async def get_analysis(
                 if isinstance(v, dict) and v.get('value'):
                     doc_info[k] = v['value']
 
-            # Dynamic timeline from document facts
-            if live_analysis.get('timeline'):
-                analysis.strategy_options = live_analysis['timeline']
+            # Dynamic timeline from document facts.
+            live_timeline = live_analysis.get('timeline') or []
 
-            # Dynamic sections
-            if live_analysis.get('sections'):
+            # Only enrich fields if they are missing from the stored multi-agent pipeline output
+            if not analysis.applicable_sections and live_analysis.get('sections'):
                 analysis.applicable_sections = [
                     {"section": s["display"], "act": s["act"], "num": s["num"], "relevance": "Operative statutory provision."}
                     for s in live_analysis['sections']
                 ]
                 analysis.applicable_acts = list({s["act"] for s in live_analysis['sections']})
 
-            # Dynamic precedents
-            if live_analysis.get('precedents'):
+            if not analysis.precedents and live_analysis.get('precedents'):
                 analysis.precedents = live_analysis['precedents']
 
-            # Dynamic evidence
-            if live_analysis.get('evidence'):
+            if not analysis.contradictions and live_analysis.get('evidence'):
                 analysis.contradictions = live_analysis['evidence']
 
-            # Dynamic arguments with counsel attribution (Side A: Defense/Petitioner, Side B: Prosecution/Respondent)
-            labels = live_analysis.get('labels', ('Petitioner / Applicant Submissions', 'Respondent / State Submissions'))
-            sub_a = "\n\n".join(live_analysis.get('submissions', {}).get('a', []))
-            sub_b = "\n\n".join(live_analysis.get('submissions', {}).get('b', []))
-            arguments = {
-                "defense": sub_a or "Petitioner / Appellant contends allegations and statutory provisions warrant relief.",
-                "prosecution": sub_b or "Respondent / State contends allegations warrant dismissal or strict compliance.",
-                "defense_label": labels[0],
-                "prosecution_label": labels[1]
-            }
+            # Dynamic arguments: only fill if report arguments are missing/empty
+            if not arguments or (isinstance(arguments, dict) and not arguments.get("defense") and not arguments.get("prosecution")):
+                labels = live_analysis.get('labels', ('Petitioner / Applicant Submissions', 'Respondent / State Submissions'))
+                sub_a = "\n\n".join(live_analysis.get('submissions', {}).get('a', []))
+                sub_b = "\n\n".join(live_analysis.get('submissions', {}).get('b', []))
+                arguments = {
+                    "defense": sub_a or "Petitioner / Appellant contends allegations and statutory provisions warrant relief.",
+                    "prosecution": sub_b or "Respondent / State contends allegations warrant dismissal or strict compliance.",
+                    "defense_label": labels[0],
+                    "prosecution_label": labels[1]
+                }
 
-            # Dynamic Legal Issues with Real Verbatim Document Quotes
-            from app.agents.presentation_universal import extract_grounded_issues
-            grounded_issues = extract_grounded_issues(live_analysis, doc_raw_text)
-            if grounded_issues:
-                analysis.legal_issues = grounded_issues
+            # Dynamic Legal Issues: only fill if legal_issues is missing
+            if not analysis.legal_issues:
+                from app.agents.presentation_universal import extract_grounded_issues
+                grounded_issues = extract_grounded_issues(live_analysis, doc_raw_text)
+                if grounded_issues:
+                    analysis.legal_issues = grounded_issues
 
-            # Dynamic KG & Trust score
-            if live_analysis.get('kg'):
+            # Dynamic KG & Trust score: only if missing
+            if not analysis.explanation_graph and live_analysis.get('kg'):
                 analysis.explanation_graph = live_analysis['kg']
-            if live_analysis.get('trust_score'):
+            if not analysis.trust_score and live_analysis.get('trust_score'):
                 analysis.trust_score = live_analysis['trust_score']
 
-            # Dynamic Risk & Opinion
-            if live_analysis.get('risk'):
+            # Dynamic Risk & Opinion: only if missing
+            if not analysis.risk_assessment and live_analysis.get('risk'):
                 analysis.risk_assessment = live_analysis['risk']
-                if live_analysis['risk'].get('conclusion'):
+                if live_analysis['risk'].get('conclusion') and not opinion:
                     opinion = live_analysis['risk']['conclusion']
+            elif analysis.risk_assessment and live_analysis.get('risk', {}).get('conclusion') and not opinion:
+                opinion = live_analysis['risk']['conclusion']
         except Exception as exc:
             logger.warning(f"Live build_analysis error: {exc}")
 
@@ -852,7 +885,8 @@ async def get_analysis(
         "document_info": doc_info,
         "metadata": metadata,
         "summary": summary or "No summary available.",
-        "timeline": analysis.strategy_options or [],
+        "timeline": live_timeline or [],
+        "strategy_options": analysis.strategy_options or [],
         "legal_issues": analysis.legal_issues or [],
         "acts": analysis.applicable_acts or [],
         "sections": analysis.applicable_sections or [],
@@ -987,10 +1021,14 @@ async def stream_analysis(
             logger.error(f"Error executing multi-agent graph stream: {exc}")
             yield f"data: {json.dumps({'stage': 'completed', 'label': 'Analysis could not be completed', 'status': 'failed', 'progress': 100})}\n\n"
 
-        # Compile database entries using final state at the very end
+        # Compile database entries using final state at the very end.
+        # Latest analysis row wins (multiple rows per case are legal).
         try:
-            a_result = await db.execute(select(Analysis).where(Analysis.case_id == case_id))
-            analysis = a_result.scalar_one_or_none()
+            a_result = await db.execute(
+                select(Analysis).where(Analysis.case_id == case_id)
+                .order_by(Analysis.created_at.desc())
+            )
+            analysis = a_result.scalars().first()
             
             new_analysis, new_report = map_pipeline_result_to_analysis(state, case, doc)
             if not analysis:
@@ -1012,8 +1050,11 @@ async def stream_analysis(
                 analysis.explanation_graph = new_analysis.explanation_graph
                 analysis.status = "complete"
 
-                r_result = await db.execute(select(Report).where(Report.analysis_id == analysis.id))
-                rep = r_result.scalar_one_or_none()
+                r_result = await db.execute(
+                    select(Report).where(Report.analysis_id == analysis.id)
+                    .order_by(Report.created_at.desc())
+                )
+                rep = r_result.scalars().first()
                 if rep:
                     rep.title = new_report.title
                     rep.sections = new_report.sections

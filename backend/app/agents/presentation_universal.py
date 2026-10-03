@@ -189,7 +189,7 @@ def extract_metadata(text: str) -> dict[str, Any]:
             prev = c
             c = re.sub(
                 r"(?:\bHon['’]?ble\s+|\bMr\.|\bMrs\.|\bMs\.|\bDr\.|\bJustice\s+"
-                r"|\bCJI\b|\bJudge\b|\bJ\.|\bJ\b)",
+                r"|\bCJI\b|\bJudge\b|\bJ\.(?!\s*[A-Z]\.\s*[A-Z])|\bJ\b(?!\.))",
                 '', c, flags=re.I,
             )
             c = re.sub(r',?\s*\b(?:J\.|CJI|Judge|J)\b\.?$', '', c, flags=re.I)
@@ -219,9 +219,16 @@ def extract_metadata(text: str) -> dict[str, Any]:
         return True
 
     for tag in ('Author', 'Bench', 'Coram', 'Judges'):
-        am = re.search(tag + r':\s*([^\n]+)', text, re.I)
+        # A 3-judge bench wraps: "...Hon'ble Mr. Justice" then "J.B. Pardiwala, J."
+        # on the next line. [^\n]+ dropped the third judge, so allow one
+        # continuation line when it looks like the start of a name.
+        am = re.search(
+            tag + r':\s*([^\n]+(?:\n\s*[A-Z][A-Za-z.]*\s+[A-Z][a-z]+[,.]?(?:\s|$))?)',
+            text, re.I,
+        )
         if am:
-            for b_seg in re.split(r'\band\b|&|;|,(?=\s*[A-Z])', am.group(1)):
+            b_line = re.sub(r'\s*\n\s*', ' ', am.group(1))
+            for b_seg in re.split(r'\band\b|&|;|,(?=\s*[A-Z])', b_line):
                 b_clean = _clean_j(b_seg)
                 if _ok_j(b_clean):
                     judges.append(b_clean)
@@ -527,7 +534,27 @@ def _conclusion_section(text: str) -> str:
         if nxt:
             section = section[:nxt.start()]
         section = _strip_signature(section)
-        return section[:3000] or _strip_signature(text)
+        if len(section.strip()) >= 40:
+            return section[:3000] or _strip_signature(text)
+
+    # The heading was a table-of-contents entry (a document that lists its own
+    # sections repeats every heading in a contents block, where the line right
+    # after the heading is another heading). Try the LAST occurrence instead,
+    # which is the real body section.
+    for m in reversed(list(re.finditer(
+        r'^[ \t]*(?:\d+\s*[.)]\s*)?'
+        r'(?:CONCLUSION(?: AND|&)?[A-Z ]*|ORDER AND DISPOSITION|'
+        r'OPERATIVE PART|IN THE RESULT|DISPOSITION|FINDINGS?(?: AND CONCLUSIONS?)?)'
+        r'[ \t]*$\n',
+        text, re.I | re.MULTILINE,
+    ))):
+        section = text[m.end():]
+        nxt = re.search(r'^[ \t]*(?:\d+\s*[.)]\s*)?[A-Z][A-Z &]{3,40}[ \t]*$\n', section, re.MULTILINE)
+        if nxt:
+            section = section[:nxt.start()]
+        section = _strip_signature(section)
+        if len(section.strip()) >= 40:
+            return section[:3000]
     return _strip_signature(text)
 
 def _operative_sentence(n: str) -> str | None:
@@ -1003,10 +1030,17 @@ def build_risk(text: str, subs_a: list[str], subs_b: list[str]) -> dict[str, Any
         if len(conclusion) > 420:
             conclusion = conclusion[:417].rstrip() + '…'
     elif op:
-        subject_m = re.search(r'\bthe\s+([a-z][a-z\s]{3,60}?(?:petition|appeal|application|suit|award))\b', op.lower())
-        verb = map_outcome_verb(op) or 'allowed'
-        subject = subject_m.group(1) if subject_m else 'petition'
-        conclusion = f"{subject.capitalize()} is {verb}."
+        # A synthesized "Petition is allowed." is content-free and hides the
+        # actual disposition. Prefer a real sentence from the document; only
+        # fall back to the generic form if the document has nothing better.
+        recovered = render_conclusion({'metadata': {}}, body)
+        if recovered and not is_meta_text(recovered):
+            conclusion = recovered
+        else:
+            subject_m = re.search(r'\bthe\s+([a-z][a-z\s]{3,60}?(?:petition|appeal|application|suit|award))\b', op.lower())
+            verb = map_outcome_verb(op) or 'allowed'
+            subject = subject_m.group(1) if subject_m else 'petition'
+            conclusion = f"{subject.capitalize()} is {verb}."
     else:
         conclusion = fallback_quote
 
@@ -1473,6 +1507,19 @@ def _rank_disposition(sent: str) -> int:
         score += 3
     if _PENALTY_MARKER_RE.search(sent):
         score += 2
+    # An operative directive ("directed to assess compensation", "shall file
+    # within 15 days") is the disposition; a subsidiary finding ("the Court
+    # rejected the argument that...") is not. Without this, a court that both
+    # reasons and orders reported only its reasoning.
+    if re.search(
+        r'\b(?:directed|ordered)\s+(?:to|that)\b|\bthat\s+the\s+\w+\s+(?:shall|must|would)\b'
+        r'|\b(?:shall|must)\s+(?:be\s+)?(?:pay|deposit|file|submit|furnish|seal|plant|recover)',
+        sent, re.I,
+):
+        # +5: an operative order is THE disposition. A sentence that merely says
+        # "the Court rejected the argument..." is reasoning and must not tie with
+        # "the NGT was directed to assess compensation".
+        score += 5
     if _OFF_TOPIC_RE.search(sent):
         score -= 5
     # A bare reference to another case's outcome is not this case's result.

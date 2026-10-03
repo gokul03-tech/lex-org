@@ -17,20 +17,58 @@ from typing import Any
 from app.llm.provider import get_llm_provider
 
 
-METADATA_EXTRACTION_PROMPT = """
-You are a legal metadata extractor. Read the HEADER and SIGNATURE BLOCK of the provided legal document and extract the following exactly as written:
+DOCUMENT_CLASSIFIER_PROMPT = """
+You are a legal document classifier. Read the FIRST 500 words of the document and classify it:
 
-1. Case Name: Format as "Petitioner Name vs Respondent Name". Do NOT use the word "VERSUS" as a name.
-2. Petitioner/Applicant Name: The party before the word VERSUS (or before "vs").
-3. Respondent/Defense Name: The party after the word VERSUS (or after "vs").
-4. Court Name: Extract the full court name from the header.
-5. Judge(s)/Bench Name: Extract ALL judges listed in the header or signature block, separated by commas. Do not stop after the first judge.
-6. Decision Date: Look for the date at the very END of the judgment (signature block area, e.g., "NEW DELHI \\n 12 OCTOBER 2024"). Do NOT use dates from appeal numbers or citations.
-7. Case Number: Extract the main case number from the header (e.g., "CIVIL APPEAL NO. 4521 OF 2024"). Do NOT use High Court WP numbers mentioned in the body text.
-8. Report Reference: RULE FOR REPORT REFERENCE:
-- Extract the citation of the CURRENT case only.
-- For the Suhas Katti case, the Report Reference is "C.C. No. 4680 of 2004".
-- DO NOT extract citations of precedents mentioned in the body text, Section 17, or the References section (like Shreya Singhal).
+1. Document Type: Choose ONE:
+   - Standard Court Judgment (Supreme Court/High Court/Tribunal)
+   - Academic Case Dossier/Study
+   - Illustrative/Fictional Case File
+   - Bail Application
+   - Writ Petition
+   - Civil Suit
+   - Insolvency/IBC Appeal
+   - Criminal Appeal
+   - Arbitration Award
+
+2. Legal Domain: Choose ONE:
+   - Constitutional Law
+   - Criminal Law
+   - Civil/Contract Law
+   - Commercial/Corporate Law
+   - Insolvency/Bankruptcy (IBC)
+   - Environmental Law
+   - Intellectual Property
+   - Family Law
+   - Labour Law
+   - Tax Law
+
+3. Key Indicators: List 3-5 phrases from the text that support your classification.
+
+OUTPUT STRICT JSON ONLY.
+"""
+
+METADATA_EXTRACTION_PROMPT = """
+You are a legal metadata extractor. Read the HEADER and SIGNATURE BLOCK of the provided legal document and extract the following:
+
+CRITICAL RULES:
+1. Case Name: Format as "Petitioner Name vs Respondent Name". Do NOT use "VERSUS" as a name.
+2. Petitioner/Applicant Name: The party before "VERSUS" or "vs". For academic dossiers, look for "Petitioners:" or "Appellant:" labels.
+3. Respondent/Defense Name: The party after "VERSUS" or "vs". For academic dossiers, look for "Respondents:" or "Defendant:" labels.
+4. Court Name: Extract the FULL court name from the header. Do NOT use generic "Court" or "Tribunal".
+5. Judge(s)/Bench Name: Extract ALL judges listed. Look for patterns like:
+   - "HON'BLE MR. JUSTICE X, CJI"
+   - "HON'BLE MR. JUSTICE Y"
+   - "HON'BLE MS. JUSTICE Z"
+   Include ALL judges separated by semicolons or "and". Do NOT stop after the first judge.
+6. Decision Date: Look for the date at the very END of the judgment (signature block area). Format: DD Month YYYY. Do NOT use dates from appeal numbers or citations.
+7. Case Number: Extract the MAIN case number from the header (e.g., "CIVIL APPEAL NO. 4521 OF 2024", "Writ Petition (Civil) No. 456 of 2023"). Do NOT use IA numbers or High Court WP numbers mentioned in the body.
+8. Report Reference: Extract the case's OWN citation if present in the header. Do NOT extract citations of precedents mentioned in the text or references section.
+
+FOR ACADEMIC DOSSIERS: Look for structured labels like:
+- "Case number: C.C. No. 4680 of 2004"
+- "Court: Additional Chief Metropolitan Magistrate..."
+- "Date: 5 November 2004"
 
 OUTPUT STRICT JSON ONLY.
 """
@@ -320,7 +358,22 @@ class LegalMetadataExtractor:
     def _extract_title_and_parties(self, text: str, filename: str) -> dict[str, Any]:
         """Extract case title and split into petitioner/respondent with civil/criminal unification."""
         lines = [l.strip() for l in text.split("\n") if l.strip()]
-        first_lines = "\n".join(lines[:12])
+        first_lines = "\n".join(lines[:14])
+
+        # 0. Check for structured academic dossier labels:
+        # "Petitioners: Green Earth Foundation ..." or "Appellant: ..."
+        # "Respondents: Union of India ..." or "Defendant: ..."
+        pet_m = re.search(r'(?:^|\n)\s*(?:Petitioners?|Appellants?|Plaintiffs?|Complainant|Accused)\s*:\s*([^\n]+)', first_lines, re.IGNORECASE)
+        resp_m = re.search(r'(?:^|\n)\s*(?:Respondents?|Defendants?|Opposite\s+Party|State)\s*:\s*([^\n]+)', first_lines, re.IGNORECASE)
+        if pet_m and resp_m:
+            p_clean = self._clean_party_name(pet_m.group(1))
+            r_clean = self._clean_party_name(resp_m.group(1))
+            if p_clean and r_clean:
+                return {
+                    "case_title": {"value": f"{p_clean} vs {r_clean}", "status": "extracted"},
+                    "petitioner": {"value": p_clean, "status": "extracted"},
+                    "respondent": {"value": r_clean, "status": "extracted"}
+                }
 
         # Match Title containing vs / v. / VERSUS
         # Handle multi-line format: "Party 1\nVERSUS\nParty 2"
@@ -423,6 +476,19 @@ class LegalMetadataExtractor:
 
         cleaned = re.sub(r'\s+', ' ', cleaned).strip(' ,-')
         cleaned = cleaned.lstrip(' .')
+        # A caption often trails the last party into the delivery date
+        # ("Shanti Devi & Ors. ... on 11 November, 2023"). Keep the party only.
+        cleaned = re.sub(
+            r'(?:\.{2,}|\s)\s*(?:on|on\s+behalf\s+of|dated|decided\s+on)\s+'
+            r'\d{1,2}(?:st|nd|rd|th)?\s*'
+            r'(?:January|February|March|April|May|June|July|August|September|October|'
+            r'November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)'
+            r'\s*[.,]?\s*\d{4}\s*$',
+            '',
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(r'[.,;:\s]+$', '', cleaned).strip()
         # Preserve a meaningful trailing period on short abbreviations
         # ("& Ors.", "& Anr.") instead of truncating them to "Ors" / "Anr".
         trailing_dot = bool(re.search(r'\b[A-Z][A-Za-z]{0,3}\.$', cleaned))
@@ -549,7 +615,22 @@ class LegalMetadataExtractor:
         tail = text[-2000:] if len(text) > 2000 else text
         
         MONTH = r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
-        DMY = rf'(\d{{1,2}})(?:st|nd|rd|th)?\s+({MONTH})\.?\s+(\d{{4}})'
+        # "11 November, 2023" / "11th Nov 2023" / "11.11.2023" style separators.
+        # The comma before the year is common in Indian reporter captions and was
+        # rejected by the earlier `\.?\s+`, which left decision_date empty on
+        # every citation-only caption document.
+        DMY = rf'(\d{{1,2}})(?:st|nd|rd|th)?\s*(?:of\s+)?({MONTH})\s*[.,]?\s*(\d{{4}})'
+        # "November 11, 2023" also appears in imported judgments.
+        MDY = rf'({MONTH})\s*[.,]?\s*(\d{{1,2}})(?:st|nd|rd|th)?\s*[.,]?\s*(\d{{4}})'
+        NUMERIC = r'(\d{1,2})[./-](\d{1,2})[./-](\d{4})'
+
+        def _from_numeric(m: re.Match[str]) -> dict[str, Any]:
+            return {"value": f"{int(m.group(1)):02d} {int(m.group(2)):02d} {m.group(3)}",
+                    "status": "extracted"}
+
+        def _from_mdy(m: re.Match[str]) -> dict[str, Any]:
+            return {"value": f"{int(m.group(2))} {m.group(1)} {m.group(3)}",
+                    "status": "extracted"}
         
         # 1a. Explicit "decided on/dated/pronounced on" in tail
         tail_explicit = re.search(
@@ -581,7 +662,16 @@ class LegalMetadataExtractor:
         head_dmy = re.search(DMY, head, re.I)
         if head_dmy:
             return {"value": f"{head_dmy.group(1)} {head_dmy.group(2)} {head_dmy.group(3)}", "status": "extracted"}
-        
+
+        # 4. Month-first and purely numeric dates, in tail then head.
+        for scope in (tail, head):
+            mdy = re.search(MDY, scope, re.I)
+            if mdy:
+                return _from_mdy(mdy)
+            numeric = re.search(NUMERIC, scope)
+            if numeric:
+                return _from_numeric(numeric)
+
         return {"value": None, "status": "not_found"}
 
     # A PDF line wrap that continues an initial run: "B.V." + newline + "NAME".
@@ -601,6 +691,27 @@ class LegalMetadataExtractor:
             out = self._WRAPPED_INITIAL_RE.sub(r'\1 ', out)
         return out
 
+    def _parse_bench_line(self, line: str) -> list[str]:
+        """Split a "Bench: Hon'ble Mr. Justice X; Hon'ble ... Justice Y" line.
+
+        Parsed structurally rather than by one regex: the honorific marker repeats
+        per judge, so splitting on it is reliable where a single pattern ran
+        across line breaks and absorbed the rest of the page into a name.
+        """
+        names: list[str] = []
+        # Split on the honorific so each judge starts a fresh segment.
+        segments = re.split(
+            r"(?:Hon['’]?ble\s+)?(?:(?:Mr|Mrs|Ms)\.?\s+)?Justice\s+",
+            line, flags=re.IGNORECASE,
+        )
+        for seg in segments[1:]:
+            # Stop at the next honorific, separator or end of the segment.
+            seg = re.split(r"[;|]|\bHon['’]?ble\b", seg, maxsplit=1)[0]
+            candidate = self._clean_judge_name(seg.strip(" .,;:\n"))
+            if candidate:
+                names.append(candidate)
+        return names
+
     def _extract_judges(self, head: str, tail: str) -> dict[str, Any]:
         """Extract all presiding judges from headers, bench lines, and concurring end paragraphs."""
         judges = []
@@ -617,13 +728,16 @@ class LegalMetadataExtractor:
         head = self._join_wrapped_initials(head)
         tail = self._join_wrapped_initials(tail)
 
-        # 1. Bench/Coram lines in header
-        bench_m = re.search(r'(?:Coram|Bench|Author|Before)\s*:\s*([A-Z][a-zA-Z\s\.,&]+?)(?:\n|\r|\.\s)', head)
+        # 1. Bench/Coram lines in header - parsed structurally (see
+        # _parse_bench_line) because the single-regex version spanned lines.
+        bench_m = re.search(
+            r'(?:Coram|Bench|Author|Before)\s*:\s*'
+            r'([^\n]*(?:\n\s*[A-Z][A-Za-z.]{1,4}\s+[A-Z][a-z]+)?)',
+            head,
+        )
         if bench_m:
-            for seg in re.split(r',|\band\b|&', bench_m.group(1)):
-                j = self._clean_judge_name(seg)
-                if j:
-                    add_judge(j)
+            for j in self._parse_bench_line(bench_m.group(1)):
+                add_judge(j)
 
         # 2. 'NAME, J.' pattern in header (with optional Hon'ble/Justice prefixes)
         for m in re.finditer(r'(?:Hon[\'’]?ble\s+(?:Mr\.|Mrs\.|Ms\.)?\s*Justice\s+([A-Z][a-zA-Z\s\.]+)|([A-Z][a-zA-Z\s\.]+),\s*J\b)', head):
@@ -633,7 +747,13 @@ class LegalMetadataExtractor:
 
         # 3. Bench line without "Coram/Bench:" prefix - e.g. "HON'BLE MR. JUSTICE D.Y. CHANDRACHUD, CJI HON'BLE MR. JUSTICE B.R. GAVAI HON'BLE MS. JUSTICE B.V. NAGARATHNA"
         # Look for "JUSTICE NAME, CJI/J" patterns
-        for m in re.finditer(r"JUSTICE\s+([A-Z][A-Za-z.\s'-]+?)(?:,\s*(?:CJI|J\b)|\s+HON'BLE|\s*$|\n)", head):
+        # A judge name must not span a line break. The character class includes
+        # \s, so "J.B. Pardiwala\nAcademic Case File\nCERTIFICATE ..." was one
+        # match and the whole rest of the page became the third judge's name.
+        for m in re.finditer(
+            r"JUSTICE\s+([A-Z][A-Za-z.' \-]+?)(?:,\s*(?:CJI|J\b)|\s+HON'BLE|\s*$|\n)",
+            head,
+        ):
             j = self._clean_judge_name(m.group(1))
             if j:
                 add_judge(j)
@@ -653,7 +773,7 @@ class LegalMetadataExtractor:
 
         # 4. Concurring judge at the end (e.g. 'Sadasivayya, J.' ... 'I agree')
         if tail:
-            for m in re.finditer(r'([A-Z][a-zA-Z\s\.]+),\s*J\b', tail):
+            for m in re.finditer(r"([A-Z][a-zA-Z.' \-]+),\s*J\b", tail):
                 j = self._clean_judge_name(m.group(1))
                 if j:
                     add_judge(j)
@@ -669,6 +789,12 @@ class LegalMetadataExtractor:
         cleaned = re.sub(r'\s+', ' ', cleaned).strip(' .,-')
         if any(k in cleaned.lower() for k in ["court", "order", "state", "police", "appellant", "versus"]):
             return ""
+        # A judicial name is initials plus one or two surnames. Anything longer is
+        # prose that a regex swallowed - e.g. "B. Pardiwala Academic Case File
+        # CERTIFICATE AND DECLARATION CERTIFICATE ...".
+        tokens = [t for t in re.split(r'[\s.]+', cleaned) if t]
+        if len(tokens) > 5 or len(cleaned) > 45:
+            return ""
         return cleaned if len(cleaned) > 2 else ""
 
     def _extract_court_matter(self, text: str) -> dict[str, Any]:
@@ -680,7 +806,20 @@ class LegalMetadataExtractor:
         list did not recognise and therefore reported nothing.
         """
         head = "\n".join([l.strip() for l in text.split("\n")[:14] if l.strip()])
-        pat = r'((?:Special\s+Case|Criminal\s+Appeal|Civil\s+Appeal|Appeal|Writ\s+Petition|W\.?P\.?|S\.?L\.?P\.?|R\.?A\.?)\s*(?:No\.?|Number)?\s*[:\-]?\s*\d+\s+of\s+\d{2,4})'
+        # Known docket types, optionally carrying a civil/criminal qualifier in
+        # brackets ("Writ Petition (Civil) No. 456 of 2023"). The year may be
+        # written "of 2023" or "/2019".
+        _DOCKET = (
+            r"(?:Special\s+Case|Criminal\s+Appeal|Civil\s+Appeal|Appeal|"
+            r"Writ\s+Petition|Contempt\s+Petition|Review\s+Petition|"
+            r"W\.?P\.?|S\.?L\.?P\.?|R\.?A\.?|C\.?R\.?L\.?A\.?|C\.?R\.?A\.?|"
+            r"C\.?R\.?O\.?L\.?|C\.?R\.?M\.?A\.?|C\.?C\.?|C\.?R\.?C\.?|"
+            r"I\.?A\.?|D\.?O\.?R\.?|FIR)"
+        )
+        _QUAL = r"(?:\s*\(\s*(?:Civil|Criminal|Commercial|Company|Labour)\s*\))?"
+        _NO = r"\s*(?:No\.?|Number)?\s*[:\-]?\s*\d+"
+        _YEAR = r"(?:\s*/\s*\d{2,4}|\s+of\s+\d{2,4})"
+        pat = rf"({_DOCKET}{_QUAL}{_NO}{_YEAR})"
         m = re.search(pat, head, re.IGNORECASE)
         if m:
             return {"value": m.group(1).strip(), "status": "extracted"}
@@ -713,7 +852,6 @@ class LegalMetadataExtractor:
             r'\b(?:BSA|Bharatiya\s+Sakshya\s+Adhiniyam(?:\s*,\s*\d{4})?)\b',
             r'\b(?:Evidence\s+Act|Indian\s+Evidence\s+Act(?:\s*,\s*\d{4})?)\b',
             r'\b(?:Insurance\s+Act(?:\s*,\s*\d{4})?)\b',
-            r'\b([A-Z][a-zA-Z\s]{2,40}\s+(?:Act|Code|Sanhita|Adhiniyam)(?:\s*,\s*\d{4})?)\b',
         ]
         for pat in patterns:
             for m in re.finditer(pat, text, re.IGNORECASE):
@@ -722,7 +860,29 @@ class LegalMetadataExtractor:
                     acts.append(act_str)
                     if len(acts) >= 8:
                         break
-        return acts
+        # Generic "<Name> Act/Code" sweep. This one must stay case-sensitive:
+        # with IGNORECASE the leading [A-Z] also matched lowercase, so prose like
+        # "registered under the Indian Registration Act, 1908" and the fragment
+        # "of the Code" were both reported as statutes.
+        generic = re.compile(
+            r'\b([A-Z][A-Za-z]*(?:\s+(?:and|of|the|for|[A-Z][A-Za-z]*))*'
+            r'\s+(?:Act|Code|Sanhita|Adhiniyam)(?:\s*,\s*\d{4})?)\b'
+        )
+        for m in generic.finditer(text):
+            act_str = m.group(1).strip()
+            # Drop leading filler words so the reported name starts at the Act.
+            act_str = re.sub(
+                r'^(?:registered\s+under|under|governed\s+by|provided\s+in|referred\s+to\s+in|'
+                r'the|a|an|of|in|by|and|for)\s+', '', act_str, flags=re.IGNORECASE
+            ).strip()
+            # A bare "the Code"/"of Code" is not an identifiable statute.
+            if len(act_str.split()) < 2 or act_str.lower() in {'the code', 'code', 'the act', 'act'}:
+                continue
+            if act_str not in acts:
+                acts.append(act_str)
+            if len(acts) >= 8:
+                break
+        return [re.sub(r'\s+', ' ', a).strip() for a in acts if re.sub(r'\s+', ' ', a).strip()]
 
     def _detect_category(self, text: str) -> dict[str, Any]:
         """Classify case as criminal or civil."""
