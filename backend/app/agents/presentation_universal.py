@@ -389,6 +389,43 @@ def bind_sections(text: str) -> list[dict[str, Any]]:
     
     return deduped
 
+def normalize_statutes(statutes_list: list[Any]) -> list[Any]:
+    """Remove duplicate statutes by extracting the core section/article number."""
+    seen = set()
+    unique_statutes = []
+    
+    for statute in statutes_list:
+        raw_str = statute.get('display', '') if isinstance(statute, dict) else str(statute)
+        match = re.search(r'\d+(?:\(\d+\))?', raw_str)
+        if match:
+            core_id = match.group(0)
+            if core_id not in seen:
+                seen.add(core_id)
+                unique_statutes.append(statute)
+        else:
+            if statute not in unique_statutes:
+                unique_statutes.append(statute)
+            
+    return unique_statutes
+
+def filter_precedents(precedents: list[dict[str, Any]], case_name: str | None) -> list[dict[str, Any]]:
+    """Remove the current case from its own precedent list."""
+    if not case_name:
+        return precedents
+    cn_lower = case_name.lower().strip()
+    parts = [p.strip() for p in re.split(r'\s+(?:vs\.?|v\.?|versus)\s+', cn_lower) if p.strip()]
+    out = []
+    for p in precedents:
+        p_name = (p.get('case_name') or p.get('name') or '').lower().strip()
+        if not p_name:
+            continue
+        if cn_lower in p_name or p_name in cn_lower:
+            continue
+        if len(parts) == 2 and (parts[0][:12] in p_name and parts[1][:12] in p_name):
+            continue
+        out.append(p)
+    return out
+
 # ---------- 4) PRECEDENTS (each name ↔ its OWN citation) ----------
 # Citation shapes: "(2011) 1 SCC 694", "[2023] 4 SCR 710", "1994 Supp (1) SCC 92",
 # "1997 (3) SCC 1", "AIR 1954 SC 494", "2024 SCC OnLine SC 2754".  Order matters:
@@ -396,7 +433,7 @@ def bind_sections(text: str) -> list[dict[str, Any]]:
 # "1994" inside "… Builders v. DDA (1994) …" never mis-parses as a new citation.
 CIT = r'\([12]\d{3}\)\s?\d+\s?[A-Z.]+\s?\d+|\[[12]\d{3}\]\s?\d+\s?SCR\s?\d+|\d{4}\s?(?:Supp\.?\s*)?\(?\d{1,4}\)?\s?SCC\s?\d+|\d{4}\s?SCC\s+OnLine\s+(?:SC|Del|Bom)|\d{4}\s?\d+\s?[A-Z.]+\s?\d+|AIR\s?[12]\d{3}\s?[A-Z ]+\d+'
 
-def extract_precedents(text: str) -> list[dict[str, Any]]:
+def extract_precedents(text: str, case_name: str | None = None) -> list[dict[str, Any]]:
     n = norm(text)
     out = []
     seen = set()
@@ -411,18 +448,6 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
     # terminates the name via the lookahead instead of being absorbed.
     NAME = r'[A-Z][A-Za-z.&\' -]+?(?:\s+(?:v\.?|versus)\s+[A-Z][A-Za-z.&\' -]+?)'
 
-    # The judgment's own title line (e.g. "State of Maharashtra v. X") must never
-    # be captured as a cited precedent.
-    #
-    # NAME is greedy and spans lowercase words, so a naive first-match snapshot
-    # can swallow body prose: on "The Court followed (2016) 7 SCC 353 in the case
-    # of Modern Dental College and in Arnesh Kumar v. State of Bihar" it returned
-    # "Modern Dental College and in Arnesh Kumar v. State", whose first 15
-    # squashed characters then suppressed the genuine Modern Dental College
-    # precedent. The snapshot is therefore taken from the caption window only
-    # (before the body starts) and validated; when it is not clearly a caption it
-    # is left empty, which is the safe direction - a missed self-title guard is
-    # caught downstream by the length/prose filters and the citation gate.
     _BODY_MARKER_RE = re.compile(
         r'(?:JUDGMENT|JUDGEMENT|OPINION|ORDER\s+DATED|\([12]\d{3}\)\s*\d|'
         r'\bin the case of\b|\bfollowed\b|\bsupra\b|\bhas held\b|\bwe\s+hold\b)',
@@ -435,17 +460,10 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
         re.IGNORECASE,
     )
     title_nows = ""
-    # Scan the RAW text: `n` has had its newlines collapsed, so splitting it on
-    # "\n" yields a single line and the per-line scan below is a no-op.
     caption = text[:800]
     bm = _BODY_MARKER_RE.search(caption)
     if bm:
         caption = caption[: bm.start()]
-    # Scan line by line. NAME is lazy but still spans lower-case words, so a
-    # single search across the caption welded the document's title line
-    # ("CYBER CRIME CASE DOCUMENT") onto the case line and the combined result
-    # failed validation, leaving the judgment's own name uncaptured and letting
-    # it come back later as a "cited precedent" against itself.
     for line in caption.split("\n"):
         if not re.search(r'\s(?:v\.|versus)\s', line, re.IGNORECASE):
             continue
@@ -471,14 +489,11 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
             r'|respondent|defendant|prosecution|state)',
             name, re.IGNORECASE):
             return
-        # Reject prose that a greedy name match swallowed: "… v. Union of India were
-        # reiterated is not a precedent", etc.
+        # Reject prose that a greedy name match swallowed
         if re.search(r'\b(?:were|was|held|is\b|not\b|that\b|wherein|reiterat|observed'
                      r'|submitted|contended|case|judgment)\b', name, re.IGNORECASE):
             return
-        # Prefix-superset dedup: "Anvar P.V. v. P.K" vs "Anvar P.V. v. P.K. Basheer"
-        # are the same case (a period-initials match truncated the fuller name) —
-        # keep only the fullest form.
+        # Prefix-superset dedup
         for i, ek in enumerate(key_list):
             if min(len(ek), len(norm_k)) >= 8 and (ek.startswith(norm_k) or norm_k.startswith(ek)):
                 if len(name) > len(out[i]['case_name']):
@@ -506,8 +521,7 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
     for m in re.finditer(r'(?:judgment|decision|ruling|case)\s+in\s+(?:the case of\s+)?(' + NAME + r')\s*(' + CIT + r')', n):
         _append(m.group(1), m.group(2).strip())
 
-    # 3. Bare "Name v. Name, (Citation)" references (headnote citation lists and
-    #    "reported in" entries) — previously missed, making Missing Precedents intermittent
+    # 3. Bare "Name v. Name, (Citation)" references
     for m in re.finditer(r'(?<![A-Za-z0-9,])(' + NAME + r')\s*,\s*(' + CIT + r')', n):
         _append(m.group(1), m.group(2).strip())
 
@@ -518,24 +532,20 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
         r'(' + NAME + r')(?=$|\s*[,;.])', n):
         _append(m.group(1), "")
 
-    # 5. "in the case of Name v. Name (Citation)" - explicit parenthetical citation.
-    # CIT is a top-level alternation, so it must be wrapped in a group both to
-    # give m.group(2) a value and to stop the alternation escaping the literal
-    # parentheses (it previously raised IndexError on every match).
+    # 5. "in the case of Name v. Name (Citation)"
     for m in re.finditer(r'in the case of\s+(' + NAME + r')\s*\((?:' + CIT + r')\)', n):
         cm = re.search(CIT, m.group(0))
         _append(m.group(1), cm.group(0) if cm else "")
 
-    # 6. "(YEAR) VOLUME REPORTER PAGE in the case of Name" - long-form citation style
-    # e.g., "(2016) 7 SCC 353 in the case of Modern Dental College".
-    # NAME contains no capture group and is greedy across lowercase words, so
-    # this rule uses a tight capitalised-token pattern and slices the reporter
-    # citation out of the match instead of reading a group index.
+    # 6. "(YEAR) VOLUME REPORTER PAGE in the case of Name"
     CIT_LONG_HEAD = r'\([12]\d{3}\)\s+\d+\s+[A-Z]+\s+\d+'
     LONG_NAME = r'[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,4}'
     for m in re.finditer(CIT_LONG_HEAD + r'\s+in the case of\s+(' + LONG_NAME + r')', n):
         cite_m = re.match(CIT_LONG_HEAD, m.group(0))
         _append(m.group(1).strip(), cite_m.group(0) if cite_m else "")
+
+    if case_name:
+        out = filter_precedents(out, case_name)
 
     return out
 
@@ -581,8 +591,14 @@ def _conclusion_section(text: str) -> str:
         return text
     m = re.search(
         r'^[ \t]*(?:\d+\s*[.)]\s*)?'
-        r'(?:CONCLUSION(?: AND|&)?[A-Z ]*|ORDER AND DISPOSITION|'
-        r'OPERATIVE PART|IN THE RESULT|DISPOSITION|FINDINGS?(?: AND CONCLUSIONS?)?)'
+        r'(?:CONCLUSION(?: AND|&)?[A-Z ]*'
+        r'|ORDER AND DISPOSITION|OPERATIVE PART|IN THE RESULT'
+        r'|DISPOSITION|FINDINGS?(?: AND CONCLUSIONS?)?'
+        r'|JUDGMENT\s+AND\s+SENTENCE'
+        r'|FINAL\s+ORDER(?:\s+AND\s+DIRECTIONS?)?' 
+        r'|Illustrative\s+Judgment\s+and\s+Decree'
+        r'|OPERATIVE\s+ORDER'
+        r'|RESULT)'
         r'[ \t]*$\n',
         text, re.I | re.MULTILINE,
     )
@@ -716,12 +732,18 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
     # sentence is kept when it carries real content after the heading.
     SECTION_A = re.compile(
         r'(?:DEFEN[CS]E\s+(?:CONTENTIONS|ARGUMENTS|POSITION)'
-        r'|(?:APPELLANT|PETITIONER|ACCUSED)\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS))\b',
+        r'|(?:APPELLANT|PETITIONER|ACCUSED|PLAINTIFF)\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS|POSITION|EVIDENCE|WITNESS\s+STATEMENT)'
+        r'|(?:PLAINTIFF|APPELLANT|PETITIONER)\'?S?\s+FINAL\s+WRITTEN\s+SUBMISSIONS'
+        r'|SUBMISSIONS\s+FOR\s+THE\s+(?:PETITIONER|APPELLANT|PLAINTIFF)S?'
+        r'|PETITIONER\'?S?\s+SUBMISSIONS)\b',
         re.I,
     )
     SECTION_B = re.compile(
         r'(?:PROSECUTION\s+(?:ARGUMENTS|CONTENTIONS|EVIDENCE|WITNESSES)'
-        r'|(?:RESPONDENT|STATE)\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS))\b',
+        r'|(?:RESPONDENT|STATE|DEFENDANT)\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS|POSITION|EVIDENCE|WITNESS\s+STATEMENT)'
+        r'|(?:DEFENDANT|RESPONDENT)\'?S?\s+FINAL\s+WRITTEN\s+SUBMISSIONS'
+        r'|SUBMISSIONS\s+FOR\s+THE\s+(?:RESPONDENT|DEFENDANT)S?'
+        r'|RESPONDENT\'?S?\s+SUBMISSIONS)\b',
         re.I,
     )
     PAT_B_START = re.compile(
@@ -878,45 +900,92 @@ def _split_long_points(items: list[str], max_len: int = 420) -> list[str]:
 
 # ---------- 6) EVIDENCE (per-item reliability, word-aligned) ----------
 CUES = [
+    # Exhibit registers — look for explicit exhibit labels (P-1, D-1, Ex. P-1)
+    (r'(?:Ex(?:hibit)?[\.\s]*[PD]-?\d+|P-\d+|D-\d+|Exhibit\s+[PD]\s*\d+)', 'Documentary Exhibits Register'),
     (r'Call Detail Records\s*\(CDR\)|cell-site logs|electronic data', 'Electronic Records (CDR / cell-site logs)'),
     (r'panchanama dated [\d-]+|seizure memo|panchas', 'Panchanama / Seizure Memo'),
     (r'bank ledger audits|bank statements|escrow|financial transfer', 'Financial Records & Statements'),
     (r'charge sheet|investigation is complete', 'Charge Sheet / Investigation Record'),
-    (r'Ex\.\s*[PD]-?\d+|documentary exhibits', 'Documentary Exhibits'),
-    (r'correspondence dated [\d-]+|letters dated', 'Contemporaneous Correspondence'),
-    (r'agreement to sell|conveyance deed|sale deed', 'Title / Contract Documents'),
+    (r'correspondence dated [\d-]+|letters dated|contemporaneous correspondence', 'Contemporaneous Correspondence'),
+    (r'agreement to sell|conveyance deed|sale deed|purchase order|quotation dated', 'Title / Contract Documents'),
+    (r'delivery challan|tax invoice|challan|invoice', 'Delivery Challans & Invoices'),
     (r'recovery of contraband|contraband was recovered|450 grams', 'Contraband Recovery & Forensic Record'),
     (r'statutory notifications|data localization|executive interception', 'Official Notifications & Directives'),
-    (r'impugned notification|impugned order|impugned action|impugned measure', 'Impugned Order / Notification')
+    (r'impugned notification|impugned order|impugned action|impugned measure', 'Impugned Order / Notification'),
+    (r'NEERI\s+[Rr]eport|CPCB|pollution\s+(?:report|data)|environmental\s+(?:impact|report)', 'Environmental / Expert Reports'),
+    (r'satellite imagery|aerial photograph|geo-spatial|remote sensing', 'Satellite Imagery & Geo-spatial Evidence'),
+    (r'affidavit of compliance|compliance affidavit|sworn affidavit', 'Compliance Affidavits'),
 ]
+
+# Patterns to find documentary exhibit registers (a whole section listing P-1..P-n, D-1..D-n)
+_EXHIBIT_SECTION_RE = re.compile(
+    r'(?:Documentary\s+Exhibits?(?:\s+and\s+Evidence)?\s+Register'
+    r'|Exhibit\s+Register'
+    r'|Evidence\s+on\s+Record'
+    r'|List\s+of\s+Documents'
+    r'|LIST\s+OF\s+EXHIBITS?)',
+    re.I,
+)
+_EXHIBIT_ITEM_RE = re.compile(
+    r'^\s*((?:Ex(?:hibit)?[\.\s]*)?(?:P|D)-?\s*\d+[A-Za-z]?)\s*[:\-–—]?\s*(.+?)$',
+    re.I | re.MULTILINE,
+)
 
 def extract_evidence(text: str) -> list[dict[str, Any]]:
     n = norm(text)
     items = []
-    seen = set()
-    for pat, label in CUES:
-        m = re.search(pat, n, re.I)
-        if not m or label in seen:
-            continue
-        seen.add(label)
-        win = n[max(0, m.start()-220):m.end()+220]
-        
-        # Word-aligned snippet window — closes on the next sentence boundary so
-        # the quote stays a contiguous substring of the source (no "..." marker
-        # that would break verbatim grounding checks).
-        st = n.rfind('. ', 0, m.start())
-        st = st + 2 if st != -1 else 0
-        raw_end = min(len(n), m.end() + 190)
-        e_pos = n.find('. ', raw_end)
-        end = e_pos + 2 if e_pos != -1 else raw_end
-        snip = re.sub(r'^\d+\.\s*', '', n[st:end]).strip()
-        
+    seen_labels: set[str] = set()
+
+    # --- Priority 1: scan for explicit exhibit register sections ---
+    exhibit_m = _EXHIBIT_SECTION_RE.search(text)
+    if exhibit_m:
+        # Extract up to 500 chars after the section heading
+        region = text[exhibit_m.end():exhibit_m.end() + 2000]
+        for em in _EXHIBIT_ITEM_RE.finditer(region):
+            ex_label = em.group(1).strip()
+            ex_desc = em.group(2).strip()[:200]
+            key = ex_label.upper().replace(' ', '').replace('-', '')
+            if key in seen_labels or len(ex_desc) < 5:
+                continue
+            seen_labels.add(key)
+            items.append({
+                'label': ex_label,
+                'reliability': 'HIGH',
+                'detail': ex_desc,
+            })
+            if len(items) >= 12:
+                break
+
+    # --- Priority 2: if no exhibit register found, fall back to CUES ---
+    if not items:
+        for pat, label in CUES:
+            m = re.search(pat, n, re.I)
+            if not m or label in seen_labels:
+                continue
+            seen_labels.add(label)
+            win = n[max(0, m.start()-220):m.end()+220]
+            st = n.rfind('. ', 0, m.start())
+            st = st + 2 if st != -1 else 0
+            raw_end = min(len(n), m.end() + 190)
+            e_pos = n.find('. ', raw_end)
+            end = e_pos + 2 if e_pos != -1 else raw_end
+            snip = re.sub(r'^\d+\.\s*', '', n[st:end]).strip()
+            items.append({
+                'label': label,
+                'reliability': 'DISPUTED' if re.search(
+                    r'without compliance|certification under Section|not certified|inadmissible|in custody|without judicial oversight',
+                    win, re.I) else 'HIGH',
+                'detail': snip,
+            })
+
+    if not items:
         items.append({
-            'label': label,
-            'reliability': 'DISPUTED' if re.search(r'without compliance|certification under Section|not certified|inadmissible|in custody|without judicial oversight', win, re.I) else 'HIGH',
-            'detail': snip
+            'label': 'No specific exhibits listed in the document.',
+            'reliability': 'N/A',
+            'detail': '',
         })
-    return items[:4]
+
+    return items[:12]
 
 # ---------- 7) TIMELINE + OUTCOME ----------
 def build_timeline(text: str, date: str | None) -> list[dict[str, Any]]:
@@ -941,7 +1010,20 @@ def build_timeline(text: str, date: str | None) -> list[dict[str, Any]]:
         return False
 
     ev = [{'date': m.group(0), 'fact': n[snap(n, m.start()-140):m.end()+140], 'page': '1-2'}
-          for m in re.finditer(r'\d{2}-\d{2}-\d{4}', n)]
+          for m in re.finditer(r'\d{2}[-./]\d{2}[-./]\d{4}', n)]
+    # Also match DD.MM.YYYY / DD-MM-YYYY style
+    for m in re.finditer(r'\b(\d{1,2})[./](\d{1,2})[./](\d{4})\b', n):
+        fact = n[snap(n, m.start()-140):m.end()+140]
+        if not _SIG_BLOCK.search(fact) and not _bad_fact(fact):
+            ev.append({'date': m.group(0), 'fact': fact, 'page': '1-2'})
+    # Month YYYY (e.g. "February 2004")
+    for m in re.finditer(
+        r'\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b',
+        n, re.I,
+    ):
+        fact = n[snap(n, m.start()-140):m.end()+140]
+        if not _SIG_BLOCK.search(fact) and not _bad_fact(fact):
+            ev.append({'date': m.group(0), 'fact': fact, 'page': '1-2'})
     for m in re.finditer(
         r'\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b',
         n, re.I,
@@ -1254,7 +1336,6 @@ def build_kg(*args: Any, **kwargs: Any) -> dict[str, Any]:
     for j in (safe(meta, 'judges') or safe(meta, 'presiding_judges') or []):
         e = add('Judge', j)
         if e: edges.append({'source': 'case', 'target': e, 'type': 'DECIDED_BY', 'label': 'decided_by'})
-        if e: edges.append({'source': 'case', 'target': e, 'type': 'DECIDED_BY', 'label': 'decided_by'})
 
     court_val = safe(meta, 'court')
     if court_val:
@@ -1426,9 +1507,16 @@ def _court_framed_issues(text: str) -> list[dict[str, Any]]:
         body = re.split(r'\n(?:\.{5,}|…{3,})', body)[0].strip()
         if not body or len(body) < 15:
             continue
-        # Skip procedural/duplicate issues
+        # Skip pure meta-procedural lines that are not substantive legal questions.
+        # Note: do NOT skip issues that ask "whether the court has jurisdiction" or
+        # "whether the appeal was maintainable" – those are genuine legal issues.
         body_lower = body.lower()
-        if any(skip in body_lower for skip in ['whether the court', 'whether the appeal', 'whether the petition']):
+        # Only skip if the body is ONLY "whether the court [exists/is here]"
+        # i.e. essentially no substance beyond the procedural opener.
+        if re.fullmatch(
+            r'whether\s+the\s+(court|appeal|petition)\s+(?:can|may|should|shall|would|is|was|has|have)?\s*\.?',
+            body_lower.strip(), re.I
+        ):
             continue
         # Prefer a nearby verbatim sentence as evidence
         quote = None

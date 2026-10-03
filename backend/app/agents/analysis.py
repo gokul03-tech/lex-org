@@ -831,46 +831,99 @@ async def knowledge_graph_agent(state: AgentState) -> AgentState:
         # 1. Build base local graph structure (Case, Parties, Acts, Sections)
         entities = state.get("entities", {}) or {}
         sections = state.get("applicable_sections", []) or []
+        precedents = state.get("precedents", []) or []
         case_id = state.get("case_id", "case_node")
 
-        # Add Case node
-        kg_data["nodes"].append({"id": case_id, "type": "Case", "label": f"Case {case_id[:8]}"})
+        # Resolve the actual case title from metadata (petitioner vs respondent)
+        meta = state.get("metadata") or {}
+        def _safe_meta(key: str) -> str:
+            v = meta.get(key)
+            if isinstance(v, dict):
+                v = v.get("value")
+            return str(v).strip() if v and str(v).strip() not in ("", "Not found in document", "None") else ""
 
-        # Add Party nodes (from entities)
-        petitioner = entities.get("parties", {}).get("petitioner")
+        pet_name = _safe_meta("petitioner")
+        resp_name = _safe_meta("respondent")
+        case_title = _safe_meta("case_title")
+
+        if pet_name and resp_name:
+            case_label = f"{pet_name} vs {resp_name}"
+        elif case_title:
+            case_label = case_title
+        else:
+            case_label = f"Case {case_id[:8]}"
+
+        # Add Case node with the resolved label
+        kg_data["nodes"].append({"id": case_id, "type": "Case", "label": case_label})
+
+        seen_nodes = {case_id}
+
+        def _add_node(node_id: str, node_type: str, label: str) -> bool:
+            if node_id not in seen_nodes:
+                seen_nodes.add(node_id)
+                kg_data["nodes"].append({"id": node_id, "type": node_type, "label": label})
+                return True
+            return False
+
+        # Add Party nodes (from entities and metadata)
+        petitioner = pet_name or (entities.get("parties", {}) or {}).get("petitioner")
         if petitioner:
-            kg_data["nodes"].append({"id": petitioner, "type": "Party", "label": f"Petitioner: {petitioner}"})
-            kg_data["edges"].append({"source": case_id, "target": petitioner, "type": "PETITIONER"})
+            pid = f"Party|{petitioner}"
+            _add_node(pid, "Party", petitioner)
+            kg_data["edges"].append({"source": case_id, "target": pid, "type": "INVOLVES", "label": "involves"})
 
-        respondent = entities.get("parties", {}).get("respondent")
+        respondent = resp_name or (entities.get("parties", {}) or {}).get("respondent")
         if respondent:
-            kg_data["nodes"].append({"id": respondent, "type": "Party", "label": f"Respondent: {respondent}"})
-            kg_data["edges"].append({"source": case_id, "target": respondent, "type": "RESPONDENT"})
+            rid = f"Party|{respondent}"
+            _add_node(rid, "Party", respondent)
+            kg_data["edges"].append({"source": case_id, "target": rid, "type": "INVOLVES", "label": "involves"})
 
         # Add other parties
-        for party_name in entities.get("parties", {}).get("others", []):
-            if party_name not in [petitioner, respondent]:
-                kg_data["nodes"].append({"id": party_name, "type": "Party", "label": party_name})
+        for party_name in (entities.get("parties", {}) or {}).get("others", []):
+            if party_name and party_name not in (petitioner, respondent):
+                pid2 = f"Party|{party_name}"
+                _add_node(pid2, "Party", party_name)
+
+        # Add judges from metadata
+        judges = _safe_meta("judges") or _safe_meta("presiding_judges")
+        if isinstance(judges, str):
+            judges = [j.strip() for j in re.split(r'[;,&]', judges) if j.strip()]
+        for j in (judges or []):
+            jid = f"Judge|{j}"
+            _add_node(jid, "Judge", j)
+            kg_data["edges"].append({"source": case_id, "target": jid, "type": "DECIDED_BY", "label": "decided_by"})
+
+        # Add court
+        court = _safe_meta("court")
+        if court:
+            cid = f"Court|{court}"
+            _add_node(cid, "Court", court)
+            kg_data["edges"].append({"source": case_id, "target": cid, "type": "HEARD_IN", "label": "heard_in"})
 
         # Add Act nodes
         for act in state.get("applicable_acts", []):
-            kg_data["nodes"].append({"id": act, "type": "Act", "label": act})
+            aid = f"Act|{act}"
+            _add_node(aid, "Act", act)
+            kg_data["edges"].append({"source": case_id, "target": aid, "type": "APPLIES", "label": "applies"})
 
         # Add referenced Section nodes and link them to Case
         for section in sections[:10]:
-            sec_id = f"{section.get('act', '')}_{section.get('section_number', '')}"
-            sec_label = f"Sec {section.get('section_number')} {section.get('act', '')}"
-            kg_data["nodes"].append({"id": sec_id, "type": "Section", "label": sec_label})
-            kg_data["edges"].append({"source": case_id, "target": sec_id, "type": "REFERENCES"})
+            sec_num = section.get('section_number', '') if isinstance(section, dict) else str(section)
+            sec_act = section.get('act', '') if isinstance(section, dict) else ''
+            sec_id = f"Section|{sec_act}_{sec_num}"
+            sec_label = section.get('display') if isinstance(section, dict) else f"Sec {sec_num} {sec_act}"
+            _add_node(sec_id, "Section", sec_label or f"Sec {sec_num}")
+            kg_data["edges"].append({"source": case_id, "target": sec_id, "type": "APPLIES", "label": "applies"})
 
-        # Deduplicate nodes to prevent double-rendering
-        seen_nodes = set()
-        unique_nodes = []
-        for n in kg_data["nodes"]:
-            if n["id"] not in seen_nodes:
-                seen_nodes.add(n["id"])
-                unique_nodes.append(n)
-        kg_data["nodes"] = unique_nodes
+        # Add precedent/citation nodes
+        for prec in (precedents or [])[:6]:
+            p_name = prec.get("case_name") if isinstance(prec, dict) else str(prec)
+            if p_name and p_name not in ("Precedent Citation", "keyword"):
+                prec_id = f"Citation|{p_name}"
+                _add_node(prec_id, "Citation", p_name)
+                kg_data["edges"].append({"source": case_id, "target": prec_id, "type": "CITES", "label": "cites"})
+
+        # Deduplicate nodes already done via seen_nodes set
 
         # 2. Query FalkorDB to enrich the graph if connected
         falkordb = await get_falkordb_client()
