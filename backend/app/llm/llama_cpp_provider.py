@@ -196,45 +196,54 @@ def _warn_mock_once(op: str) -> None:
     )
 
 
-def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers: int):
+_shared_llm = None
+
+
+def _get_shared_llama(model_path: str, n_ctx: int = 2048, n_threads: int = 4, n_gpu_layers: int = 15):
     """Load (once) and return a shared Llama instance for the given config."""
+    global _shared_llm
+    if _shared_llm is not None:
+        return _shared_llm
     key = (model_path, n_ctx, n_threads, n_gpu_layers)
     with _load_lock:
+        if _shared_llm is not None:
+            return _shared_llm
         if key in _shared_llamas:
-            return _shared_llamas[key]
+            _shared_llm = _shared_llamas[key]
+            return _shared_llm
         from llama_cpp import Llama
 
         logger.info(f"Loading GGUF model from {model_path} (n_gpu_layers={n_gpu_layers}, n_ctx={n_ctx})")
         try:
             model = Llama(
                 model_path=model_path,
-                n_ctx=min(n_ctx, 8192),
+                n_ctx=min(n_ctx, 2048),
                 n_threads=n_threads,
                 n_gpu_layers=n_gpu_layers,
                 enable_thinking=False,
                 verbose=False,
-                # Memory optimization: use mmap for faster loading, reduce cache
                 use_mmap=True,
-                use_mlock=False,
-                # Reduce memory pressure
+                use_mlock=True,  # CRITICAL: Prevent swapping
                 n_batch=512,
             )
+            logger.info("Model ready: qwen-gguf (mlock enabled)")
         except Exception as exc:
-            logger.warning(f"Failed with n_gpu_layers={n_gpu_layers}: {exc}. Retrying with n_gpu_layers=10...")
+            logger.warning(f"Failed loading with use_mlock=True or n_gpu_layers={n_gpu_layers}: {exc}. Retrying with use_mlock=False...")
             try:
                 model = Llama(
                     model_path=model_path,
-                    n_ctx=2048,
+                    n_ctx=min(n_ctx, 2048),
                     n_threads=n_threads,
-                    n_gpu_layers=10,
+                    n_gpu_layers=n_gpu_layers if n_gpu_layers > 0 else 0,
                     enable_thinking=False,
                     verbose=False,
                     use_mmap=True,
                     use_mlock=False,
                     n_batch=512,
                 )
+                logger.info("Model ready: qwen-gguf")
             except Exception as exc2:
-                logger.warning(f"Failed with n_gpu_layers=10: {exc2}. Retrying on CPU (n_gpu_layers=0)...")
+                logger.warning(f"Failed with n_gpu_layers={n_gpu_layers}: {exc2}. Retrying on CPU (n_gpu_layers=0)...")
                 model = Llama(
                     model_path=model_path,
                     n_ctx=2048,
@@ -246,7 +255,9 @@ def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers:
                     use_mlock=False,
                     n_batch=512,
                 )
+                logger.info("Model ready: qwen-gguf (CPU fallback)")
         _shared_llamas[key] = model
+        _shared_llm = model
         return model
 
 

@@ -50,6 +50,10 @@ safe = lambda m, k, fb=None: (
 # ---------- 1) CATEGORY (drives labels/stage/heading — never content) ----------
 def detect_category(t: str) -> str:
     t = (t or '').lower()
+    if re.search(r'\b(?:insolvency and bankruptcy|nclt|nclat|cirp|resolution professional|committee of creditors|corporate insolvency|section 7 ibc|section 9 ibc|section 29a)\b', t):
+        return 'insolvency'
+    if re.search(r'\b(?:national green tribunal|ngt|environment (?:protection)? act|pollution control|deforestation|sand mining|cpcb|neeri|forest conservation)\b', t):
+        return 'environmental'
     if re.search(r'\b(?:regular bail|anticipatory bail|bail application|admitted to bail|released on bail|seeking bail|bail plea)\b', t) or \
        re.search(r'\b(?:section 482 bnss|section 483 bnss|section 437|section 439 crpc)\b', t):
         return 'criminal_bail'
@@ -57,18 +61,20 @@ def detect_category(t: str) -> str:
         return 'writ'
     if re.search(r'\b(?:arbitration and conciliation|section 34|arbitral award|arbitral tribunal|sole arbitrator|arbitration act)\b', t):
         return 'arbitration'
-    if re.search(r'\b(?:specific performance|agreement to sell|sale deed|code of civil procedure|order 39|civil appeal|civil suit|injunction)\b', t):
+    if re.search(r'\b(?:specific performance|agreement to sell|sale deed|code of civil procedure|order 39|civil appeal|civil suit|injunction|suit for recovery|contract act|sale of goods)\b', t):
         return 'civil'
     if re.search(r'\b(?:conviction|sentenced|accused|charge sheet|ndps|contraband|panchanama|penal code|bns)\b', t):
         return 'criminal_trial'
-    return 'criminal_bail'
+    return 'civil'
 
 STAGE = {
     'criminal_bail': 'Regular Bail Petition',
     'criminal_trial': 'Criminal Trial / Appeal',
     'civil': 'Civil Suit / Appeal',
     'arbitration': 'Petition u/s 34 (Setting Aside Award)',
-    'writ': 'Writ Petition (Constitutional)'
+    'writ': 'Writ Petition (Constitutional)',
+    'insolvency': 'Insolvency & Bankruptcy Appeal (IBC)',
+    'environmental': 'Environmental Matter (NGT / SC)'
 }
 
 # (Side A: Petitioner / Applicant / Appellant / Plaintiff, Side B: Respondent / State / Prosecution / Defendant)
@@ -77,30 +83,52 @@ LABELS = {
     'criminal_trial': ('Defense Rebuttals', 'Prosecution Arguments'),
     'civil': ('Appellant / Plaintiff Case', 'Respondent / Defense Case'),
     'arbitration': ('Petitioner Submissions', 'Respondent Submissions'),
-    'writ': ('Petitioner Submissions', 'Respondent / State Submissions')
+    'writ': ('Petitioner Submissions', 'Respondent / State Submissions'),
+    'insolvency': ('Appellant / Creditor Submissions', 'Respondent / Debtor Case'),
+    'environmental': ('Petitioner / Applicant Submissions', 'Respondent / Authority Contentions')
 }
 
 # ---------- 2) METADATA ----------
 def norm_act(n: str) -> str:
     l = nows(n)
+    if 'environmentprotection' in l or 'environmentprotectionact' in l: return 'Environment (Protection) Act, 1986'
+    if 'forestconservation' in l or 'forestprotection' in l: return 'Forest (Conservation) Act, 1980'
+    if 'waterprevention' in l or 'wateract' in l: return 'Water (Prevention and Control of Pollution) Act, 1974'
+    if 'airprevention' in l or 'airact' in l: return 'Air (Prevention and Control of Pollution) Act, 1981'
+    if 'wildlifeprotection' in l or 'wildlife' in l: return 'Wild Life (Protection) Act, 1972'
+    if 'nationalgreentribunal' in l or 'ngtact' in l: return 'National Green Tribunal Act, 2010'
+    if 'insolvency' in l or 'bankruptcy' in l or 'ibc' in l: return 'Insolvency and Bankruptcy Code, 2016'
     if 'specificrelief' in l: return 'Specific Relief Act, 1963'
+    if 'saleofgoods' in l: return 'Sale of Goods Act, 1930'
     if 'contract' in l: return 'Indian Contract Act, 1872'
     if 'civilprocedure' in l or 'cpc' in l: return 'Code of Civil Procedure, 1908'
     if 'registration' in l: return 'Indian Registration Act, 1908'
+    if 'transferofproperty' in l: return 'Transfer of Property Act, 1882'
+    if 'bankingregulation' in l: return 'Banking Regulation Act, 1949'
+    if 'reservebank' in l or 'rbiact' in l: return 'Reserve Bank of India Act, 1934'
+    if 'companiesact' in l: return 'Companies Act, 2013'
     if 'nagarik' in l or 'bnss' in l: return 'Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023'
     if 'nyaya' in l or 'bns' in l: return 'Bharatiya Nyaya Sanhita (BNS), 2023'
     if 'sakshya' in l or 'bsa' in l: return 'Bharatiya Sakshya Adhiniyam (BSA), 2023'
     if 'informationtechnology' in l or 'itact' in l: return 'Information Technology Act, 2000'
     if 'arbitration' in l: return 'Arbitration and Conciliation Act, 1996'
     if 'evidence' in l: return 'Indian Evidence Act, 1872'
+    if 'penal' in l or 'ipc' in l: return 'Indian Penal Code, 1860'
+    if 'criminal' in l or 'crpc' in l: return 'Code of Criminal Procedure, 1973'
+    if 'constitution' in l: return 'Constitution of India'
     if 'narcotic' in l or 'ndps' in l: return 'NDPS Act, 1985'
     return norm(n)
 
 PATS = [
+    r'(C\.?C\.?\s*No\.?\s*[\d/]+(?:\s+of\s+\d{4})?)',
     r'(C\.?R\.? No\.?\s*\d+\s*of\s*\d{4})',
     r'(FIR No\.?\s*[\d/]+(?:\s+of\s+\d{4})?)',
+    r'(Civil Appeal\s*(?:\([A-Za-z]+\))?\s*No\.?\s*[\d/]+(?:\s+of\s+\d{4})?)',
+    r'(Criminal Appeal\s*(?:\([A-Za-z]+\))?\s*No\.?\s*[\d/]+(?:\s+of\s+\d{4})?)',
+    r'(Company Appeal\s*(?:\([A-Za-z]+\))?\s*No\.?\s*[\d/]+(?:\s+of\s+\d{4})?)',
     r'(Appeal No\.?\s*\d+\s*of\s*\d{4})',
     r'(Suit No\.?\s*\d+\s*of\s*\d{4})',
+    r'(Original Application\s*No\.?\s*[\d/]+(?:\s+of\s+\d{4})?)',
     r'(Special Case No\.?\s*\d+\s*of\s*\d{4})',
     r'(Arbitration Petition No\.?\s*\d+\s*of\s*\d{4})',
     r'(Writ Petition\s*(?:\([A-Za-z]+\))?\s*No\.?\s*[\d/]+(?:\s+of\s+\d{4})?)'
@@ -108,20 +136,37 @@ PATS = [
 
 def extract_court_name(head: str, text: str) -> str | None:
     lines = [l.strip() for l in head.split('\n') if l.strip()]
-    for line in lines[:4]:
-        if 'COURT' in line.upper():
-            cu = line.upper()
-            if 'BOMBAY' in cu: return 'High Court of Judicature at Bombay'
-            if 'DELHI' in cu: return 'High Court of Delhi at New Delhi'
-            if 'SUPREME COURT' in cu: return 'Supreme Court of India'
-            if 'MADRAS' in cu: return 'High Court of Judicature at Madras'
-            if 'CALCUTTA' in cu: return 'High Court of Calcutta'
-            if 'KARNATAKA' in cu: return 'High Court of Karnataka'
-            if 'ALLAHABAD' in cu: return 'High Court of Judicature at Allahabad'
+    for line in lines[:6]:
+        u = line.upper()
+        if 'NATIONAL COMPANY LAW APPELLATE TRIBUNAL' in u or 'NCLAT' in u:
+            return 'National Company Law Appellate Tribunal, New Delhi'
+        if 'NATIONAL COMPANY LAW TRIBUNAL' in u or 'NCLT' in u:
+            return 'National Company Law Tribunal'
+        if 'NATIONAL GREEN TRIBUNAL' in u or 'NGT' in u:
+            return 'National Green Tribunal, Principal Bench, New Delhi'
+        if 'SUPREME COURT' in u:
+            return 'Supreme Court of India'
+        if 'BOMBAY' in u and 'COURT' in u:
+            return 'High Court of Judicature at Bombay'
+        if 'DELHI' in u and 'COURT' in u:
+            return 'High Court of Delhi at New Delhi'
+        if 'MADRAS' in u and 'COURT' in u:
+            return 'High Court of Judicature at Madras'
+        if 'CALCUTTA' in u and 'COURT' in u:
+            return 'High Court of Calcutta'
+        if 'KARNATAKA' in u and 'COURT' in u:
+            return 'High Court of Karnataka'
+        if 'ALLAHABAD' in u and 'COURT' in u:
+            return 'High Court of Judicature at Allahabad'
+        if 'METROPOLITAN MAGISTRATE' in u or 'MAGISTRATE COURT' in u:
             return re.sub(r'^IN THE\s+', '', line, flags=re.I).strip().title()
-    m = re.search(r'IN THE ([A-Z\s,]+COURT[A-Z\s,]*|SUPREME COURT OF INDIA)', head, re.I)
+        if 'COURT' in u or 'TRIBUNAL' in u:
+            return re.sub(r'^IN THE\s+', '', line, flags=re.I).strip().title()
+    m = re.search(r'IN THE ([A-Z\s,]+(?:COURT|TRIBUNAL)[A-Z\s,]*|SUPREME COURT OF INDIA)', head, re.I)
     if m:
         cu = m.group(1).upper()
+        if 'NCLAT' in cu: return 'National Company Law Appellate Tribunal, New Delhi'
+        if 'NGT' in cu: return 'National Green Tribunal'
         if 'BOMBAY' in cu: return 'High Court of Judicature at Bombay'
         if 'DELHI' in cu: return 'High Court of Delhi at New Delhi'
         if 'SUPREME COURT' in cu: return 'Supreme Court of India'
@@ -130,38 +175,49 @@ def extract_court_name(head: str, text: str) -> str | None:
 
 def extract_metadata(text: str) -> dict[str, Any]:
     n = norm(text)
-    head = text[:1800]
+    head = text[:2500]
     lines = [l.strip() for l in head.split('\n') if l.strip()]
     
     court_clean = extract_court_name(head, text)
     
-    BAD_SEP_ONLY = re.compile(r'^(?:versus|vs\.?|v\.?)$', re.I)
+    # 1. Structured dossier headers check
     pet, resp = None, None
-    for i, l in enumerate(lines[:12]):
-        if BAD_SEP_ONLY.match(l.strip()):
-            if i > 0 and i + 1 < len(lines):
-                stitch = f"{lines[i - 1]} versus {lines[i + 1]}"
-                parts = re.split(r'\s+(?:vs\.?|v\.|versus)\s+', stitch, maxsplit=1, flags=re.I)
-                if len(parts) == 2 and parts[0].strip() and parts[1].strip() \
-                        and not BAD_SEP_ONLY.match(parts[0].strip()) \
-                        and not BAD_SEP_ONLY.match(parts[1].strip()):
-                    pet = norm(parts[0])
-                    resp = norm(parts[1])
+    pet_m = re.search(r'(?:^|\n)\s*(?:Petitioners?|Appellants?|Plaintiffs?|Complainant|Accused)\s*:\s*([^\n]+)', head, re.I)
+    resp_m = re.search(r'(?:^|\n)\s*(?:Respondents?|Defendants?|Opposite\s+Party|State)\s*:\s*([^\n]+)', head, re.I)
+    if pet_m and resp_m:
+        p_raw = pet_m.group(1).strip()
+        r_raw = resp_m.group(1).strip()
+        if p_raw and r_raw:
+            pet = norm(p_raw)
+            resp = norm(r_raw)
+
+    BAD_SEP_ONLY = re.compile(r'^(?:versus|vs\.?|v\.?)$', re.I)
+    if not pet or not resp:
+        for i, l in enumerate(lines[:14]):
+            if BAD_SEP_ONLY.match(l.strip()):
+                if i > 0 and i + 1 < len(lines):
+                    stitch = f"{lines[i - 1]} versus {lines[i + 1]}"
+                    parts = re.split(r'\s+(?:vs\.?|v\.|versus)\s+', stitch, maxsplit=1, flags=re.I)
+                    if len(parts) == 2 and parts[0].strip() and parts[1].strip() \
+                            and not BAD_SEP_ONLY.match(parts[0].strip()) \
+                            and not BAD_SEP_ONLY.match(parts[1].strip()):
+                        pet = norm(parts[0])
+                        resp = norm(parts[1])
+                        break
+                continue
+            if not re.search(r'\b(?:vs\.?|v\.|versus)\b', l, re.I):
+                continue
+            parts = re.split(r'\s+(?:vs\.?|v\.|versus)\s+', l, maxsplit=1, flags=re.I)
+            if len(parts) == 2 and parts[0].strip() and parts[1].strip() \
+                    and not BAD_SEP_ONLY.match(parts[0].strip()) \
+                    and not BAD_SEP_ONLY.match(parts[1].strip()):
+                pet = norm(parts[0])
+                pet = re.sub(r'^(?:IN THE [A-Z\s,]+COURT[A-Z\s,]*|SUPREME COURT OF INDIA)\s*', '', pet, flags=re.I).strip()
+                resp = norm(parts[1])
+                resp = re.sub(r'\s*(?:\.\.\.)?\s*on\s+\d{1,2}.*$', '', resp or '').strip()
+                if not BAD_SEP_ONLY.match(pet or '') and not BAD_SEP_ONLY.match(resp or ''):
                     break
-            continue
-        if not re.search(r'\b(?:vs\.?|v\.|versus)\b', l, re.I):
-            continue
-        parts = re.split(r'\s+(?:vs\.?|v\.|versus)\s+', l, maxsplit=1, flags=re.I)
-        if len(parts) == 2 and parts[0].strip() and parts[1].strip() \
-                and not BAD_SEP_ONLY.match(parts[0].strip()) \
-                and not BAD_SEP_ONLY.match(parts[1].strip()):
-            pet = norm(parts[0])
-            pet = re.sub(r'^(?:IN THE [A-Z\s,]+COURT[A-Z\s,]*|SUPREME COURT OF INDIA)\s*', '', pet, flags=re.I).strip()
-            resp = norm(parts[1])
-            resp = re.sub(r'\s*(?:\.\.\.)?\s*on\s+\d{1,2}.*$', '', resp or '').strip()
-            if not BAD_SEP_ONLY.match(pet or '') and not BAD_SEP_ONLY.match(resp or ''):
-                break
-            pet, resp = None, None
+                pet, resp = None, None
     if pet and BAD_SEP_ONLY.match(pet):
         pet = None
     if resp and BAD_SEP_ONLY.match(resp):
@@ -171,16 +227,23 @@ def extract_metadata(text: str) -> dict[str, Any]:
     if resp:
         resp = re.sub(r'\s*\.\.\.\s*(?:Respondent|Defendant)s?\s*$', '', resp, flags=re.I).strip() or resp
 
-    # Prefer signature-block date (last 500 chars), then header date; accept ALL-CAPS months
+    # Prefer signature-block date (last 1000 chars), then header date; accept ALL-CAPS months
     MONTH = r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
     DMY = rf'(\d{{1,2}})(?:st|nd|rd|th)?[ ,.\-]+({MONTH})[ ,.\-]+(\d{{4}})'
-    tail500 = text[-500:] if len(text) > 500 else text
-    dm = re.search(DMY, tail500, re.I) or \
+    tail1000 = text[-1000:] if len(text) > 1000 else text
+    dm = re.search(DMY, tail1000, re.I) or \
+         re.search(rf'(?:Date|Dated|decided on|pronounced on)\s*[:\-]?\s*{DMY}', tail1000, re.I) or \
          re.search(rf'(?:\.\.\.\s*on|on|dated|decided on)\s+{DMY}', head, re.I) or \
          re.search(DMY, head, re.I)
          
     cites = re.findall(r'\(\d{4}\)\s?\d+\s?[A-Z]+\s?\d+|AIR\s?\d{4}\s?[A-Z ]+\d+|\[\d{4}\]\s?\d+\s?SCR\s?\d+|\d{4}\s?Cri\s?LJ\s?\d+', n.split('JUDGMENT')[0], re.I)
     case_no = next((m.group(1) for p in PATS if (m := re.search(p, n))), None)
+    
+    # Also check structured dossier "Case number: C.C. No. 4680 of 2004"
+    if not case_no:
+        cn_m = re.search(r'(?:Case\s+(?:number|no|Number|No)\s*[:\-]\s*)([A-Za-z0-9.\s/]+(?:of|\/)\s*\d{4})', head, re.I)
+        if cn_m:
+            case_no = cn_m.group(1).strip()
     
     judges: list[str] = []
     def _clean_j(raw_j: str) -> str:
@@ -218,10 +281,7 @@ def extract_metadata(text: str) -> dict[str, Any]:
             return False
         return True
 
-    for tag in ('Author', 'Bench', 'Coram', 'Judges'):
-        # A 3-judge bench wraps: "...Hon'ble Mr. Justice" then "J.B. Pardiwala, J."
-        # on the next line. [^\n]+ dropped the third judge, so allow one
-        # continuation line when it looks like the start of a name.
+    for tag in ('Author', 'Bench', 'Coram', 'Judges', 'Before'):
         am = re.search(
             tag + r':\s*([^\n]+(?:\n\s*[A-Z][A-Za-z.]*\s+[A-Z][a-z]+[,.]?(?:\s|$))?)',
             text, re.I,
