@@ -128,6 +128,47 @@ def extract_court_name(head: str, text: str) -> str | None:
         return m.group(1).strip().title()
     return None
 
+# A dossier/caption heading that runs into the party line:
+#   "Cyber Crime Case Document — State of Tamil Nadu v. Suhas Katti"
+# The label is not a party, so it is dropped when it sits before a dash and the
+# remainder still looks like a name. Restricted to these descriptors so a real
+# hyphenated party name ("Vinod Kumar Traders") is never truncated.
+_DOCKET_LABEL = (
+    r'(?:case\s*(?:file|document|record|dossier|study|summary|no\.?|number)|'
+    r'(?:criminal|civil|commercial|constitutional|revision|appeal|writ|suit|'
+    r'petition|application|complaint|arbitration|insolvency)\s+(?:petition|'
+    r'appeal|revision|writ|suit|application|complaint|case|reference|proceeding)s?|'
+    r'(?:dossier|judgment|judgement|order|document|brief|record)s?|'
+    r'study\s*notes?|academic\s+(?:case\s*)?(?:study|dossier|file))'
+)
+_DOCKET_PREFIX_RE = re.compile(
+    # A mandatory dash/colon separator is what makes this safe: a name never
+    # contains one here, so "Vinod Kumar Traders" is untouched while
+    # "Cyber Crime Case Document - State of Tamil Nadu" loses only its label.
+    # The optional leading words let a qualifier ride along ("Cyber Crime",
+    # "Detailed") without needing its own entry in the label list.
+    rf'^\s*(?:[A-Za-z]+\s+){{0,3}}?(?:{_DOCKET_LABEL})\s*'
+    # An intervening docket number is part of the label, not the name
+    # ("Criminal Petition No. 123 of 2024 - State of Karnataka").
+    rf'(?:\s*\([^)]*\))*'
+    rf'(?:\s*(?:no\.?|number))?'
+    rf'(?:\s*\([^)]*\))*'
+    rf'(?:\s*(?:of\s+)?[\dIVX]+[\d/()\-]*){{0,3}}'
+    rf'(?:\s*[-/]\s*(?:of\s+)?[\dIVX]+[\d/()\-]*){{0,2}}\s*'
+    rf'(?:\u2014|\u2013|\s*[-:]\s*)\s*',
+    re.I,
+)
+
+
+def _strip_docket_prefix(name: str) -> str:
+    """Drop a leading document/docket label from a party name."""
+    if not name or not _DOCKET_PREFIX_RE.search(name):
+        return name
+    cleaned = _DOCKET_PREFIX_RE.sub('', name, count=1).strip(' \u2014\u2013-,:|')
+    # Never return something degenerate; the original is better than a stub.
+    return cleaned if len(cleaned) >= 3 else name
+
+
 def extract_metadata(text: str) -> dict[str, Any]:
     n = norm(text)
     head = text[:1800]
@@ -149,7 +190,14 @@ def extract_metadata(text: str) -> dict[str, Any]:
                     resp = norm(parts[1])
                     break
             continue
-        if not re.search(r'\b(?:vs\.?|v\.|versus)\b', l, re.I):
+        # The dot on "v." is optional here. With it required ("v\."), the
+        # trailing \b could never be satisfied -- after a "." the next
+        # character is a space, and a boundary needs a word character -- so
+        # "X v. Y" was silently rejected. Indian academic dossiers write the
+        # separator as "v." far more often than "vs", so every party, case
+        # title and central graph node came back not_found on those documents
+        # while real judgments ("X vs Y") scored normally.
+        if not re.search(r'\b(?:vs\.?|v\.?|versus)\b', l, re.I):
             continue
         parts = re.split(r'\s+(?:vs\.?|v\.|versus)\s+', l, maxsplit=1, flags=re.I)
         if len(parts) == 2 and parts[0].strip() and parts[1].strip() \
@@ -166,6 +214,14 @@ def extract_metadata(text: str) -> dict[str, Any]:
         pet = None
     if resp and BAD_SEP_ONLY.match(resp):
         resp = None
+    # A dossier heading runs the docket label into the party line
+    # ("Cyber Crime Case Document — State of Tamil Nadu v. Suhas Katti"), so the
+    # label was captured as the first half of the petitioner's name. Drop a
+    # leading label that is a document/docket descriptor, keeping the party.
+    if pet:
+        pet = _strip_docket_prefix(pet) or pet
+    if resp:
+        resp = _strip_docket_prefix(resp) or resp
     if pet:
         pet = re.sub(r'\s*\.\.\.\s*(?:Appellant|Petitioner|Plaintiff|Applicant)s?\s*$', '', pet, flags=re.I).strip() or pet
     if resp:
@@ -343,7 +399,47 @@ _ACT_ALIASES = {
     'cpc': 'codecivilprocedure',
     'ndpsact': 'ndpsact',
     'companiesact': 'companiesact',
+        # The Act name and its bare abbreviation are the same statute, so both
+        # spellings must land on one key. norm_act() rewrites "IT Act" to the
+        # full name but leaves "IPC" alone, and a document that cites a section
+        # under each spelling produced two entries for that section.
+    'informationtechnology': 'informationtechnologyact2000',
+    'informationtechnologyact2000': 'informationtechnologyact2000',
+    'itact': 'informationtechnologyact2000',
+    'itact2000': 'informationtechnologyact2000',
+    'itact20002000': 'informationtechnologyact2000',
+        # Same for the codes commonly written both ways.
+    'indianpenalcode1860': 'indianpenalcode',
+    'ipc1860': 'indianpenalcode',
+    'codeofcriminalprocedure1973': 'codeofcriminalprocedure',
+    'crpc1973': 'codeofcriminalprocedure',
+    'bharatiyanyayasanhita2023': 'bharatiyanyayasanhita',
+    'bns2023': 'bharatiyanyayasanhita',
+    'bharatiyanagariksurakshasanhita2023': 'bharatiyanagariksurakshasanhita',
+    'bnss2023': 'bharatiyanagariksurakshasanhita',
+    'bharatiyasakshyaadhiniyam2023': 'bharatiyasakshyaadhiniyam',
+    'bsa2023': 'bharatiyasakshyaadhiniyam',
 }
+
+
+# Abbreviations that name a statute only in concert with a spelled-out mention.
+_BARE_ACT_ABBREVS = frozenset({
+    'ipc', 'bns', 'bnss', 'bsa', 'crpc', 'cpc', 'iea', 'itact',
+})
+
+
+def _named_act_keys(n: str) -> set[str]:
+    """Canonical keys of every Act the document names in full."""
+    found: set[str] = set()
+    for act in re.findall(
+        r'Indian Penal Code|Bharatiya Nyaya Sanhita|Bharatiya Nagarik Suraksha Sanhita|'
+        r'Bharatiya Sakshya Adhiniyam|Code of Criminal Procedure|Indian Evidence Act|'
+        r'Code of Civil Procedure|Information Technology Act',
+        n,
+        re.I,
+    ):
+        found.add(_ACT_ALIASES.get(re.sub(r'[^a-z]', '', act.lower()), ''))
+    return {f for f in found if f}
 
 
 def _attach_concordance(sections: list[dict[str, Any]]) -> None:
@@ -441,6 +537,29 @@ def bind_sections(text: str) -> list[dict[str, Any]]:
     def _norm_key(d: dict) -> str:
         num = str(d.get('section_number', '')).upper().replace('ART.', '').replace('ART', '').strip()
         act = str(d.get('act', '')).upper()
+        # An Act and its abbreviation denote the same provision, so the alias
+        # table decides the identity. Comparing the raw strings kept both
+        # "Section 469 - Indian Penal Code" and "Section 469 - IPC", which the
+        # UI then showed as two separate provisions with two concordance badges
+        # for one section. norm_act() has already canonicalised the name, so the
+        # remaining difference is spelling, not identity.
+        # A bare abbreviation ("IPC") is only an identity claim for an Act that
+        # is already named in full elsewhere in the same document. Read alone it
+        # is ambiguous -- an unlabelled "Section 66A" in a cyber-crime dossier is
+        # the IT Act provision, but the text may equally be reciting the old IPC
+        # section, so treating the abbreviation as its own statute invented a
+        # second provision for one section.
+        # The key must collapse the Act's year and any "the" so that
+        # "Indian Penal Code, 1860" and "Indian Penal Code" are one statute.
+        key = re.sub(r'[^a-z]', '', re.sub(r'\b(?:19|20)\d{2}\b', '', act.lower()))
+        if key in _BARE_ACT_ABBREVS and _ACT_ALIASES.get(key, key) not in _named_act_keys(n):
+            # Nothing in the document spells this Act out, so the abbreviation
+            # cannot be resolved to a statute. Keep the entry under its own key
+            # rather than merging it into a provision it may not belong to.
+            return f"{num}|{key}"
+        alias = _ACT_ALIASES.get(key)
+        if alias:
+            act = alias.upper()
         return f"{num}|{act}"
     
     seen_keys: set[str] = set()
@@ -462,6 +581,7 @@ def bind_sections(text: str) -> list[dict[str, Any]]:
 CIT = r'\([12]\d{3}\)\s?\d+\s?[A-Z.]+\s?\d+|\[[12]\d{3}\]\s?\d+\s?SCR\s?\d+|\d{4}\s?(?:Supp\.?\s*)?\(?\d{1,4}\)?\s?SCC\s?\d+|\d{4}\s?SCC\s+OnLine\s+(?:SC|Del|Bom)|\d{4}\s?\d+\s?[A-Z.]+\s?\d+|AIR\s?[12]\d{3}\s?[A-Z ]+\d+'
 
 def extract_precedents(text: str) -> list[dict[str, Any]]:
+    from app.agents.doc_meta_guard import strip_standalone_noise
     n = norm(text)
     out = []
     seen = set()
@@ -516,15 +636,30 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
     title_nows = ""
     # Scan the RAW text: `n` has had its newlines collapsed, so splitting it on
     # "\n" yields a single line and the per-line scan below is a no-op.
-    caption = text[:800]
-    bm = _BODY_MARKER_RE.search(caption)
-    if bm:
-        caption = caption[: bm.start()]
+    caption = strip_standalone_noise(text[:800])
+    # The body marker must only end the caption at a line that is actually part
+    # of the judgment. The disclaimer banner above a study file ends in "not an
+    # official judgment", and treating that as the body start truncated the
+    # window at 62 characters -- before the real title line further down -- so
+    # the judgment's own name was never captured and it came back later as a
+    # precedent cited against itself.
+    lines = caption.split("\n")
+    for i, line in enumerate(lines):
+        if _BODY_MARKER_RE.search(line):
+            lines = lines[:i]
+            break
+    caption = "\n".join(lines)
     # Scan line by line. NAME is lazy but still spans lower-case words, so a
     # single search across the caption welded the document's title line
     # ("CYBER CRIME CASE DOCUMENT") onto the case line and the combined result
     # failed validation, leaving the judgment's own name uncaptured and letting
     # it come back later as a "cited precedent" against itself.
+    #
+    # Party names carry real words that the earlier filters did not allow for:
+    # "& Ors.", "& Anr.", "& S/o" are party labels, not prose, so "&" is dropped
+    # before counting. That is what let a genuine caption through -- a title such
+    # as "Vikram Singh & Ors. v. State of Karnataka & Anr." has 10 whitespace
+    # tokens but only 8 words, and was rejected by the old 8-token cap.
     for line in caption.split("\n"):
         if not re.search(r'\s(?:v\.|versus)\s', line, re.IGNORECASE):
             continue
@@ -532,7 +667,9 @@ def extract_precedents(text: str) -> list[dict[str, Any]]:
         if not hm:
             continue
         cand = re.sub(r'\s+', ' ', hm.group(0)).strip()
-        if 6 <= len(cand) <= 60 and len(cand.split()) <= 8 and not _TITLE_PROSE_RE.search(cand):
+        words = [w for w in cand.split() if w not in ('&',)]
+        if (6 <= len(cand) <= 80 and len(words) <= 10
+                and not _TITLE_PROSE_RE.search(cand)):
             title_nows = nows(cand)[:15]
             break
 
@@ -853,14 +990,29 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
     # ("PETITIONERS'" = S then mark, "STATE'S" = mark then S), so both are
     # optional and both orders are accepted.
     _PLURAL_MARK = r'(?:S?[\u2019\'\u02bc]?S?)'
+    # PLAINTIFF/APPELLANT and DEFENDANT/RESPONDENT are party-role words used
+    # interchangeably with applicant/petitioner and respondent/accused, and a
+    # civil case file is titled for the parties, not the procedure
+    # ("17. PLAINTIFF'S FINAL WRITTEN SUBMISSIONS"). Words between the role and
+    # the noun ("FINAL WRITTEN") are permitted, so a heading the corpus actually
+    # uses was not silently skipped and the side fell back to generic text.
+    _ROLE_A = r'(?:APPELLANT|PETITIONER|ACCUSED|PLAINTIFF|APPLICANT|COMPLAINANT)'
+    _ROLE_B = r'(?:RESPONDENT|STATE|DEFENDANT|VENDOR|APPELLEE)'
+    # Repeatable, because a heading may stack qualifiers: "PLAINTIFF'S FINAL
+    # WRITTEN SUBMISSIONS" needs both FINAL and WRITTEN consumed before the
+    # noun, and a single optional slot matched neither.
+    _FILLER = (r'(?:\s+(?:FINAL|WRITTEN|ORIGINAL|ADDITIONAL|SUPPLEMENTARY|FURTHER|'
+               r'MAIN|KEY|SUPPLEMENTAL))*')
     SECTION_A = re.compile(
         r'(?:DEFEN[CS]E\s+(?:CONTENTIONS|ARGUMENTS|POSITION)'
-        rf'|(?:APPELLANT|PETITIONER|ACCUSED){_PLURAL_MARK}\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS))\b',
+        rf'|{_ROLE_A}{_PLURAL_MARK}{_FILLER}\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS|'
+        r'PLEADINGS|STATEMENTS?))\b',
         re.I,
     )
     SECTION_B = re.compile(
         r'(?:PROSECUTION\s+(?:ARGUMENTS|CONTENTIONS|EVIDENCE|WITNESSES)'
-        rf'|(?:RESPONDENT|STATE){_PLURAL_MARK}\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS))\b',
+        rf'|{_ROLE_B}{_PLURAL_MARK}{_FILLER}\s+(?:SUBMISSIONS|ARGUMENTS|CONTENTIONS|'
+        r'PLEADINGS|STATEMENTS?|REPLY|WRITTEN\s+SUBMISSIONS))\b',
         re.I,
     )
     PAT_B_START = re.compile(
@@ -1386,6 +1538,42 @@ def build_risk(text: str, subs_a: list[str], subs_b: list[str]) -> dict[str, Any
     }
 
 # ---------- 9) KG + TRUST + GATE ----------
+def _same_case(candidate: str, own_title: str) -> bool:
+    """True when ``candidate`` is the document's own caption, not a citation.
+
+    Compares the party pair on both sides of "v."/"vs." after squashing
+    non-alphanumerics, so "State of Karnataka v. Vikram Singh & Ors." and
+    "Vikram Singh & Ors. v. State of Karnataka & Anr." are recognised as the
+    same two parties despite word order and the trailing abbreviation. A plain
+    prefix comparison would miss the reversed form, and either miss leaves a
+    "cites" edge pointing back at the central node -- an authority the document
+    never cited.
+    """
+    def parts(s: str) -> tuple[str, str] | None:
+        # Split before squashing: nows() deletes the spaces that delimit "v.",
+        # so normalising first collapses "A v. B" into one unbreakable token.
+        m = re.split(r'\s+(?:v\.?|versus|vs\.?)\s+', s or '', maxsplit=1, flags=re.I)
+        return (nows(m[0]), nows(m[1])) if len(m) == 2 else None
+
+    cand_parts = parts(candidate or '')
+    own_parts = parts(own_title or '')
+    if not cand_parts or not own_parts:
+        return False
+
+    def near(x: str, y: str) -> bool:
+        return bool(x) and bool(y) and (x.startswith(y) or y.startswith(x))
+
+    a, b = cand_parts
+    c, d = own_parts
+    # Both parties must match, in either order. Allowing either order handles a
+    # reversed rendering ("State of Karnataka v. Vikram Singh" against its own
+    # "Vikram Singh & Ors. v. State of Karnataka & Anr."), while still requiring
+    # two matches keeps a genuinely different case that merely shares one party
+    # -- "State of Karnataka v. Another" against "State of Karnataka v. Vikram
+    # Singh" -- from being discarded as a self-citation.
+    return (near(a, c) and near(b, d)) or (near(a, d) and near(b, c))
+
+
 def build_kg(*args: Any, **kwargs: Any) -> dict[str, Any]:
     """Universal KG Builder. Supports both positional (meta, secs, precs, evi) and dict context (r_ctx)."""
     if len(args) == 1 and isinstance(args[0], dict):
@@ -1465,6 +1653,12 @@ def build_kg(*args: Any, **kwargs: Any) -> dict[str, Any]:
         for p in precs[:6]:
             p_name = p.get('case_name') if isinstance(p, dict) else str(p)
             if p_name and p_name not in ("Precedent Citation", "keyword", "Keyword"):
+                # The document's own caption is not a precedent it cited. Without
+                # this the case pointed at itself: a dossier whose only "citation"
+                # match was its own title line produced a "cites" edge back to
+                # the central node, which reads as a fabricated authority.
+                if _same_case(p_name, case_title):
+                    continue
                 e = add('Citation', p_name)
                 if e: edges.append({'source': 'case', 'target': e, 'type': 'CITES', 'label': 'cites'})
 
@@ -1529,6 +1723,12 @@ def build_kg(*args: Any, **kwargs: Any) -> dict[str, Any]:
 
     for p in precs:
         p_name = f"{p['case_name']} {p['citation'] or ''}".strip() if isinstance(p, dict) else str(p)
+        # The document's own caption is not a precedent it cited. Without this the
+        # case pointed at itself, producing a "cites" edge back to the central node
+        # that reads as a fabricated authority.
+        raw_name = p.get('case_name') if isinstance(p, dict) else str(p)
+        if raw_name and _same_case(raw_name, case_title):
+            continue
         e = add('Citation', p_name)
         if e: edges.append({'source': 'case', 'target': e, 'type': 'CITES', 'label': 'cites'})
 

@@ -582,44 +582,93 @@ class LegalMetadataExtractor:
         MDY = rf'({MONTH})\s*[.,]?\s*(\d{{1,2}})(?:st|nd|rd|th)?\s*[.,]?\s*(\d{{4}})'
         NUMERIC = r'(\d{1,2})[./-](\d{1,2})[./-](\d{4})'
 
+        _MONTH_NAMES = (
+            'January', 'February', 'March', 'April', 'May', 'June', 'July',
+            'August', 'September', 'October', 'November', 'December',
+        )
+
         def _from_numeric(m: re.Match[str]) -> dict[str, Any]:
-            return {"value": f"{int(m.group(1)):02d} {int(m.group(2)):02d} {m.group(3)}",
-                    "status": "extracted"}
+            # The contract for this field is 'DD Month YYYY'. A numeric date
+            # returned "22 05 2023", so the same judgment produced two
+            # different shapes depending only on how its date happened to be
+            # spelled, and "05" is ambiguous between May and a numbered slot.
+            # Indian legal dates are day-first, so d/m/y is the right reading.
+            day, mon, year = int(m.group(1)), int(m.group(2)), m.group(3)
+            if 1 <= mon <= 12 and 1 <= day <= 31:
+                return {"value": f"{day:02d} {_MONTH_NAMES[mon - 1]} {year}",
+                        "status": "extracted"}
+            return {"value": f"{day:02d} {mon:02d} {year}", "status": "extracted"}
 
         def _from_mdy(m: re.Match[str]) -> dict[str, Any]:
-            return {"value": f"{int(m.group(2))} {m.group(1)} {m.group(3)}",
+            return {"value": f"{int(m.group(2)):02d} {_canon_month(m.group(1))} {m.group(3)}",
                     "status": "extracted"}
-        
-        # 1a. Explicit "decided on/dated/pronounced on" in tail
-        tail_explicit = re.search(
-            rf'(?:decided\s+on|dated|pronounced\s+on)\s+{DMY}',
-            tail, re.I
-        )
-        if tail_explicit:
-            parts = re.search(DMY, tail_explicit.group(0), re.I)
-            if parts:
-                return {"value": f"{parts.group(1)} {parts.group(2)} {parts.group(3)}", "status": "extracted"}
-        
-        # 1b. Any DD Month YYYY in tail (signature block date)
+
+        # An explicit cue ("the order is dated X") is the strongest signal
+        # available, and it must accept every date spelling the corpus uses.
+        # Pairing the cue only with DMY missed "The order is dated 22.05.2023",
+        # so the explicit rule silently did nothing on a document that states
+        # its order date outright, and the fallback scan returned the FIR date
+        # instead -- an earlier event in the same file. The cue is what makes a
+        # date identifiable as the judgment's own; when it is present, take the
+        # date in ANY of the supported forms rather than giving up on it.
+        CUE = (r'(?:order\s+(?:is\s+|was\s+)?(?:dated|passed)|decided\s+on|dated\s+(?:this|the)?|'
+               r'pronounced\s+on|judgment\s+(?:is\s+)?dated|date\s+of\s+(?:decision|order|judgment))')
+        CUE_ANY = re.compile(rf'{CUE}\s*:?\s*(?:on\s+)?({DMY}|{MDY}|{NUMERIC})', re.I)
+
+        def _canon_month(name: str) -> str:
+            """Canonical month spelling from any accepted abbreviation.
+
+            A signature block is set in caps, so "12 OCTOBER 2024" was returned
+            verbatim while the same date in a narrative came back as
+            "12 October 2024". Two spellings of one date defeat equality
+            checks downstream, so the field is normalised at the source.
+            """
+            n = name.strip().lower()[:3]
+            for full in _MONTH_NAMES:
+                if full[:3] == n:
+                    return full
+            return name.strip().title()
+
+        def _from_dmy(m: re.Match[str]) -> dict[str, Any]:
+            return {"value": f"{int(m.group(1)):02d} {_canon_month(m.group(2))} {m.group(3)}",
+                    "status": "extracted"}
+
+        def _from_cue(scope: str) -> dict[str, Any] | None:
+            m = CUE_ANY.search(scope)
+            if not m:
+                return None
+            got = m.group(1)
+            if dm := re.fullmatch(DMY, got, re.I):
+                return _from_dmy(dm)
+            if md := re.fullmatch(MDY, got, re.I):
+                return _from_mdy(md)
+            if nu := re.fullmatch(NUMERIC, got):
+                return _from_numeric(nu)
+            return None
+
+        # 1a. Explicit cue in the tail (a signature block always wins)
+        if (hit := _from_cue(tail)):
+            return hit
+
+        # 2. Explicit cue anywhere. A cue is evidence wherever it appears -- the
+        # chronological narrative states the order date long before any signature
+        # block, and that statement is more reliable than whichever bare date the
+        # positional fallback would land on first.
+        if (hit := _from_cue(text)):
+            return hit
+
+        # 3. Any DD Month YYYY in tail (signature block date)
         tail_dmy = re.search(DMY, tail, re.I)
         if tail_dmy:
-            return {"value": f"{tail_dmy.group(1)} {tail_dmy.group(2)} {tail_dmy.group(3)}", "status": "extracted"}
-        
-        # 2. Explicit "decided on/dated/pronounced on" in head
+            return _from_dmy(tail_dmy)
+
+        # 4. Explicit-free positional fallback over the head.
         head = text[:6000]
-        head_explicit = re.search(
-            rf'(?:decided\s+on|dated|pronounced\s+on)\s+{DMY}',
-            head, re.I
-        )
-        if head_explicit:
-            parts = re.search(DMY, head_explicit.group(0), re.I)
-            if parts:
-                return {"value": f"{parts.group(1)} {parts.group(2)} {parts.group(3)}", "status": "extracted"}
         
         # 3. Any DD Month YYYY in head (appeal numbers, etc.)
         head_dmy = re.search(DMY, head, re.I)
         if head_dmy:
-            return {"value": f"{head_dmy.group(1)} {head_dmy.group(2)} {head_dmy.group(3)}", "status": "extracted"}
+            return _from_dmy(head_dmy)
 
         # 4. Month-first and purely numeric dates, in tail then head.
         for scope in (tail, head):
