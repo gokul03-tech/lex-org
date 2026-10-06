@@ -168,6 +168,14 @@ def map_section_to_act(
     if act:
         if act.strip().lower() in ('the act', 'act'):
             act = "NDPS Act, 1985" if category == 'criminal' else act
+        elif act.strip().lower() in ('the code', 'code'):
+            # ACT_RE can stop at the bare word "Code" when the document names
+            # no statute after it ("Section 482 of the Code"). Resolve the
+            # generic "Code" by category instead of surfacing it verbatim.
+            act = (
+                "Code of Criminal Procedure, 1973" if category == 'criminal'
+                else "Code of Civil Procedure, 1908"
+            )
         return act
 
     num_str = _num(sec)

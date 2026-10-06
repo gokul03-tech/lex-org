@@ -108,9 +108,24 @@ PATS = [
     r'(Writ Petition\s*(?:\([A-Za-z]+\))?\s*No\.?\s*[\d/]+(?:\s+of\s+\d{4})?)'
 ]
 
+# A disclaimer line that only *mentions* the word "court" ("... not an official
+# court record"). Matched by the caption scan below and returned verbatim as if
+# it were the name of the court; skipped so the real court line can be found.
+_COURT_DISCLAIMER_RE = re.compile(
+    r'ILLUSTRATIVE\s+ONLY|FICTIONAL|NOT\s+AN\s+OFFICIAL|EDUCATIONAL|ACADEMIC',
+    re.I,
+)
+# A dossier states its court as a labelled field rather than a caption heading:
+#   "Illustrative court: Court of the Principal District Judge, ..."
+# The label sits well past the first few caption lines, so it needs its own pass.
+_COURT_LABEL_RE = re.compile(r'\bcourt\s*:\s*([^\n|]+)', re.I)
+
+
 def extract_court_name(head: str, text: str) -> str | None:
     lines = [l.strip() for l in head.split('\n') if l.strip()]
     for line in lines[:4]:
+        if _COURT_DISCLAIMER_RE.search(line):
+            continue
         if 'COURT' in line.upper():
             cu = line.upper()
             if 'BOMBAY' in cu: return 'High Court of Judicature at Bombay'
@@ -121,6 +136,24 @@ def extract_court_name(head: str, text: str) -> str | None:
             if 'KARNATAKA' in cu: return 'High Court of Karnataka'
             if 'ALLAHABAD' in cu: return 'High Court of Judicature at Allahabad'
             return re.sub(r'^IN THE\s+', '', line, flags=re.I).strip().title()
+    for line in lines:
+        if _COURT_DISCLAIMER_RE.search(line):
+            continue
+        lm = _COURT_LABEL_RE.search(line)
+        if not lm:
+            continue
+        cand = lm.group(1).strip(' .,;-')
+        if not cand or _COURT_DISCLAIMER_RE.search(cand):
+            continue
+        cu = cand.upper()
+        if 'BOMBAY' in cu: return 'High Court of Judicature at Bombay'
+        if 'DELHI' in cu: return 'High Court of Delhi at New Delhi'
+        if 'SUPREME COURT' in cu: return 'Supreme Court of India'
+        if 'MADRAS' in cu: return 'High Court of Judicature at Madras'
+        if 'CALCUTTA' in cu: return 'High Court of Calcutta'
+        if 'KARNATAKA' in cu: return 'High Court of Karnataka'
+        if 'ALLAHABAD' in cu: return 'High Court of Judicature at Allahabad'
+        return cand if any(ch.islower() for ch in cand) else cand.title()
     m = re.search(r'IN THE ([A-Z\s,]+COURT[A-Z\s,]*|SUPREME COURT OF INDIA)', head, re.I)
     if m:
         cu = m.group(1).upper()
@@ -498,9 +531,44 @@ def bind_sections(text: str) -> list[dict[str, Any]]:
     out = []
     ACT_PAT = r'([A-Z][A-Za-z.\s(),&-]{2,90}?(?:Act|Sanhita|Adhiniyam|Code|Constitution|Regulation)s?(?:\s*\([A-Za-z\s]+\))?(?:,?\s?(?:19|20)\d{2})?|NDPS\s+Act|IT\s+Act|BNSS|BSA|BNS|CPC|CrPC|IPC)'
     
+    # The Act may be named BEFORE the marker instead of after it: "IPC Sections
+    # 420, 468 and 471, and IT Act Section 66D". The pattern reads forward only,
+    # so that list was bound to the NEXT Act the sentence mentions and IPC
+    # 420/468/471 surfaced as provisions of the IT Act. A qualifier sitting
+    # immediately before "Sections" governs, unless the list carries its own
+    # "of <Act>", which is the explicit attachment.
+    _LEAD_ACT = re.compile(
+        r'\b(IPC|CrPC|CPC|IEA|BNS|BNSS|BSA|IT\s+Act|NDPS\s+Act|'
+        r'Indian\s+Penal\s+Code|Code\s+of\s+Criminal\s+Procedure|'
+        r'Code\s+of\s+Civil\s+Procedure|Information\s+Technology\s+Act|'
+        r'Indian\s+Evidence\s+Act|Bharatiya\s+Nyaya\s+Sanhita|'
+        r'Bharatiya\s+Nagarik\s+Suraksha\s+Sanhita|'
+        r'Bharatiya\s+Sakshya\s+Adhiniyam)\s*$',
+        re.I,
+    )
+    _LEAD_NAMES = {
+        'ipc': 'Indian Penal Code', 'indianpenalcode': 'Indian Penal Code',
+        'crpc': 'Code of Criminal Procedure',
+        'codeofcriminalprocedure': 'Code of Criminal Procedure',
+        'cpc': 'Code of Civil Procedure', 'codecivilprocedure': 'Code of Civil Procedure',
+        'iea': 'Indian Evidence Act', 'indianevidenceact': 'Indian Evidence Act',
+        'itact': 'Information Technology Act',
+        'informationtechnologyact': 'Information Technology Act',
+        'ndpsact': 'NDPS Act',
+        'bns': 'Bharatiya Nyaya Sanhita', 'bharatiyanyayasanhita': 'Bharatiya Nyaya Sanhita',
+        'bnss': 'Bharatiya Nagarik Suraksha Sanhita',
+        'bharatiyanagariksurakshasanhita': 'Bharatiya Nagarik Suraksha Sanhita',
+        'bsa': 'Bharatiya Sakshya Adhiniyam',
+        'bharatiyasakshyaadhiniyam': 'Bharatiya Sakshya Adhiniyam',
+    }
+
     # 1. Forward pattern: Section X of Act
     for m in re.finditer(r'(?:Sections?|Sec\.?)\s+([0-9A-Za-z(),\s&and/-]+?)\s+(?:of\s+(?:the\s+)?)?' + ACT_PAT, n):
-        act = norm_act(m.group(2))
+        lead = _LEAD_ACT.search(n[max(0, m.start() - 48):m.start()])
+        if lead and not re.search(r'\bof\b', n[m.end(1):m.start(2)], re.I):
+            act = norm_act(_LEAD_NAMES.get(re.sub(r'\s+', '', lead.group(1)).lower(), lead.group(1)))
+        else:
+            act = norm_act(m.group(2))
         secs = re.findall(r'[0-9]+[A-Za-z]?(?:\([0-9A-Za-z]+\))*', m.group(1))
         # "of the Code of Criminal Procedure, 1973" puts the Act's year in the
         # same span as the section list, which yielded a phantom "Section 1973
@@ -1045,6 +1113,15 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
     for s in split_sentences(n):
         s_clean = s.strip()
         if ' vs ' in s_clean or ' versus ' in s_clean or s_clean.startswith('Bench:'):
+            continue
+
+        # An exhibit-register row ("D-1: Defendant's reply notice — ...", "P-4
+        # to P-6: Delivery challans ...") is a document entry, not a speaker
+        # heading and not an argument. Read as a SECTION_B anchor, "D-1:
+        # Defendant's reply notice" switched the speaker mid-register, and every
+        # later row and commentary sentence in the register was filed as that
+        # side's submission.
+        if re.match(r'^(?:[A-Z]{1,3}-\d+)(?:\s+to\s+(?:[A-Z]{1,3}-)?\d+)?\s*:', s_clean):
             continue
 
         # Dossier section anchor: "8. DEFENCE CONTENTIONS" switches the active

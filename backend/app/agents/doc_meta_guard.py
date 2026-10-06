@@ -184,7 +184,7 @@ _STANDALONE_NOISE_RE = re.compile(
     r'^[ \t]*(?:'
     r'ACADEMIC\s+(?:CASE\s+)?(?:STUDY|DOSSIER|EXERCISE|PURPOSE)[^\n]{0,60}'
     r'|CASE\s+STUDY\s+FOR\s+LEGAL[^\n]{0,40}'
-    r'|ILLUSTRATIVE\s+ONLY'
+    r'|ILLUSTRATIVE\s+ONLY(?:[ \t]*[\u2014\u2013-][^\n]{0,110})?'
     r'|FOR\s+(?:ACADEMIC|EDUCATIONAL|TRAINING)\s+PURPOSES?\s+ONLY'
     r'|CASE\s+FILE\s+SUMMARY'
     r'|END\s+NOTE\s*:?[^\n]{0,80}'

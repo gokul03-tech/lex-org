@@ -671,21 +671,41 @@ class LegalMetadataExtractor:
                r'pronounced\s+on|judgment\s+(?:is\s+)?dated|date\s+of\s+(?:decision|order|judgment))')
         CUE_ANY = re.compile(rf'{CUE}\s*:?\s*(?:on\s+)?({DMY}|{MDY}|{NUMERIC})', re.I)
 
+        # A date attached to a transactional document is that document's date,
+        # not the judgment's. A civil dossier writes "Purchase Order No. ...
+        # dated 18 January 2024" and "Quotation dated 12 January 2024" long
+        # before any order exists; the cue matched there first and reported a
+        # purchase-order date as the decision date of a file that states no
+        # decision date at all. Such a document must yield not_found.
+        TXN = re.compile(
+            r'purchase\s*order|invoice|quotation|challan|\bpo\s*(?:no\.?|number)\b|'
+            r'proforma|packing\s+list|way\s*bill|delivery\s+note',
+            re.I,
+        )
+
+        def _transactional(scope: str, m: re.Match[str]) -> bool:
+            # Both sides are scanned: the cue may sit before the noun
+            # ("... issued Purchase Order No. ... dated 18 January 2024") or
+            # after it ("Purchase Order ... dated 18 January 2024").
+            return bool(TXN.search(scope[max(0, m.start() - 100):m.end() + 100]))
+
         def _from_dmy(m: re.Match[str]) -> dict[str, Any]:
             return {"value": f"{int(m.group(1)):02d} {_canon_month(m.group(2))} {m.group(3)}",
                     "status": "extracted"}
 
         def _from_cue(scope: str) -> dict[str, Any] | None:
-            m = CUE_ANY.search(scope)
-            if not m:
-                return None
-            got = m.group(1)
-            if dm := re.fullmatch(DMY, got, re.I):
-                return _from_dmy(dm)
-            if md := re.fullmatch(MDY, got, re.I):
-                return _from_mdy(md)
-            if nu := re.fullmatch(NUMERIC, got):
-                return _from_numeric(nu)
+            # Every match is considered: the first one may be transactional
+            # while a later one is the order's own date.
+            for m in CUE_ANY.finditer(scope):
+                if _transactional(scope, m):
+                    continue
+                got = m.group(1)
+                if dm := re.fullmatch(DMY, got, re.I):
+                    return _from_dmy(dm)
+                if md := re.fullmatch(MDY, got, re.I):
+                    return _from_mdy(md)
+                if nu := re.fullmatch(NUMERIC, got):
+                    return _from_numeric(nu)
             return None
 
         # 1a. Explicit cue in the tail (a signature block always wins)
@@ -700,26 +720,27 @@ class LegalMetadataExtractor:
             return hit
 
         # 3. Any DD Month YYYY in tail (signature block date)
-        tail_dmy = re.search(DMY, tail, re.I)
-        if tail_dmy:
-            return _from_dmy(tail_dmy)
+        for m in re.finditer(DMY, tail, re.I):
+            if not _transactional(tail, m):
+                return _from_dmy(m)
 
         # 4. Explicit-free positional fallback over the head.
         head = text[:6000]
-        
+
         # 3. Any DD Month YYYY in head (appeal numbers, etc.)
-        head_dmy = re.search(DMY, head, re.I)
-        if head_dmy:
-            return _from_dmy(head_dmy)
+        for m in re.finditer(DMY, head, re.I):
+            if not _transactional(head, m):
+                return _from_dmy(m)
 
         # 4. Month-first and purely numeric dates, in tail then head.
         for scope in (tail, head):
-            mdy = re.search(MDY, scope, re.I)
-            if mdy:
-                return _from_mdy(mdy)
-            numeric = re.search(NUMERIC, scope)
-            if numeric:
-                return _from_numeric(numeric)
+            for m in re.finditer(MDY, scope, re.I):
+                if not _transactional(scope, m):
+                    return _from_mdy(m)
+        for scope in (tail, head):
+            for m in re.finditer(NUMERIC, scope):
+                if not _transactional(scope, m):
+                    return _from_numeric(m)
 
         return {"value": None, "status": "not_found"}
 
