@@ -60,6 +60,15 @@ META_SENTENCE_PATTERNS = [
     r'this\s+(?:dossier|document|section|study\s+guide|exhibit)\s+(?:does\s+not|'
     r'is\s+not\s+intended|does\s+not\s+present|omits|quotes|summari[sz]es|'
     r'separates|avoids|restates)',
+    # The subject may be a *file* or *case* rather than the noun set above.
+    # "This educational file does not independently conclude ..." and "The Suhas
+    # Katti case itself should not be rewritten ..." both describe how the
+    # document was produced, and both were being mined as findings and
+    # limitations -- so a disclaimer was reported as the case's key strength.
+    r'this\s+(?:educational|illustrative|fictional|training|sample|demonstration|'
+    r'practice|teaching)\s+(?:file|case|dossier|document)',
+    r'\b(?:case|file|document)\s+itself\s+should\s+not\s+be\s+'
+    r'(?:rewritten|re-?written|recast|updated|moderni[sz]ed)',
     r'because\s+secondary\s+sources?\s+(?:sometimes|may|often)',
     r'(?:does\s+not|not)\s+present\s+a\s+long\s+quotation',
     r'long\s+quotation\s+as\s+though\s+it\s+were',
@@ -90,6 +99,15 @@ META_SENTENCE_PATTERNS = [
     r'(?:text|extract|file|record|document)s?\b',
     r'\bthe\s+extract\s+does\s+not\s+(?:provide|contain|include|state|specify)\b',
     r"\bthis\s+is\s+the\s+State['\u2019]?s\s+submission,\s*not\s+a\s+(?:final\s+)?finding\b",
+    # Trailing fragment of the methodology paragraph above. "A proper case
+    # analysis should separate ..." is caught, but the sentence that follows it
+    # in the same paragraph ("These categories are not interchangeable.") is
+    # the conclusion of that advice rather than an argument by anyone. It was
+    # the first item in the State's submission column, which misattributes the
+    # document's own editorial instruction to the prosecution.
+    r'\bthese\s+(?:categories|distinctions)\s+are\s+not\s+interchangeable\b',
+    r'\bsuch\s+details\s+should\s+not\s+be\s+added\b',
+    r'\bthose\s+details\s+should\s+not\s+be\s+(?:added|inferred|fabricated)\b',
 ]
 
 _META_SECTION_RE = re.compile(

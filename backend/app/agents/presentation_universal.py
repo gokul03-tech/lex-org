@@ -6,6 +6,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from loguru import logger
+
 norm = lambda t: re.sub(r'\s+', ' ', t or '').strip()
 nows = lambda t: re.sub(r'[^a-z0-9]', '', (t or '').lower())
 F = lambda v, s: {"value": v, "status": s}
@@ -846,11 +848,26 @@ def _conclusion_section(text: str) -> str:
     """
     if not text:
         return text
+    # "ORDER AND DISPOSITION" and friends, plus the numbered-headings this
+    # corpus uses. A possessive or ampersand inside the qualifier must be
+    # accepted, so "COURT'S REASONING" and "BAIL, CONDITIONS AND EFFECT" match;
+    # the old class allowed only letters and spaces, so no such heading was ever
+    # recognised and the function returned the ENTIRE document. Every strength,
+    # gap and action was then mined from the whole file, which is why an
+    # academic disclaimer surfaced as the case's key strength.
+    HEAD = (
+        r'(?:CONCLUSION(?: AND|&|’\')?[A-Z0-9 ,&’\'()/-]*|'
+        r'ORDER AND DISPOSITION|OPERATIVE (?:PART|ORDER)|IN THE RESULT|'
+        r'DISPOSITION|FINDINGS?(?: AND CONCLUSIONS?)?|'
+        # A civil case file states its disposition as a decree rather than a
+        # conclusion ("20. ILLUSTRATIVE JUDGMENT AND DECREE"). Without these the
+        # civil documents had no operative section at all and every downstream
+        # field was mined from the entire file, exhibits and all.
+        r'(?:ILLUSTRATIVE\s+)?JUDGMENT(?: AND DECREE)?|DECREE|'
+        r'[A-Z][A-Z0-9 ,&’\'()]*(?:REASONING|BAIL[,A-Z ]*EFFECT))'
+    )
     m = re.search(
-        r'^[ \t]*(?:\d+\s*[.)]\s*)?'
-        r'(?:CONCLUSION(?: AND|&)?[A-Z ]*|ORDER AND DISPOSITION|'
-        r'OPERATIVE PART|IN THE RESULT|DISPOSITION|FINDINGS?(?: AND CONCLUSIONS?)?)'
-        r'[ \t]*$\n',
+        r'^[ \t]*(?:\d+\s*[.)]\s*)?' + HEAD + r'[ \t]*$\n',
         text, re.I | re.MULTILINE,
     )
     if m:
@@ -869,10 +886,7 @@ def _conclusion_section(text: str) -> str:
     # after the heading is another heading). Try the LAST occurrence instead,
     # which is the real body section.
     for m in reversed(list(re.finditer(
-        r'^[ \t]*(?:\d+\s*[.)]\s*)?'
-        r'(?:CONCLUSION(?: AND|&)?[A-Z ]*|ORDER AND DISPOSITION|'
-        r'OPERATIVE PART|IN THE RESULT|DISPOSITION|FINDINGS?(?: AND CONCLUSIONS?)?)'
-        r'[ \t]*$\n',
+        r'^[ \t]*(?:\d+\s*[.)]\s*)?' + HEAD + r'[ \t]*$\n',
         text, re.I | re.MULTILINE,
     ))):
         section = text[m.end():]
@@ -1201,7 +1215,129 @@ CUES = [
     (r'impugned notification|impugned order|impugned action|impugned measure', 'Impugned Order / Notification')
 ]
 
+_EXHIBIT_REGISTER_RE = re.compile(
+    r'\bEXHIBIT\s+(?:REGISTER|SCHEDULE|LIST|INDEX)\b', re.I)
+
+
+def _exhibit_register_span(text: str) -> tuple[int, int] | None:
+    """Character span of an explicit exhibit register section, if present.
+
+    Bounded by the next numbered heading of the same or higher rank so the
+    register's own lines are read and the following section is not. The
+    enumerated headings this corpus uses ("9. WITNESSES AND EVIDENCE") are
+    what separate the entries from the commentary that follows them.
+    """
+    m = _EXHIBIT_REGISTER_RE.search(text or '')
+    if not m:
+        return None
+    tail = text[m.end():]
+    nxt = re.search(r"\n\s*\d{1,2}\.\s*[A-Z][A-Z &/'’-]{5,}", tail)
+    return (m.end(), m.end() + nxt.start() if nxt else len(text))
+
+
+def extract_exhibit_register(text: str) -> list[dict[str, Any]]:
+    """Read an explicit exhibit register into structured evidence items.
+
+    A register is the document naming its own exhibits, so it is far stronger
+    evidence than inferring exhibit relevance from a keyword hit elsewhere.
+    The generic cue scan found the word "Exhibit" in prose and attached the
+    surrounding commentary to it, which is why the previous output was
+    described as "exhibits mixed with random text": P-2's label came from a
+    cue, but its description was whatever sentence followed a later match.
+    """
+    from app.agents.doc_meta_guard import is_meta_text
+
+    span = _exhibit_register_span(text or '')
+    if not span:
+        return []
+    block = (text or '')[span[0]:span[1]]
+
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    # Two register layouts occur. This corpus writes "Exhibit P-1 — ...";
+    # the civil files write a bare "P-1: ..." with the word "Exhibit" only in
+    # the section heading. Requiring the literal word per entry missed every
+    # line of the civil register, so those files fell back to the keyword scan
+    # and reported the register's *introductory* prose as evidence -- the
+    # "Documentary Exhibits" item whose detail was the sentence explaining that
+    # labels are placeholders.
+    #
+    # Ranges are expanded rather than shown verbatim: "P-4 to P-6: Delivery
+    # challans DC/041, DC/057 and DC/063" is three exhibits, and collapsing it
+    # into one entry both understates the evidence and hides which labels exist.
+    SINGLE = r'(?:([A-Z]{1,3})\s*)?-?\s*(\d+[A-Za-z]?)'
+    ENTRY = re.compile(
+        rf'(?:Exhibit[s]?\s+)?(?:{SINGLE}(?:\s*(?:to|and|[-–—])\s*{SINGLE})?|{SINGLE})'
+        r'\s*[:.)\-–—]\s*'
+        r'(?P<desc>.*?)(?=\n\s*(?:Exhibit[s]?\s+)?[A-Z]{1,3}\s*-?\s*\d|\n\s*\n|$)',
+        re.I | re.S,
+    )
+
+    for m in ENTRY.finditer(block):
+        desc = m.group('desc')
+        # Groups are, in order, the first label's prefix/number then the
+        # optional second label's prefix/number.
+        labels = [(m.group(i) or '', m.group(i + 1)) for i in (1, 3) if m.group(i + 1)]
+        if not labels:
+            continue
+        prefix = labels[0][0] or labels[-1][0]
+        lo = int(re.sub(r'\D', '', labels[0][1]) or 0)
+        hi = int(re.sub(r'\D', '', labels[-1][1]) or lo)
+        if not (1 <= lo <= hi <= 400):
+            continue
+
+        desc = re.sub(r'\s+', ' ', desc).strip(' .;:-')
+        # The register's one-line account. Stop at the first sentence: what
+        # follows an entry is the document discussing the exhibit, not listing it.
+        parts = re.split(r'(?<=[.])\s+(?=[A-Z])', desc)
+        desc = (parts[0] if parts else desc).strip(' .;:-')
+        if len(desc) < 8 or is_meta_text(desc):
+            continue
+
+        for num in range(lo, hi + 1):
+            label = f"{prefix or 'X'}-{num}".upper()
+            if label in seen:
+                continue
+            seen.add(label)
+            side = 'Prosecution' if label.startswith('P') else 'Defence'
+            out.append({
+                'label': f'Exhibit {label}',
+                'reliability': 'HIGH',
+                'detail': desc if desc.lower().startswith(side.lower()) else f'{side}: {desc}',
+            })
+
+        # The description is the register's own one-line account. Stop at the
+        # first sentence: a register entry is "Exhibit P-3 — Seizure panchnama
+        # dated 18.03.2023.", and the sentences after it are the document
+        # discussing the exhibit rather than listing it.
+        desc = re.sub(r'\s+', ' ', m.group(2)).strip(' .;:-')
+        first = re.split(r'(?<=[.])\s+(?=[A-Z])', desc)
+        desc = (first[0] if first else desc).strip(' .;:-')
+        if len(desc) < 8 or is_meta_text(desc):
+            continue
+
+        # P/D carries the party designation (P for prosecution/petitioner-side,
+        # D for defence). Preserve it in the label so the rendered evidence
+        # list cannot present a defence exhibit as the State's.
+        side = 'Prosecution' if label.startswith('P') else 'Defence'
+        out.append({
+            'label': f'Exhibit {label}',
+            'reliability': 'HIGH',
+            'detail': f'{side}: {desc}' if not desc.lower().startswith(side.lower()) else desc,
+        })
+    return out
+
+
 def extract_evidence(text: str) -> list[dict[str, Any]]:
+    from app.agents.doc_meta_guard import is_meta_text
+
+    # An explicit register outranks keyword inference: it is the document's own
+    # enumeration of what was tendered, with no guesswork about relevance.
+    registered = extract_exhibit_register(text)
+    if registered:
+        return registered
+
     n = norm(text)
     items = []
     seen = set()
@@ -1760,7 +1896,17 @@ def gate(report: dict[str, Any], text: str) -> dict[str, Any]:
                     v['status'] = 'not_found'
                     v['value'] = None
             else:
-                if nows(str(val))[:35] not in nt:
+                norm = nows(str(val))
+                grounded = norm[:35] in nt
+                if not grounded:
+                    # Numbers are zero-padded in the extractor but not in the
+                    # document ("05 November 2004" vs "5 November 2004"). Strip
+                    # leading zeros on any number before declaring the value
+                    # ungrounded; a re-check that still misses means it really
+                    # was fabricated.
+                    norm_nz = re.sub(r'(^|\D)0+(?=\d)', r'\1', norm)
+                    grounded = bool(norm_nz) and norm_nz[:35] in nt
+                if not grounded:
                     v['status'] = 'not_found'
                     v['value'] = None
     return report
@@ -1792,8 +1938,22 @@ _ISSUE_ITEM_RE = re.compile(
     r'|(?P<ordinal>(?:First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth))\s*,\s*'
     r'|\(?([0-9]{1,2})\)\s*'
     r'|\[([0-9]{1,2})\]\s*'
-    r')(?P<body>.+)$',
-    re.I | re.MULTILINE,
+    # DOTALL: an issue is a full question, and this corpus hard-wraps it.
+    # "Main question: Whether the FIR allegations, taken at face value,
+    #  disclose cognizable offences under the IPC and IT Act, or whether the
+    #  matter is merely a civil dispute given a criminal colour." spans three
+    # lines. Matching a single line cut it at the first comma, yielding the
+    # truncated "taken at fa" that was reported as a 40% issue score. The
+    # lookahead below stops the capture at the next item or section instead.
+    r')(?P<body>.+?)'
+    r'(?=\n\s*(?:'
+    r'(?:Issue|Question|Point)\s*(?:[IVXLC]+|\d+)\s*[:.)]'
+    r'|(?:Main|Central|Key)\s+question\s*[:.)]'
+    r'|(?:First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth)\s*,'
+    r'|\(?\d{1,2}\)\s*|\[\d{1,2}\]\s*'
+    r'|[A-Z][A-Za-z ]{2,24}:\s'
+    r')|\n\s*\n|\Z)',
+    re.I | re.MULTILINE | re.DOTALL,
 )
 
 # An issue statement must actually be a question the law must answer.
@@ -2174,6 +2334,47 @@ def _act_named(expected_act: str, pool: str) -> bool:
 def build_analysis(text: str) -> dict[str, Any]:
     cat = detect_category(text)
     meta = extract_metadata(text)
+    # The regex extractor is the trusted path for standard judgments: it already
+    # returns the correct title/date/case for them. It only loses on academic/
+    # illustrative files where the docket label runs into the FIR (case number
+    # becomes the underlying FIR) and the decision date sits outside its short
+    # tail500 + header scan. To fix exactly that without regressing standard
+    # judgments, canonical values are consulted only on those two fields and
+    # only when the regex value is missing or is a lower-court FIR that the
+    # canonical extractor promotes to the petition/appeal number.
+    try:
+        from app.document_pipeline.metadata_extractor import LegalMetadataExtractor
+        canon = LegalMetadataExtractor().extract(text, filename="") or {}
+
+        def _canon(key: str) -> Any:
+            v = canon.get(key)
+            return v if isinstance(v, dict) and v.get("value") else None
+
+        # decision_date / date: keep the regex value whenever it found one;
+        # canonical fills only a genuine gap (academic dossiers).
+        for _k in ("decision_date", "date"):
+            cur = meta.get(_k)
+            if (not cur or not cur.get("value")) and _canon(_k):
+                meta[_k] = dict(_canon(_k))
+
+        # case_number: promote an underlying FIR/lower-court number to the main
+        # petition/appeal only when the canonical extractor resolved something
+        # better; leave correct regex values (e.g. "C.R. No.", "C.C. No.", a
+        # proper petition number) untouched so standard judgments never change.
+        cur_no = meta.get("case_number")
+        canon_no = _canon("case_number")
+        cur_val = (cur_no or {}).get("value") or ""
+        if canon_no and (
+            not cur_no or not cur_val
+            or (
+                re.search(r'\bfir\b', str(cur_val), re.I)
+                and not re.search(r'\bfir\b', str(canon_no.get("value")), re.I)
+            )
+        ):
+            meta["case_number"] = dict(canon_no)
+    except Exception as exc:
+        logger.warning(f"[build_analysis] canonical metadata override failed: {exc}")
+
     secs, precs = bind_sections(text), extract_precedents(text)
     sa, sb = extract_submissions(text)
     evi = extract_evidence(text)

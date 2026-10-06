@@ -33,6 +33,48 @@ You are a legal metadata extractor. Read the HEADER and SIGNATURE BLOCK of the p
 - DO NOT extract citations of precedents mentioned in the body text, Section 17, or the References section (like Shreya Singhal).
 
 OUTPUT STRICT JSON ONLY.
+
+
+🌐 UNIVERSAL EXTRACTION PROTOCOL - LEXORCH-KG
+
+The following rules are mandatory for ALL document types (Standard Judgments, Academic Case Dossiers, Illustrative/Fictional Files, Civil Suits, Criminal Appeals, Insolvency cases). They OVERRIDE any heuristic keyword shortcuts when extracting via LLM.
+
+### RULE 1: NOISE & DISCLAIMER FILTERING (MANDATORY)
+- Identify and IGNORE all academic/illustrative/fictional disclaimers. Do NOT extract them as legal arguments, court findings, strategic grounds, strengths, weaknesses, conclusions, or action items.
+- Explicitly exclude any text containing: "This is an academic case study", "Illustrative only", "illustrative case file", "This educational file does not independently conclude", "fictional case file", "case file is fictional", "does not independently conclude that any offence is established", "case itself should not be rewritten", "This document is prepared for academic purposes".
+- Treat such disclaimers as document metadata noise only.
+
+### RULE 2: METADATA (DATES, NUMBERS, PROCEDURAL STAGE)
+1. DECISION DATE: Extract ONLY from the SIGNATURE BLOCK (very end of document, typically last 500 characters). If a date appears in the first 20% of the text (FIR date, complaint date, transaction date, citation date), treat it as an EVENT date, NOT the judgment/order date.
+2. CASE NUMBER: Extract the MAIN appellate/petition number (e.g., "Criminal Petition No. 2458 of 2023", "O.S. No. 142 of 2025", "Criminal Appeal No."). NEVER use an underlying FIR number or lower court number as the main case number.
+3. PROCEDURAL STAGE: Identify the actual current proceeding (e.g., "Section 482 Quashing Petition", "Civil Suit for Recovery", "Criminal Appeal", "Writ Petition", "Regular Bail/Anticipatory Bail") rather than the underlying crime/dispute.
+
+### RULE 3: ISSUE EXTRACTION (COMPLETE, NO TRUNCATION)
+1. Trigger on: "Main question:", "We frame the following issues", "Questions considered", "Issues for consideration", "Point for determination", "First, whether", "Issue 1:", "The points that arise for determination are".
+2. CRITICAL: Read each issue to COMPLETION. Do NOT stop at commas, the word "or", semicolons, or line breaks. Extract the full question until you reach a period followed by a capital letter OR the next section header (numbered heading) OR a double newline. 
+3. Extract ALL issues present, not just the first one.
+
+### RULE 4: COUNSEL ATTRIBUTION (STRICT COLUMN ASSIGNMENT)
+Assign strictly by SPEAKER or SECTION HEADER. Never infer by argument content.
+
+- PETITIONER/PLAINTIFF/APPLICANT column: ONLY text under/after headers like "Petitioner's Submissions", "Petitioners' Submissions", "Plaintiff's Final Written Submissions", "Applicant's Submissions", "Appellant's Arguments" OR spoken by "Counsel for the petitioners/appellant/plaintiff/applicant", "Learned counsel for the petitioner(s)", "Mr./Ms. ... appearing for the petitioner(s)".
+- RESPONDENT/STATE/DEFENDANT column: ONLY text under/after headers like "State's Submissions", "Respondent's Submissions", "Defendant's Final Written Submissions", "Defendant's Written Statement", "Prosecution Submissions", "Respondent's Arguments" OR spoken by "Additional Public Prosecutor", "Public Prosecutor", "Counsel for the State", "Learned counsel for the respondent/defendant".
+- PROHIBITION: If text says "Counsel for the petitioners submits X", it MUST go to Petitioner column. If it says "State/Prosecution argues Y", it MUST go to State column. Never swap them.
+
+### RULE 5: EVIDENCE & EXHIBITS (STRUCTURED ONLY)
+1. Extract ONLY from explicit sections: "EXHIBIT REGISTER", "List of Documents", "DOCUMENTARY EXHIBITS", "Exhibits", "Documentary Evidence Register".
+2. Extract items formatted as "Exhibit P-1 — [description]", "P-1: [description]", "Exhibit D-2 - [description]", "P-4 to P-6: [description]" (expand ranges). 
+3. Do NOT extract random narrative sentences, commentary, or meta-text as evidence records. Return structured list only if such a register exists.
+
+### RULE 6: CONCLUSION, DISPOSITION & ACTION PLAN
+1. Look for sections: "ORDER", "CONCLUSION", "CONCLUSION AND ORDER", "JUDGMENT AND DECREE", "Final Order", "OPERATIVE ORDER", "IN THE RESULT", "DISPOSITION".
+2. Extract the specific operative directives (e.g., "The appeal is allowed", "The accused is released on bail", "Bail is granted subject to...", "The suit is decreed for...", "The petition is dismissed/allowed") — not registry transmission or procedural boilerplate unless it is the core operative direction.
+3. Do NOT extract academic commentary as the main conclusion.
+
+### GENERAL SAFETY
+- If information is not found after applying these rules, return empty ([]) or null as appropriate. Do NOT invent, fabricate, or hallucinate content.
+- Prioritize section-header boundaries over free-form text. When in doubt, exclude noise rather than include it.
+
 """
 
 class LegalMetadataExtractor:
@@ -587,6 +629,20 @@ class LegalMetadataExtractor:
             'August', 'September', 'October', 'November', 'December',
         )
 
+        def _canon_month(name: str) -> str:
+            """Canonical month spelling from any accepted abbreviation.
+
+            A signature block is set in caps, so "12 OCTOBER 2024" was returned
+            verbatim while the same date written in a narrative came back as
+            "12 October 2024". Two spellings of one date defeat equality checks
+            downstream, so the field is normalised at the source.
+            """
+            n = name.strip().lower()[:3]
+            for full in _MONTH_NAMES:
+                if full[:3] == n:
+                    return full
+            return name.strip().title()
+
         def _from_numeric(m: re.Match[str]) -> dict[str, Any]:
             # The contract for this field is 'DD Month YYYY'. A numeric date
             # returned "22 05 2023", so the same judgment produced two
@@ -614,20 +670,6 @@ class LegalMetadataExtractor:
         CUE = (r'(?:order\s+(?:is\s+|was\s+)?(?:dated|passed)|decided\s+on|dated\s+(?:this|the)?|'
                r'pronounced\s+on|judgment\s+(?:is\s+)?dated|date\s+of\s+(?:decision|order|judgment))')
         CUE_ANY = re.compile(rf'{CUE}\s*:?\s*(?:on\s+)?({DMY}|{MDY}|{NUMERIC})', re.I)
-
-        def _canon_month(name: str) -> str:
-            """Canonical month spelling from any accepted abbreviation.
-
-            A signature block is set in caps, so "12 OCTOBER 2024" was returned
-            verbatim while the same date in a narrative came back as
-            "12 October 2024". Two spellings of one date defeat equality
-            checks downstream, so the field is normalised at the source.
-            """
-            n = name.strip().lower()[:3]
-            for full in _MONTH_NAMES:
-                if full[:3] == n:
-                    return full
-            return name.strip().title()
 
         def _from_dmy(m: re.Match[str]) -> dict[str, Any]:
             return {"value": f"{int(m.group(1)):02d} {_canon_month(m.group(2))} {m.group(3)}",
@@ -817,7 +859,7 @@ class LegalMetadataExtractor:
         # brackets ("Writ Petition (Civil) No. 456 of 2023"). The year may be
         # written "of 2023" or "/2019".
         _DOCKET = (
-            r"(?:Special\s+Case|Criminal\s+Appeal|Civil\s+Appeal|Appeal|"
+            r"(?:Special\s+Case|Criminal\s+Petition|Criminal\s+Appeal|Civil\s+Appeal|Civil\s+Petition|Appeal|"
             r"Writ\s+Petition|Contempt\s+Petition|Review\s+Petition|"
             r"W\.?P\.?|S\.?L\.?P\.?|R\.?A\.?|C\.?R\.?L\.?A\.?|C\.?R\.?A\.?|"
             r"C\.?R\.?O\.?L\.?|C\.?R\.?M\.?A\.?|C\.?C\.?|C\.?R\.?C\.?|"

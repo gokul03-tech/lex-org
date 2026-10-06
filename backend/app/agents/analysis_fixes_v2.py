@@ -78,6 +78,8 @@ def norm_act(name: str) -> str:
         return "Insurance Act, 1938"
     if 'penal' in n or 'ipc' in n:
         return "Indian Penal Code, 1860"
+    if 'civilprocedure' in n or 'cpc' in n:
+        return "Code of Civil Procedure, 1908"
     if 'criminal' in n or 'crpc' in n:
         return "Code of Criminal Procedure, 1973"
     if 'constitution' in n:
@@ -87,9 +89,16 @@ def norm_act(name: str) -> str:
 # "Section 63 of the X Act" and the plural form "Sections 469 and 509 of the
 # Indian Penal Code", which the singular-only pattern never matched, leaving both
 # sections reported as "Statute (verify)".
+#
+# The tail alternation must continue past "Code"/"Constitution" into "of ...":
+# the lazy body otherwise stopped at the first keyword, so "Section 482 of the
+# Code of Criminal Procedure, 1973" bound section 482 to the literal string
+# "the Code", which the resolver then surfaced as the section's Act.
 ACT_RE = (
     r'Sections?\s+(\d+(?:\([\w]+\))*)\s*(?:(?:,|and|&)\s*\d+(?:\([\w]+\))*)*'
-    r'\s+of\s+(?:the\s+)?([A-Z][A-Za-z0-9.\s(){},–-]{2,80}?(?:Act|Sanhita|Adhiniyam|Code|Constitution))'
+    r'\s+of\s+(?:the\s+)?([A-Z][A-Za-z0-9.\s(){},–-]{2,80}?'
+    r'(?:Act|Sanhita|Adhiniyam|Code|Constitution)'
+    r'(?:\s+of\s+[A-Za-z][A-Za-z\s]{2,40})?)'
 )
 
 def _num(sec: str) -> str:
@@ -116,6 +125,18 @@ BNS_DEFAULT = {111, 302, 307, 318, 319, 351, 352}
 BNSS_DEFAULT = {480, 482, 483, 528}
 BSA_DEFAULT = {61, 62, 63, 64, 65}
 IT_DEFAULT = {"66", "66A", "66B", "66C", "66D", "67", "67A", "43"}
+
+# Well-known provisions whose Act is fixed by law, regardless of document era
+# or category. Final fallback in map_section_to_act for sections no table above
+# claims ("Section 420" in a criminal petition previously resolved to the
+# placeholder "Statute (verify)" instead of the IPC section it cites).
+STATUTE_MAPPING = {
+    "420": "Indian Penal Code, 1860",
+    "468": "Indian Penal Code, 1860",
+    "471": "Indian Penal Code, 1860",
+    "482": "Code of Criminal Procedure, 1973",
+    "66D": "Information Technology Act, 2000",
+}
 
 # Constitutional articles. Articles belong to the Constitution unless the
 # document names another instrument; without this an environmental judgment
@@ -181,6 +202,14 @@ def map_section_to_act(
             return "Indian Evidence Act, 1872"
         if n in CRPC_DEFAULT:
             return "Code of Criminal Procedure, 1973"
+
+    # Post-processing dictionary: provisions that belong to a named Act but
+    # never reach a default table above, so they fell through to the
+    # placeholder ("Section 420" → "Statute (verify)"). Consulted last so the
+    # sanhita-aware defaults keep deciding bare "482" for BNSS-era documents.
+    mapped = STATUTE_MAPPING.get(root) or STATUTE_MAPPING.get(num_str)
+    if mapped:
+        return mapped
 
     return "Statute (verify)"
 
@@ -544,12 +573,19 @@ def _mined_sentences(text: str, cue: re.Pattern[str]) -> list[str]:
     if not text:
         return []
     from app.agents.presentation_universal import SENT
+    from app.agents.doc_meta_guard import is_meta_text
 
     out: list[str] = []
     seen: set[str] = set()
     for raw in SENT(text):
         s = _clean_sentence(raw)
         if len(s) < 40 or _NON_SUBSTANTIVE_RE.match(s):
+            continue
+        # The document talking about itself is not a finding or a limitation of
+        # the case. "This educational file does not independently conclude..."
+        # matched the finding cue and became the sole entry under Key
+        # Strengths, which is the opposite of a strength: it is a disclaimer.
+        if is_meta_text(s):
             continue
         if not cue.search(s):
             continue

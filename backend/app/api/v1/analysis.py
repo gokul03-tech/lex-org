@@ -212,7 +212,7 @@ def _stored_doc_text(doc: Document) -> str:
     return DocumentParser._clean_text(doc.parsed_text or doc.raw_text or "")
 
 
-def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Document) -> tuple[Analysis, Report]:
+async def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Document) -> tuple[Analysis, Report]:
     doc_text = _stored_doc_text(doc)
     
     # Extract articles (literal only - no hallucinated fallbacks)
@@ -529,6 +529,28 @@ def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Docu
 
     items_list = extract_evidence_items(doc_text)
 
+    # Universal Rule 5: structured registers only, never random narrative
+    # snippets. The deterministic extractor owns every row it can prove, so the
+    # LLM is consulted only when the document enumerates no exhibit label at
+    # all. Rows that survive the call are re-validated against an exhibit-label
+    # pattern and tagged source='ai'; a model failure leaves items_list as-is.
+    if not any((it or {}).get("exhibit") for it in items_list if isinstance(it, dict)):
+        try:
+            from app.agents.analysis import llm_extract_evidence_as_fallback
+
+            ai_exhibits = await llm_extract_evidence_as_fallback(doc_text)
+        except Exception as exc:
+            logger.warning(f"[EvidenceFallback] unavailable, keeping deterministic rows: {exc}")
+            ai_exhibits = []
+        if ai_exhibits:
+            # An explicit "No specific exhibits" placeholder is the
+            # deterministic extractor's way of saying there is no register;
+            # the LLM rows replace it rather than appearing beneath it.
+            items_list = [
+                it for it in items_list
+                if not (isinstance(it, dict) and (it.get("type") or "") == "No specific exhibits")
+            ] + ai_exhibits
+
     # Clean header title
     raw_case_title = _val("case_title") or case.title
     clean_title = re.sub(r'\s+on\s+\d{1,2}.*$', '', raw_case_title).strip()
@@ -666,7 +688,7 @@ async def analyze_case(
         )
 
         # Map and save
-        analysis, report = map_pipeline_result_to_analysis(state, case, doc)
+        analysis, report = await map_pipeline_result_to_analysis(state, case, doc)
         db.add(analysis)
         db.add(report)
 
@@ -1057,7 +1079,7 @@ async def stream_analysis(
             )
             analysis = a_result.scalars().first()
             
-            new_analysis, new_report = map_pipeline_result_to_analysis(state, case, doc)
+            new_analysis, new_report = await map_pipeline_result_to_analysis(state, case, doc)
             if not analysis:
                 db.add(new_analysis)
                 db.add(new_report)

@@ -17,6 +17,7 @@ from typing import Any
 from loguru import logger
 
 from app.agents.supervisor import AgentState
+from app.agents.universal_extraction_rules import UNIVERSAL_EXTRACTION_PROMPT
 from app.llm.llama_cpp_provider import is_mock_fallback_active
 
 
@@ -52,7 +53,7 @@ CRITICAL INSTRUCTIONS:
    Example:
    1. Whether the plaintiff proves a binding contract under the Purchase Order.
    2. Main question: Whether the FIR allegations disclose cognizable offences or are merely a civil dispute.
-"""
+""" + UNIVERSAL_EXTRACTION_PROMPT
 
 # Fallback-only. Issued as a SEPARATE call, and only when the deterministic
 # extractors (_court_framed_issues, _enumerated_issues) return nothing, so a
@@ -74,7 +75,7 @@ CRITICAL RULES:
    - Numbered issues (Issue 1, Issue 2, etc.)
 3. Extract ALL issues. Do NOT stop after 2 or 3. Do NOT truncate mid-sentence.
 4. Return a clean, numbered list.
-"""
+""" + UNIVERSAL_EXTRACTION_PROMPT
 
 # Issues whose text never appears in the document are not paraphrases of the
 # source, they are inventions, and must be dropped even from an LLM response.
@@ -148,9 +149,10 @@ async def llm_extract_issues_as_fallback(text: str) -> list[dict[str, Any]]:
             },
             system_prompt=QWEN_SYSTEM_PROMPT,
             temperature=0.1,
-            # 900 leaves room for ~12 full issues plus the JSON scaffolding;
-            # a tighter budget silently cut the tail mid-issue.
-            max_tokens=900,
+            # 1800 leaves room for every full-length issue. A tighter budget
+            # (900) silently cut the tail mid-issue on academic dossiers that
+            # frame 5+ issues.
+            max_tokens=1800,
         )
 
         raw = result.get("legal_issues") or []
@@ -182,6 +184,123 @@ async def llm_extract_issues_as_fallback(text: str) -> list[dict[str, Any]]:
         return out
     except Exception as exc:
         logger.warning(f"[IssueFallback] unavailable, reporting no issues: {exc}")
+        return []
+
+
+# Exhibit labels are the only thing that counts as evidence structure. Kept in
+# sync with _EXHIBIT_RE in analysis_fixes_v2 so an LLM row and a regex row are
+# indistinguishable to the UI.
+_EVIDENCE_LABEL_RE = re.compile(
+    r"^\s*(?:(?:ex(?:h)?ibit|ex|annexure|ann?x)\.?\s*)?(?P<side>PW|DW|[PDKA])"
+    r"[\s\-‐-―_.]*\d{1,4}\s*[-:—–]?\s*(?P<desc>.+)$",
+    re.IGNORECASE,
+)
+_EVIDENCE_SIDE_ROLE = {
+    "P": "Prosecution / Plaintiff / Petitioner",
+    "PW": "Prosecution Witness",
+    "D": "Defence / Defendant / Respondent",
+    "DW": "Defence Witness",
+    "K": "Complainant",
+    "A": "Annexure",
+}
+
+
+async def llm_extract_evidence_as_fallback(text: str) -> list[dict[str, Any]]:
+    """Generate exhibit rows with the LLM. Only for register-less documents.
+
+    Mirrors ``llm_extract_issues_as_fallback``: the deterministic extractors run
+    first and keep every row they find, so a standard judgment is never routed
+    through the model. This is called solely when no exhibit label exists in the
+    document at all.
+
+    Every returned row is re-validated against ``_EVIDENCE_LABEL_RE`` and the
+    side letter must be present, so an invented "Exhibit P-99" the model made up
+    without a matching document label is dropped rather than displayed as fact.
+
+    Any model failure yields ``[]``.
+    """
+    text = text or ""
+    if len(text) < 200:
+        return []
+    try:
+        from app.llm.qwen import get_qwen_provider, QWEN_SYSTEM_PROMPT
+
+        provider = get_qwen_provider()
+        result = provider.generate_structured(
+            f"{EVIDENCE_LLM_FALLBACK_PROMPT}\n\nCase Document:\n{_llm_clean(text)[:14000]}",
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "exhibits": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "exhibit": {"type": "string"},
+                                "description": {"type": "string"},
+                            },
+                            "required": ["exhibit", "description"],
+                        },
+                    },
+                },
+                "required": ["exhibits"],
+            },
+            system_prompt=QWEN_SYSTEM_PROMPT,
+            temperature=0.1,
+            # Matches the issue budget so a long register is not cut mid-row.
+            max_tokens=1800,
+        )
+
+        raw = result.get("exhibits") or []
+        if isinstance(raw, str):
+            raw = [ln for ln in re.split(r"\n+", raw) if ln.strip()]
+
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in raw:
+            # Accept either the schema object or a bare "P-1 - description"
+            # line, which grammar-constrained generation can emit instead.
+            bare_line = not isinstance(item, dict)
+            if bare_line:
+                label = ""
+                desc = re.sub(r"\s+", " ", str(item)).strip()
+            else:
+                label = re.sub(r"\s+", " ", str(item.get("exhibit") or "")).strip()
+                desc = re.sub(r"\s+", " ", str(item.get("description") or "")).strip()
+            desc = desc.strip(" -–—:;,.[]")
+
+            lm = _EVIDENCE_LABEL_RE.match(f"{label} - {desc}" if label else desc)
+            if not lm:
+                continue
+            if bare_line:
+                # The whole line was the label too; keep only its description.
+                desc = re.sub(r"\s+", " ", lm.group("desc") or "").strip(" -–—:;,.[]")
+            if len(desc) < 3:
+                continue
+
+            side = lm.group("side").upper()
+            num_m = re.search(r"\d{1,4}", lm.group(0))
+            if not num_m:
+                continue
+            code = f"{side}-{num_m.group(0)}"
+            if code in seen:
+                continue
+            seen.add(code)
+            # A generated description is not a verbatim quote, so `source='ai'`
+            # keeps the UI from presenting it as a document fact.
+            out.append({
+                "type": f"Exhibit {code}",
+                "description": desc,
+                "exhibit": code,
+                "tendered_by": _EVIDENCE_SIDE_ROLE.get(side, "Record"),
+                "reliability": "AI-INFERRED — no exhibit register found in document",
+                "source": "ai",
+                "generated": True,
+            })
+        logger.info(f"[EvidenceFallback] LLM produced {len(out)} exhibit(s) (deterministic found none)")
+        return out
+    except Exception as exc:
+        logger.warning(f"[EvidenceFallback] unavailable, reporting no exhibits: {exc}")
         return []
 
 COUNSEL_EXTRACTION_PROMPT = """
@@ -227,7 +346,31 @@ RULES FOR ACADEMIC DOSSIERS (no counsel names present):
 OUTPUT:
 - Petitioner/Defense Submissions: [actual numbered arguments]
 - Respondent/Prosecution Submissions: [actual numbered arguments]
-"""
+""" + UNIVERSAL_EXTRACTION_PROMPT
+
+# Fallback-only. Issued as a SEPARATE call, and only when the deterministic
+# extractors found NO exhibit register (no "Exhibit P-1"-style label anywhere).
+# A standard judgment that does enumerate its exhibits keeps its verbatim,
+# zero-hallucination rows; only register-less academic/illustrative files and
+# narrative-style civil records reach the model.
+EVIDENCE_LLM_FALLBACK_PROMPT = """
+You are extracting the DOCUMENTARY EXHIBITS / EXHIBIT REGISTER from this case file.
+
+CRITICAL RULES:
+1. Extract ONLY items that the document itself enumerates with an identifier.
+   Accept these label formats: "Exhibit P-1 - ...", "P-1: ...", "Ex. D2 - ...",
+   "Exhibit D-2 - ...", "PW-1 - ...", "Annexure A1 - ...".
+2. Expand ranges: "P-4 to P-6 - [description]" becomes three separate rows
+   (P-4, P-5, P-6) sharing that description.
+3. For each item, "tendered_by" must be derived ONLY from the side letter in the
+   label: P / PW = Prosecution / Plaintiff / Petitioner, D / DW = Defence /
+   Defendant / Respondent, K = Complainant, A = Annexure.
+4. If the document has NO enumerated exhibit list anywhere, return an empty
+   array. Do NOT invent exhibits, and do NOT return narrative sentence snippets
+   such as "the FIR was placed on record" as if they were exhibit records.
+5. Ignore academic commentary, disclaimers, and any text from a References or
+   Bibliography section.
+""" + UNIVERSAL_EXTRACTION_PROMPT
 
 STRATEGY_PROMPT = """
 You are analyzing a legal case for adversarial debate and strategy.
@@ -251,7 +394,7 @@ OUTPUT FORMAT:
 - Opposing Counsel: [Respondant's actual arguments]
 - Judicial Rebuttal: [Generate based on cited precedents ONLY]
 - Action Plan: [List of actionable procedural steps]
-"""
+""" + UNIVERSAL_EXTRACTION_PROMPT
 
 
 # ── Statute normalisation ───────────────────────────────────
@@ -687,7 +830,10 @@ Additional Query: {query}
             },
             system_prompt=QWEN_SYSTEM_PROMPT,
             temperature=0.1,
-            max_tokens=520,
+            # This single call also returns counsel_submissions, so it needs
+            # the Issue/Counsel budget: 520 cut every argument list off
+            # mid-sentence and swapped columns looked like empty fields.
+            max_tokens=1800,
         )
 
         summary_value = str(result.get("summary") or "").strip()
@@ -1554,7 +1700,10 @@ than inventing content, and never write placeholder strings such as "N/A" or
             },
             system_prompt=DEEPSEEK_SYSTEM_PROMPT,
             temperature=0.3,
-            max_tokens=750,
+            # 1800 so every strategy's strategic_ground / key_strengths /
+            # action_plan is emitted in full; at 750 the tail was dropped and
+            # the UI fell back to generic boilerplate.
+            max_tokens=1800,
         )
 
         # Accept both the "strategies" array and the flat grounded shape.
