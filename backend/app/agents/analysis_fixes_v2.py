@@ -130,12 +130,22 @@ IT_DEFAULT = {"66", "66A", "66B", "66C", "66D", "67", "67A", "43"}
 # or category. Final fallback in map_section_to_act for sections no table above
 # claims ("Section 420" in a criminal petition previously resolved to the
 # placeholder "Statute (verify)" instead of the IPC section it cites).
+# The STATUTE_MAP additions (483, 67, 29A, 7, 32, 21) honour the project
+# decision that these ambiguous bare sections map to their conventional Act;
+# the map is consulted last so document-era sanhita defaults keep deciding
+# bare "482" for post-July-2024 BNSS-era documents.
 STATUTE_MAPPING = {
     "420": "Indian Penal Code, 1860",
     "468": "Indian Penal Code, 1860",
     "471": "Indian Penal Code, 1860",
     "482": "Code of Criminal Procedure, 1973",
+    "483": "Code of Criminal Procedure, 1973",
     "66D": "Information Technology Act, 2000",
+    "67": "Information Technology Act, 2000",
+    "29A": "Insolvency and Bankruptcy Code, 2016",
+    "7": "Insolvency and Bankruptcy Code, 2016",
+    "32": "Constitution of India",
+    "21": "Constitution of India",
 }
 
 # Constitutional articles. Articles belong to the Constitution unless the
@@ -143,11 +153,16 @@ STATUTE_MAPPING = {
 # reported "Article 21" against an arbitrary statute.
 CONSTITUTION_ARTICLES = {
     "12", "13", "14", "15", "16", "17", "18", "19", "19A", "20", "21", "21A",
-    "22", "23", "24", "25", "26", "27", "28", "29", "29A", "30", "31", "32",
+    "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32",
     "32A", "33", "34", "35", "35A", "36", "37", "38", "39", "39A", "40",
     "41", "42", "43", "43A", "44", "45", "46", "47", "48", "49", "50", "51",
     "51A", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62",
 }
+
+# "29A" is deliberately NOT in CONSTITUTION_ARTICLES: a bare unbound
+# "Section 29A" in a liquidation/corporate matter is IBC s.29A (eligibility),
+# per the STATUTE_MAP precedence decision, while constitutional citations are
+# written "Article 29A" and reach the Constitution via the article path.
 
 # Environmental-instrument provisions commonly cited by number in such cases.
 ENVIRONMENT_DEFAULTS = {
@@ -158,11 +173,41 @@ ENVIRONMENT_DEFAULTS = {
     "Wild Life (Protection) Act, 1972": {2, 3, 9},
 }
 
+def _pre_bnss_era(decision_date: str | None) -> bool:
+    """True when a decision date precedes the 1 July 2024 commencement of the
+    BNSS/BNS/BSA codes, so a bare "Section 482" in a 2023 petition resolves to
+    the CrPC instead of an anachronistic BNSS attribution. Explicit in-text
+    bindings are checked before this guard ever runs."""
+    if not decision_date:
+        return False
+    s = str(decision_date).strip()
+    m_year = re.search(r"\b(?:19|20)\d{2}\b", s)
+    if not m_year:
+        return False
+    year = int(m_year.group(0))
+    if year < 2024:
+        return True
+    if year > 2024:
+        return False
+    month_num = next(
+        (idx for idx, name in enumerate(MONTH_NAMES, start=1)
+         if re.search(rf"\b{name}", s, re.IGNORECASE)),
+        None,
+    )
+    return month_num is not None and month_num < 7
+
+
+MONTH_NAMES = (
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+)
+
 def map_section_to_act(
     sec: str,
     binds: dict[str, str],
     category: str = "criminal",
     is_article: bool = False,
+    decision_date: str | None = None,
 ) -> str:
     act = binds.get(sec) or binds.get(_num(sec))
     if act:
@@ -181,17 +226,23 @@ def map_section_to_act(
     num_str = _num(sec)
     n = int(num_str) if num_str.isdigit() else 0
     root = num_str.upper()
+    full = (sec or "").upper()
 
     # An Article number is constitutional unless the document bound it otherwise.
-    if is_article or sec in CONSTITUTION_ARTICLES or root in CONSTITUTION_ARTICLES:
-        if not is_article and not (sec in CONSTITUTION_ARTICLES or root in CONSTITUTION_ARTICLES):
-            pass  # fall through to the statutory tables
+    # The numeric root of a BARE digit section ("32", "21") refers to a
+    # constitutional article, but a letter-suffixed provision must match its own
+    # full token: "29A" must not be read as Article 29 (it is IBC eligibility).
+    in_const = (sec in CONSTITUTION_ARTICLES) or (full in CONSTITUTION_ARTICLES)
+    root_const = not re.search(r'\d[a-zA-Z]', sec) and (root in CONSTITUTION_ARTICLES)
+    if is_article or in_const or root_const:
+        if is_article and not (in_const or root_const):
+            pass  # "Article N of an Act" falls through to the statutory tables
         else:
             return "Constitution of India"
 
     if num_str in IT_DEFAULT or root in IT_DEFAULT:
         return "Information Technology Act, 2000"
-    if n in BNSS_DEFAULT:
+    if n in BNSS_DEFAULT and not _pre_bnss_era(decision_date):
         return "Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023"
     if n in BNS_DEFAULT:
         return "Bharatiya Nyaya Sanhita (BNS), 2023"
@@ -215,7 +266,10 @@ def map_section_to_act(
     # never reach a default table above, so they fell through to the
     # placeholder ("Section 420" → "Statute (verify)"). Consulted last so the
     # sanhita-aware defaults keep deciding bare "482" for BNSS-era documents.
-    mapped = STATUTE_MAPPING.get(root) or STATUTE_MAPPING.get(num_str)
+    # The full token (letter-suffixed, e.g. "29A") is tried first because the
+    # numeric root of a suffixed probe ("29A" → _num → "29") can collide with a
+    # different provision.
+    mapped = STATUTE_MAPPING.get(full) or STATUTE_MAPPING.get(root) or STATUTE_MAPPING.get(num_str)
     if mapped:
         return mapped
 

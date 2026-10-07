@@ -211,6 +211,67 @@ def strip_standalone_noise(text: str) -> str:
     return re.sub(r'\n{3,}', '\n\n', out).strip()
 
 
+# Full-sentence academic disclaimers. Unlike the standalone line stamps above,
+# these run as complete sentences ("This educational file does not
+# independently conclude ...", "END NOTE: This is an expanded educational case
+# study"), so a line-level regex leaves them in the prompt, where the model
+# reads them as party assertions or findings. They must be removed at the
+# sentence level.
+ACADEMIC_NOISE_PHRASES = (
+    "this educational file does not independently conclude",
+    "this document is prepared for academic purposes",
+    "this case file is fictional",
+    "fictional case file",
+    "this is not an official court record",
+    "not an official court record",
+    "illustrative only",
+    "academic case study",
+    "this is an expanded educational case study",
+    "for academic and training purposes",
+)
+
+_ACADEMIC_NOISE_RE = re.compile(
+    '|'.join(re.escape(p) for p in ACADEMIC_NOISE_PHRASES),
+    re.IGNORECASE,
+)
+
+
+def strip_academic_noise(text: str) -> str:
+    """Remove whole sentences that describe the document, not the litigation.
+
+    A dossier disclaimer survives section- and line-level stripping when it is
+    a grammatical sentence rather than a bare stamp ("ILLUSTRATIVE ONLY" as a
+    line is already handled). Splitting into sentences so the removal never
+    cuts mid-sentence or joins the disclaimer to a real finding on either side.
+    """
+    if not text:
+        return text
+    changed = False
+    paragraphs = []
+    for para in text.split('\n\n'):
+        # Sentence boundary: [.!?] followed by whitespace and an uppercase/
+        # quote/opening-bracket start, so "Case No. 123" keeps its fragment.
+        sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z0-9"\u201c\u2018(\[])', para)
+        kept = [s for s in sentences if not _ACADEMIC_NOISE_RE.search(s)]
+        if len(kept) != len(sentences):
+            changed = True
+        paragraphs.append(' '.join(kept))
+    if not changed:
+        return text
+    return re.sub(r'\n{3,}', '\n\n', '\n\n'.join(paragraphs)).strip()
+
+
+def filter_url_artifacts(text: str) -> str:
+    """Remove URL artifacts from extracted text."""
+    # Remove Indian Kanoon URLs (citation breadcrumbs, often glued to a label)
+    text = re.sub(r'Indian Kanoon[-\s]*http[s]?://[^\s]+', '', text)
+    # Remove standalone URLs and their trailing punctuation residue
+    text = re.sub(r'http[s]?://[^\s]+', '', text)
+    # Tidy the whitespace left behind by a removed URL
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+
 def filter_meta_items(items: list[Any], text_key: str = 'text') -> list[Any]:
     """Drop list entries whose content is document-about-the-document prose."""
     out: list[Any] = []

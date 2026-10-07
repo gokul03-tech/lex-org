@@ -371,6 +371,31 @@ async def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc
     category = str(_val("case_category") or "criminal")
     risk_analysis = build_risk_strategy(doc_text, meta)
 
+    # Key Strengths / Potential Gaps LLM fallback: the deterministic extractor
+    # keeps every finding it can prove; the model is consulted only when it
+    # proved none (narrative/arbitral records often defeat the curated
+    # patterns). Both helpers re-validate output as verbatim document text, and
+    # a model failure leaves the deterministic (possibly empty) result intact.
+    if not (risk_analysis.get("strengths") or []):
+        try:
+            from app.agents.analysis import llm_extract_strengths_as_fallback
+
+            ai_strengths = await llm_extract_strengths_as_fallback(doc_text)
+            if ai_strengths:
+                risk_analysis["strengths"] = ai_strengths
+        except Exception as exc:
+            logger.warning(f"[StrengthsFallback] unavailable, keeping deterministic rows: {exc}")
+
+    if not (risk_analysis.get("weaknesses") or []):
+        try:
+            from app.agents.analysis import llm_extract_gaps_as_fallback
+
+            ai_gaps = await llm_extract_gaps_as_fallback(doc_text)
+            if ai_gaps:
+                risk_analysis["weaknesses"] = ai_gaps
+        except Exception as exc:
+            logger.warning(f"[GapsFallback] unavailable, keeping deterministic rows: {exc}")
+
     # Category-aware Evidence & Arguments Brief (zero status leakage, extracted directly from text)
     pros_subs, def_subs = extract_submissions(doc_text)
 
@@ -502,7 +527,22 @@ async def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc
     }
 
     kg_data = build_kg(r_ctx)
-    risk_analysis['conclusion'] = render_conclusion(r_ctx, doc_text)
+
+    # Conclusion: deterministic operative-sentence extraction first; the LLM is
+    # consulted only when that yielded nothing usable (studies/arbitral records
+    # that end without the classic outcome markers). The fallback accepts a
+    # clause only if the document contains it verbatim.
+    conclusion = render_conclusion(r_ctx, doc_text)
+    if not conclusion or not str(conclusion).strip():
+        try:
+            from app.agents.analysis import llm_extract_conclusion_as_fallback
+
+            ai_conclusion = await llm_extract_conclusion_as_fallback(doc_text)
+            if ai_conclusion:
+                conclusion = ai_conclusion
+        except Exception as exc:
+            logger.warning(f"[ConclusionFallback] unavailable, keeping deterministic result: {exc}")
+    risk_analysis['conclusion'] = conclusion
 
     # Precedents filtering (self-exclusion, keyword rejection, score clamping)
     precedents_list = []

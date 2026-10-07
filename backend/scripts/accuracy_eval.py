@@ -483,7 +483,12 @@ def evaluate(path: str, gold: dict[str, Any], label: str) -> dict[str, Any]:
         map_section_to_act,
     )
 
+    def _meta_value(key: str) -> str:
+        v = (meta.get(key) or {}).get("value")
+        return v if isinstance(v, str) else str(v or "")
+
     category = (meta.get("case_category") or {}).get("value") or "criminal"
+    decision_date = _meta_value("decision_date") or None
     binds = extract_section_act_bindings(text)
     seen_sec: set[str] = set()
     sections: list[dict[str, Any]] = []
@@ -498,7 +503,7 @@ def evaluate(path: str, gold: dict[str, Any], label: str) -> dict[str, Any]:
         seen_sec.add(num)
         sections.append({
             "section_number": num,
-            "act": map_section_to_act(num, binds, category=category),
+            "act": map_section_to_act(num, binds, category=category, decision_date=decision_date),
             "explicitly_mentioned": True,
         })
     # In-text "Section N of the X Act" bindings count as citations too.

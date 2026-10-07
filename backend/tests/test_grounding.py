@@ -90,11 +90,27 @@ def test_universal_grounding_vikram():
     assert report['court_matter']['value'] == 'C.R. No. 102 of 2024'
     assert '(2024) 2 Bom CR 412' in report['citation_numbers']['value']
 
-    # Test Section bindings
+    # Test Section bindings. VIKRAM_TEXT line 1 cites "Section 482 of the
+    # Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023" verbatim, so the in-text
+    # binding wins regardless of the document's pre-July-2024 date: this is the
+    # new-law CONCORDANCE mapping check (binding beats the era default).
     assert map_section_to_act('482', binds, 'criminal') == 'Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023'
     assert map_section_to_act('111', binds, 'criminal') == 'Bharatiya Nyaya Sanhita (BNS), 2023'
     assert map_section_to_act('66D', binds, 'criminal') == 'Information Technology Act, 2000'
     assert map_section_to_act('63', binds, 'criminal') == 'Bharatiya Sakshya Adhiniyam (BSA), 2023'
+
+    # Era rule (decision-date aware): a pre-1-July-2024 document with an UNBOUND
+    # bare "Section 482" (Karnataka, 22 May 2023) must resolve to the CrPC, 1973
+    # rather than an anachronistic BNSS attribution; a post-commencement date
+    # keeps the BNSS default.
+    assert map_section_to_act('482', {}, 'criminal', decision_date='22 May 2023') == 'Code of Criminal Procedure, 1973'
+    assert map_section_to_act('483', {}, 'criminal', decision_date='22 May 2023') == 'Code of Criminal Procedure, 1973'
+    assert map_section_to_act('482', {}, 'criminal', decision_date='15 August 2024') == 'Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023'
+    # New-law concordance additions from STATUTE_MAP: bare "67" is IT Act, and
+    # an unbound "29A"/"7" is IBC (no date dependency).
+    assert map_section_to_act('67', {}, 'criminal') == 'Information Technology Act, 2000'
+    assert map_section_to_act('29A', {}, 'civil') == 'Insolvency and Bankruptcy Code, 2016'
+    assert map_section_to_act('7', {}, 'civil') == 'Insolvency and Bankruptcy Code, 2016'
 
     # Test dynamic evidence & risk
     ev_items = extract_evidence_items(VIKRAM_TEXT)

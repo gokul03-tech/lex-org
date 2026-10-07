@@ -73,9 +73,52 @@ CRITICAL RULES:
    - "Legal Issues"
    - "The case can be organized into several legal and factual questions. First... Second..."
    - Numbered issues (Issue 1, Issue 2, etc.)
-3. Extract ALL issues. Do NOT stop after 2 or 3. Do NOT truncate mid-sentence.
-4. Return a clean, numbered list.
+3. Extract ALL issues present in the initial issue list. Do NOT stop after 2 or 3.
+4. EXACT BOUNDARY RULE: an issue ends ONLY at a period followed by a capital
+   letter OR the next numbered/section heading (e.g. "10. PETITIONERS'
+   SUBMISSIONS") OR a double newline. A comma, the word "or"/"whether" or a
+   single line break does NOT end an issue — keep reading to the full question
+   so the extracted issue reads completely and self-contained.
+5. STRICT NEGATIVE BOUNDARIES — STOP IMMEDIATELY when any of these begin:
+   a. A reasoning/outcome header: "ANALYSIS AND REASONING", "REASONING",
+      "JUDGMENT", "JUDGMENT AND SENTENCE", "THE HIGH COURT", "ORDER",
+      "CONCLUSION", "CONCLUSION AND ORDER", "DISPOSITION".
+   b. A numbered paragraph (e.g., "37.", "38.", "39.") that is NOT part of the
+      initial issue list. Issues are only the questions framed up front; once
+      the document moves to analysis, that text belongs to it, not to the list.
+   c. Neither of the above but the numbered issue list you are reading has
+      already ended — do not reach past it into the body.
+6. If the document frames, say, 4 issues in a numbered list, extract ONLY those
+   4. Do NOT continue reading into later sections for more.
+7. Each issue MUST be a single question. If an extracted item reads longer than
+   100 words, it is grabbing reasoning, not an issue — truncate it back to the
+   question itself.
+8. Return a clean, numbered list.
 """ + UNIVERSAL_EXTRACTION_PROMPT
+
+# Also fallback-only, appended to ISSUE_LLM_FALLBACK_PROMPT. A dossier or
+# illustrative record sometimes states no issue headers at all ("We frame the
+# following issues" is absent); an empty issue list is technically honest but
+# useless downstream, so the model is asked to infer the questions the document
+# itself debates. The "FORMAT EXAMPLE ONLY" lines show the expected shape and
+# are explicitly not to be copied.
+ISSUE_INFERENCE_PROMPT = """
+INFERENCE RULE (apply only if the document contains NO explicit issue header
+such as "Issue 1:", "Issues framed", "We frame the following issues", or
+numbered questions):
+If the document does not contain explicit issue headers, infer the legal issues
+from the document itself:
+1. The counsel arguments — what are the parties disputing?
+2. The court's reasoning — what questions did the court actually address?
+3. The relief sought — what is the petitioner/plaintiff asking for?
+Every inferred issue MUST be a question this document actually debates; ground
+each one in the text. NEVER invent statutory sections, amounts, exhibits, case
+names, or facts that do not appear in the document.
+
+FORMAT EXAMPLE ONLY — do NOT copy these facts:
+1. Whether the arbitral award suffers from patent illegality under Section 34(2A)?
+2. Whether the Tribunal ignored contemporaneous correspondence?
+"""
 
 # Issues whose text never appears in the document are not paraphrases of the
 # source, they are inventions, and must be dropped even from an LLM response.
@@ -95,9 +138,16 @@ def _llm_clean(text: str) -> str:
     if not text:
         return text or ""
     try:
-        from app.agents.doc_meta_guard import strip_meta_sections, strip_standalone_noise
+        from app.agents.doc_meta_guard import (
+            filter_url_artifacts,
+            strip_academic_noise,
+            strip_meta_sections,
+            strip_standalone_noise,
+        )
 
-        return strip_standalone_noise(strip_meta_sections(text))
+        return filter_url_artifacts(
+            strip_academic_noise(strip_standalone_noise(strip_meta_sections(text)))
+        )
     except Exception:
         return text
 
@@ -115,6 +165,18 @@ def _clean_llm_issue(raw: Any) -> str:
     # Keep the label when the document itself used one ("Main question: ...").
     if _ISSUE_NOISE_RE.match(s):
         return ""
+    # FIX 1 boundary anchor (post-processing guarantee): a framed issue is a
+    # single question. When the response bled past it into reasoning, cut back
+    # to the 100-word ceiling at the last sentence end before the limit so the
+    # stored issue is still a question, not analysis text.
+    words = s.split()
+    if len(words) > 100:
+        cut = 100
+        for i in range(99, 0, -1):
+            if words[i].endswith((".", "?")):
+                cut = i + 1
+                break
+        s = " ".join(words[:cut]).strip()
     return s.strip(" -–—:;,")
 
 
@@ -136,7 +198,8 @@ async def llm_extract_issues_as_fallback(text: str) -> list[dict[str, Any]]:
 
         provider = get_qwen_provider()
         result = provider.generate_structured(
-            f"{ISSUE_LLM_FALLBACK_PROMPT}\n\nCase Document:\n{_llm_clean(text)[:14000]}",
+            f"{ISSUE_LLM_FALLBACK_PROMPT}\n{ISSUE_INFERENCE_PROMPT}"
+            f"\n\nCase Document:\n{_llm_clean(text)[:14000]}",
             output_schema={
                 "type": "object",
                 "properties": {
@@ -149,10 +212,10 @@ async def llm_extract_issues_as_fallback(text: str) -> list[dict[str, Any]]:
             },
             system_prompt=QWEN_SYSTEM_PROMPT,
             temperature=0.1,
-            # 1800 leaves room for every full-length issue. A tighter budget
-            # (900) silently cut the tail mid-issue on academic dossiers that
-            # frame 5+ issues.
-            max_tokens=1800,
+            # 2000 leaves room for every full-length issue AND the complete
+            # closing question when a long dossier frames 5+ issues. A tighter
+            # budget silently cut the tail mid-issue, truncating the last item.
+            max_tokens=2000,
         )
 
         raw = result.get("legal_issues") or []
@@ -303,6 +366,158 @@ async def llm_extract_evidence_as_fallback(text: str) -> list[dict[str, Any]]:
         logger.warning(f"[EvidenceFallback] unavailable, reporting no exhibits: {exc}")
         return []
 
+
+def _contains_verbatim(text: str, quote: str) -> bool:
+    """True when ``quote`` appears (modulo whitespace) inside ``text``.
+
+    Fallback-generated conclusions, strengths and gaps are only accepted when
+    the document itself contains the sentence, so an invented finding can never
+    surface as if the Court wrote it.
+    """
+    hay = re.sub(r"\s+", " ", text or "").lower()
+    needle = re.sub(r"\s+", " ", (quote or "")).strip().strip('"\u201c\u201d').lower()
+    return bool(needle) and needle in hay
+
+
+async def llm_extract_conclusion_as_fallback(text: str) -> str:
+    """Generate the FINAL ORDER with the LLM. Only when deterministic extraction finds none.
+
+    Mirrors ``llm_extract_issues_as_fallback``: standard judgments never reach
+    the model — this fires solely when render_conclusion/build_risk had nothing
+    usable. Any model failure returns ``""``, leaving the deterministic empty
+    result in place.
+    """
+    text = text or ""
+    if len(text) < 200:
+        return ""
+    try:
+        from app.llm.qwen import get_qwen_provider, QWEN_SYSTEM_PROMPT
+
+        provider = get_qwen_provider()
+        result = provider.generate_structured(
+            f"{CONCLUSION_EXTRACTION_PROMPT}\n\nCase Document:\n{_llm_clean(text)[:14000]}",
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "conclusion": {"type": "string"},
+                },
+                "required": ["conclusion"],
+            },
+            system_prompt=QWEN_SYSTEM_PROMPT,
+            temperature=0.1,
+            max_tokens=400,
+        )
+        raw = result.get("conclusion") if isinstance(result, dict) else ""
+        if isinstance(raw, list):
+            raw = raw[0] if raw else ""
+        conclusion = str(raw or "").strip(' "\u201c\u201d')
+        if len(conclusion) < 20 or not _contains_verbatim(text, conclusion):
+            return ""
+        logger.info(f"[ConclusionFallback] LLM produced a verbatim final order (deterministic found none)")
+        return conclusion
+    except Exception as exc:
+        logger.warning(f"[ConclusionFallback] unavailable, keeping deterministic result: {exc}")
+        return ""
+
+
+async def llm_extract_strengths_as_fallback(text: str) -> list[str]:
+    """Generate the Court's favorable findings with the LLM. Only when deterministic found none.
+
+    ``build_risk_strategy`` keeps every strength it can prove; this fills the
+    gap for records the patterns do not recognise. Every returned item is
+    re-validated as verbatim document text; a model failure yields ``[]``.
+    """
+    text = text or ""
+    if len(text) < 200:
+        return []
+    try:
+        from app.llm.qwen import get_qwen_provider, QWEN_SYSTEM_PROMPT
+
+        provider = get_qwen_provider()
+        result = provider.generate_structured(
+            f"{KEY_STRENGTHS_PROMPT}\n\nCase Document:\n{_llm_clean(text)[:14000]}",
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "strengths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["strengths"],
+            },
+            system_prompt=QWEN_SYSTEM_PROMPT,
+            temperature=0.1,
+            max_tokens=600,
+        )
+        raw = result.get("strengths") if isinstance(result, dict) else []
+        raw = raw if isinstance(raw, list) else []
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in raw:
+            s = str(item or "").strip(' "\u201c\u201d')
+            if len(s) < 20 or not _contains_verbatim(text, s):
+                continue
+            key = re.sub(r"[^a-z0-9]", "", s.lower())[:80]
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(s)
+        logger.info(f"[StrengthsFallback] LLM produced {len(out)} grounded strength(s) (deterministic found none)")
+        return out
+    except Exception as exc:
+        logger.warning(f"[StrengthsFallback] unavailable, keeping deterministic result: {exc}")
+        return []
+
+
+async def llm_extract_gaps_as_fallback(text: str) -> list[str]:
+    """Generate the Court's unfavorable findings with the LLM. Only when deterministic found none.
+
+    Mirrors ``llm_extract_strengths_as_fallback`` for the adverse side of the
+    record. Every returned item is re-validated as verbatim document text.
+    """
+    text = text or ""
+    if len(text) < 200:
+        return []
+    try:
+        from app.llm.qwen import get_qwen_provider, QWEN_SYSTEM_PROMPT
+
+        provider = get_qwen_provider()
+        result = provider.generate_structured(
+            f"{POTENTIAL_GAPS_PROMPT}\n\nCase Document:\n{_llm_clean(text)[:14000]}",
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "gaps": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["gaps"],
+            },
+            system_prompt=QWEN_SYSTEM_PROMPT,
+            temperature=0.1,
+            max_tokens=600,
+        )
+        raw = result.get("gaps") if isinstance(result, dict) else []
+        raw = raw if isinstance(raw, list) else []
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in raw:
+            s = str(item or "").strip(' "\u201c\u201d')
+            if len(s) < 20 or not _contains_verbatim(text, s):
+                continue
+            key = re.sub(r"[^a-z0-9]", "", s.lower())[:80]
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(s)
+        logger.info(f"[GapsFallback] LLM produced {len(out)} grounded gap(s) (deterministic found none)")
+        return out
+    except Exception as exc:
+        logger.warning(f"[GapsFallback] unavailable, keeping deterministic result: {exc}")
+        return []
+
 COUNSEL_EXTRACTION_PROMPT = """
 Extract counsel submissions from the legal document.
 
@@ -326,6 +541,24 @@ side's arguments by ROLE. Match the label, not the phrasing:
   "DEFENDANT'S FINAL WRITTEN SUBMISSIONS"
 - Numbered party sections also count: "10. PETITIONERS' SUBMISSIONS".
 Extract the arguments written under those headings for that side.
+
+DO NOT swap the columns. The output column is decided ONLY by the section
+header the text sits under (or the speaker named in the sentence), never by
+the content or by where another model call placed a similar paragraph:
+- Every argument under a FIRST-PARTY header (PETITIONERS' SUBMISSIONS,
+  APPELLANT'S POSITION, PLAINTIFF'S FINAL WRITTEN SUBMISSIONS, DEFENCE
+  CONTENTIONS, APPLICANT'S SUBMISSIONS) is a Petitioner/Defence submission.
+- Every argument under a SECOND-PARTY header (STATE'S SUBMISSIONS,
+  RESPONDENT'S SUBMISSIONS, DEFENDANT'S FINAL WRITTEN SUBMISSIONS, DEFENDANT'S
+  WRITTEN STATEMENT, PROSECUTION SUBMISSIONS) is a Respondent/Prosecution
+  submission.
+- Bail cases: the Applicant/Accused is the first party, the State is the
+  second. An "Anticipatory Bail Application by Mr. X" still maps X's arguments
+  to the first column and the State's arguments to the second.
+- A header that reads "DEFENDANT'S FINAL WRITTEN SUBMISSIONS" belongs to the
+  Respondent/second column even when the defendant is the person defending the
+  suit; do not relabel it to the first column.
+Return BOTH lists in the OUTPUT below exactly as paired with their headers.
 
 DO NOT extract as a submission:
 - The court's own reasoning or analysis.
@@ -357,19 +590,77 @@ EVIDENCE_LLM_FALLBACK_PROMPT = """
 You are extracting the DOCUMENTARY EXHIBITS / EXHIBIT REGISTER from this case file.
 
 CRITICAL RULES:
-1. Extract ONLY items that the document itself enumerates with an identifier.
+1. LOCATE the document's exhibit REGISTER BLOCK first: a section headed
+   "EXHIBIT REGISTER", "DOCUMENTARY EXHIBITS", "EVIDENCE REGISTER", "LIST OF
+   DOCUMENTS", "LIST OF EXHIBITS", or "Exhibits". Extract rows ONLY from inside
+   that block. Never pull a stray exhibit-style sentence ("the FIR was placed
+   on record") from the narrative body of the judgment or the proceedings.
+2. Extract ONLY items the block itself enumerates with an identifier.
    Accept these label formats: "Exhibit P-1 - ...", "P-1: ...", "Ex. D2 - ...",
    "Exhibit D-2 - ...", "PW-1 - ...", "Annexure A1 - ...".
-2. Expand ranges: "P-4 to P-6 - [description]" becomes three separate rows
-   (P-4, P-5, P-6) sharing that description.
-3. For each item, "tendered_by" must be derived ONLY from the side letter in the
+3. Expand ranges: "P-4 to P-6 - [description]" becomes three separate rows
+   (P-4, P-5, P-6) sharing that description, and all rows remain inside the
+   register block they came from.
+4. For each item, "tendered_by" must be derived ONLY from the side letter in the
    label: P / PW = Prosecution / Plaintiff / Petitioner, D / DW = Defence /
    Defendant / Respondent, K = Complainant, A = Annexure.
-4. If the document has NO enumerated exhibit list anywhere, return an empty
+5. If the document has NO enumerated exhibit register anywhere, return an empty
    array. Do NOT invent exhibits, and do NOT return narrative sentence snippets
    such as "the FIR was placed on record" as if they were exhibit records.
-5. Ignore academic commentary, disclaimers, and any text from a References or
+6. Ignore academic commentary, disclaimers, and any text from a References or
    Bibliography section.
+""" + UNIVERSAL_EXTRACTION_PROMPT
+
+# Fallback-only conclusion extractor. Standard judgments keep the deterministic
+# operative-sentence path (build_risk/render_conclusion); the model is consulted
+# only when that path finds nothing usable, and the accepted clause is
+# re-validated as verbatim text from the document.
+CONCLUSION_EXTRACTION_PROMPT = """
+Extract the FINAL ORDER from the judgment. Look for:
+- The last numbered paragraph
+- Paragraphs containing: "allowed", "dismissed", "set aside", "affirmed", "decreed"
+- The operative part of the judgment
+
+CRITICAL RULES:
+1. Quote the operative clause VERBATIM from the document; never paraphrase.
+2. DO NOT extract the opening paragraph or introduction.
+3. Do NOT return a placeholder such as "The petition is disposed of." when the
+   document states a specific outcome.
+4. If the document records NO final order (e.g., a submission-only dossier),
+   return an empty string rather than inventing an outcome.
+""" + UNIVERSAL_EXTRACTION_PROMPT
+
+# Fallback-only. Deterministic build_risk_strategy keeps the court's favorable
+# findings it can prove; this fills the gap only when it proved none.
+KEY_STRENGTHS_PROMPT = """
+Extract the Court's favorable findings for the Petitioner/Plaintiff from the
+judgment's reasoning section.
+
+CRITICAL RULES:
+1. Quote each finding VERBATIM from the reasoning/operative part of the
+   judgment (e.g. "the Tribunal failed to consider Ex. P-19 and Ex. P-23 ...").
+2. The finding must favour the Petitioner/Plaintiff: it either upholds their
+   claim or criticises the reasoning against them.
+3. NEVER extract counsel submissions, procedural closings, or academic
+   commentary as if they were findings.
+4. NEVER invent findings that do not appear in the document.
+5. Do NOT use generic fallbacks like "No favorable findings extracted yet."
+""" + UNIVERSAL_EXTRACTION_PROMPT
+
+# Fallback-only. Mirrors KEY_STRENGTHS_PROMPT for the adverse side of the record.
+POTENTIAL_GAPS_PROMPT = """
+Extract the Court's findings that are unfavorable to the Petitioner/Plaintiff,
+or limitations in the Petitioner's case, from the judgment's reasoning section.
+
+CRITICAL RULES:
+1. Quote each finding VERBATIM from the reasoning/operative part of the
+   judgment (e.g. "no loss was proved under Section 74 of the Indian Contract
+   Act", "and in rest it is affirmed").
+2. The finding must go against the Petitioner/Plaintiff: part of the claim is
+   rejected, a condition is not proved, or most of the award is upheld.
+3. NEVER extract counsel submissions or academic commentary as gap findings.
+4. NEVER invent findings that do not appear in the document.
+5. Do NOT use generic fallbacks like "No adverse contentions extracted yet."
 """ + UNIVERSAL_EXTRACTION_PROMPT
 
 STRATEGY_PROMPT = """
@@ -1058,6 +1349,11 @@ async def legal_research_agent(state: AgentState) -> AgentState:
 
         doc_text_full = " ".join((d.get("text") or d.get("content") or "") for d in docs)
         category = state.get("case_category", "criminal")
+        # Decision date drives the pre/BNSS-era section mapping: a bare "Section
+        # 482" in a pre-July-2024 document is CrPC 1973, in a later one BNSS.
+        _md = (state.get("metadata") or {})
+        _dd = _md.get("decision_date") if isinstance(_md, dict) else None
+        case_decision_date = _dd.get("value") if isinstance(_dd, dict) else _dd
         
         # 1. Extract and bind sections to their accurate Acts (including 2(16), 50, 22, the Act)
         binds = extract_section_act_bindings(doc_text_full) if doc_text_full else {}
@@ -1071,7 +1367,7 @@ async def legal_research_agent(state: AgentState) -> AgentState:
             )
             for sm in sec_matches:
                 sec_num = sm.group(1)
-                sec_act = map_section_to_act(sec_num, binds, category=category)
+                sec_act = map_section_to_act(sec_num, binds, category=category, decision_date=case_decision_date)
                 start_pos = max(0, sm.start() - 40)
                 end_pos = min(len(doc_text_full), sm.end() + 140)
                 snippet = doc_text_full[start_pos:end_pos].replace("\n", " ").strip()
@@ -1105,7 +1401,7 @@ async def legal_research_agent(state: AgentState) -> AgentState:
         seen = set()
         unique_sections = []
         for s in sections:
-            clean_act = map_section_to_act(s['section_number'], binds, category=category)
+            clean_act = map_section_to_act(s['section_number'], binds, category=category, decision_date=case_decision_date)
             s['act'] = clean_act
             key = f"{s['section_number']}_{clean_act}"
             if key not in seen:

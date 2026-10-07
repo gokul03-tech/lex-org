@@ -22,6 +22,14 @@ from app.llm.provider import LLMProvider
 _shared_llamas: dict[tuple, Any] = {}
 _load_lock = threading.Lock()
 
+# The shared Llama context is NOT safe for concurrent decode: overlapping
+# create_completion calls from worker threads (asyncio.to_thread, warmup, or
+# two cases analysed at once) corrupt the KV cache and can balloon peak VRAM,
+# which crashes the process with a fatal GGML_ASSERT("tensor buffer not set"),
+# a CUDA buffer alloc returning NULL inside llama.cpp. That abort is not
+# catchable from Python, so generation must be serialized per process instead.
+_generation_lock = threading.Lock()
+
 
 _cuda_check: dict[str, bool] = {}
 
@@ -197,11 +205,14 @@ def _warn_mock_once(op: str) -> None:
 
 
 def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers: int):
-    """Load (once) and return a shared Llama instance for the given config."""
+    """Load (once) and return a shared Llama instance for the given config.
+
+    Returns (model, newly_loaded) so callers can log reuse vs a real reload.
+    """
     key = (model_path, n_ctx, n_threads, n_gpu_layers)
     with _load_lock:
         if key in _shared_llamas:
-            return _shared_llamas[key]
+            return _shared_llamas[key], False
         from llama_cpp import Llama
 
         logger.info(f"Loading GGUF model from {model_path} (n_gpu_layers={n_gpu_layers}, n_ctx={n_ctx})")
@@ -247,7 +258,7 @@ def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers:
                     n_batch=512,
                 )
         _shared_llamas[key] = model
-        return model
+        return model, True
 
 
 # Never surface raw model/exception internals in downstream output that may be
@@ -302,11 +313,12 @@ class LlamaCppProvider(LLMProvider):
                         self.model_path, self.n_gpu_layers, self.n_ctx
                     )
 
-            self._model = _get_shared_llama(
+            self._model, _newly_loaded = _get_shared_llama(
                 self.model_path, self.n_ctx, self.n_threads, gpu_layers
             )
             logger.info(
-                f"Model ready: {self.model_name} "
+                f"{'Model ready' if _newly_loaded else 'Reusing loaded model'}: "
+                f"{self.model_name} "
                 f"(gpu_layers={gpu_layers}, n_ctx={self.n_ctx})"
             )
         except ImportError:
@@ -373,17 +385,18 @@ class LlamaCppProvider(LLMProvider):
             )
 
         full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
-        capped = self._cap_max_tokens(full_prompt, max_tokens)
         t0 = time.monotonic()
         try:
-            result = self._model.create_completion(
-                prompt=full_prompt,
-                max_tokens=capped,
-                temperature=temperature,
-                stop=stop or [],
-                echo=False,
-                repeat_penalty=1.1,
-            )
+            with _generation_lock:
+                capped = self._cap_max_tokens(full_prompt, max_tokens)
+                result = self._model.create_completion(
+                    prompt=full_prompt,
+                    max_tokens=capped,
+                    temperature=temperature,
+                    stop=stop or [],
+                    echo=False,
+                    repeat_penalty=1.1,
+                )
             text = result["choices"][0]["text"].strip()
             dt = time.monotonic() - t0
             logger.info(
@@ -430,20 +443,21 @@ class LlamaCppProvider(LLMProvider):
             # Try grammar-constrained generation
             schema_str = json.dumps(output_schema)
             grammar_prompt = f"{system_prompt}\n\n{json_instruction}"
-            result = self._model.create_completion(
-                prompt=grammar_prompt,
-                max_tokens=self._cap_max_tokens(grammar_prompt, budget),
-                temperature=temperature,
-                grammar=json.dumps(
-                    {
-                        "type": "object",
-                        "properties": {
-                            key: value
-                            for key, value in self._simplify_schema(output_schema).items()
-                        },
-                    }
-                ),
-            )
+            with _generation_lock:
+                result = self._model.create_completion(
+                    prompt=grammar_prompt,
+                    max_tokens=self._cap_max_tokens(grammar_prompt, budget),
+                    temperature=temperature,
+                    grammar=json.dumps(
+                        {
+                            "type": "object",
+                            "properties": {
+                                key: value
+                                for key, value in self._simplify_schema(output_schema).items()
+                            },
+                        }
+                    ),
+                )
             return json.loads(result["choices"][0]["text"])
         except Exception:
             # Fallback: regular generation then parse JSON
@@ -484,16 +498,17 @@ class LlamaCppProvider(LLMProvider):
         full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
 
         try:
-            stream = self._model.create_completion(
-                prompt=full_prompt,
-                max_tokens=self._cap_max_tokens(full_prompt, max_tokens),
-                temperature=temperature,
-                stream=True,
-            )
-            for chunk in stream:
-                text = chunk["choices"][0].get("text", "")
-                if text:
-                    yield text
+            with _generation_lock:
+                stream = self._model.create_completion(
+                    prompt=full_prompt,
+                    max_tokens=self._cap_max_tokens(full_prompt, max_tokens),
+                    temperature=temperature,
+                    stream=True,
+                )
+                for chunk in stream:
+                    text = chunk["choices"][0].get("text", "")
+                    if text:
+                        yield text
         except Exception as exc:
             logger.error(f"Stream error: {exc}")
             yield UNAVAILABLE_RESPONSE
