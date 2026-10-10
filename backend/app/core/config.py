@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     SECRET_KEY: str = ""  # Defaults to a random ephemeral key via validator below.
     API_PREFIX: str = "/api/v1"
-    PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent.parent
+    PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent.parent.parent
 
     def model_post_init(self, __context) -> None:
         """Generate an ephemeral SECRET_KEY when none is configured."""
@@ -75,12 +75,12 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
     # ── LLM Configuration ───────────────────────────────────────
-    LLM_BACKEND: Literal["llama_cpp", "mock", "openai_compatible", "transformers"] = "llama_cpp"
-    QWEN_MODEL_PATH: str = "/home/gokul/Downloads/final-year-project/models/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
-    DEEPSEEK_MODEL_PATH: str = "/home/gokul/Downloads/final-year-project/models/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
-    LLM_N_CTX: int = 8192
-    LLM_N_THREADS: int = 8
-    LLM_N_GPU_LAYERS: int = 15
+    LLM_BACKEND: Literal["llama_cpp", "mock", "openai_compatible", "transformers"] = "openai_compatible"
+    QWEN_MODEL_PATH: str = "/home/URK23AI1015/Downloads/final-year-project (2)/models/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+    DEEPSEEK_MODEL_PATH: str = "/home/URK23AI1015/Downloads/final-year-project (2)/models/deepseek-r1-distill-qwen-7b-q4_k_m.gguf"
+    LLM_N_CTX: int = 2048
+    LLM_N_THREADS: int = 4
+    LLM_N_GPU_LAYERS: int = 32
     LLM_TEMPERATURE: float = 0.0
     LLM_MAX_TOKENS: int = 2048
 

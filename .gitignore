@@ -57,6 +57,9 @@ frontend/coverage/
 # OS files
 .DS_Store
 Thumbs.db
+miniconda.sh
+get-pip.py
+project_link
 
 # Editor / IDE
 .idea/

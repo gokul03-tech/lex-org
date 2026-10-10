@@ -46,12 +46,25 @@ class QdrantManager:
             from qdrant_client import QdrantClient
             from qdrant_client.http import models as rest
 
+            # Use a long timeout for restricted networks
+            timeout = 60
             if self.api_key:
-                self._client = QdrantClient(url=self.url, api_key=self.api_key, check_compatibility=False)
+                self._client = QdrantClient(
+                    url=self.url,
+                    api_key=self.api_key,
+                    check_compatibility=False,
+                    prefer_grpc=False,
+                    timeout=timeout
+                )
             else:
-                self._client = QdrantClient(url=self.url, check_compatibility=False)
+                self._client = QdrantClient(
+                    url=self.url,
+                    check_compatibility=False,
+                    prefer_grpc=False,
+                    timeout=timeout
+                )
             self._initialized = True
-            logger.info(f"Qdrant client initialized: {self.url}")
+            logger.info(f"Qdrant client initialized: {self.url} (timeout={timeout}s)")
         except ImportError:
             logger.warning("qdrant-client not installed. Vector search will be unavailable.")
             self._client = None
@@ -262,6 +275,7 @@ class QdrantManager:
                     "doc_type": r.payload.get("doc_type", ""),
                     "act": r.payload.get("act", ""),
                     "chunk_index": r.payload.get("chunk_index", 0),
+                    "case_id": r.payload.get("case_id", ""),
                     "metadata": r.payload.get("metadata", {}),
                 }
                 for r in response.points
@@ -317,6 +331,7 @@ class QdrantManager:
                         "doc_type": r.payload.get("doc_type", ""),
                         "act": r.payload.get("act", ""),
                         "chunk_index": r.payload.get("chunk_index", 0),
+                        "case_id": r.payload.get("case_id", ""),
                         "metadata": r.payload.get("metadata", {}),
                     }
                     for r in batch_results.points

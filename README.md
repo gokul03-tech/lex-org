@@ -213,41 +213,37 @@ The backend is built with FastAPI, LangGraph, SQLAlchemy (Async SQLite), Celery,
 * **Asynchronous Task Queue:** Celery workers backed by a Redis broker for heavy document parsing and LLM inference.
 * **Structured Logging:** Loguru with unified terminal formatting and JSON file logs.
 
-### 7-Agent LangGraph Workflow
+### 12-Agent LangGraph Workflow
 
 ```mermaid
 flowchart LR
-    Start([Case PDF]) --> A1[1. Doc Parser]
-    A1 --> A2[2. Metadata Agent]
-    A2 --> A3[3. Legal Research]
-    A3 --> A4[4. Graph Agent]
-    A4 --> A5[5. IRAC Reasoning]
-    A5 --> A6[6. Source Validation]
-    A6 --> A7[7. Report Compiler]
-    A7 --> End([16-Section Report])
+    Start([Case PDF]) --> A1[1. Case Understanding]
+    A1 --> A2[2. Legal Research]
+    A2 --> A3[3. Knowledge Graph]
+    A3 --> A4[4. Evidence Reliability]
+    A4 --> A5[5. Contradiction Detection]
+    A5 --> A6[6. Procedural Compliance]
+    A6 --> A7[7. Legal Reasoning]
+    A7 --> A8[8. Strategy Recommendation]
+    A8 --> A9[9. Risk Assessment]
+    A9 --> A10[10. Confidence Fusion]
+    A10 --> A11[11. Explainability]
+    A11 --> A12[12. Report Compiler]
+    A12 --> End([16-Section Report])
 ```
 
-1. **Document Processing Agent (`app/agents/document_agent.py`):**
-   * Extracts raw text page-by-page.
-   * Cleans formatting, normalizes Indian legal abbreviations (e.g., *u/s*, *r/w*, *FIR*, *SLP*).
-   * Executes PaddleOCR fallback if extracted page characters < 100.
-2. **Metadata Agent (`app/agents/metadata_agent.py`):**
-   * Extracts court jurisdiction, petitioner, respondent, case number, filing date, and judge names.
-   * Outputs structured objects with explicit status: `{"value": "...", "status": "extracted" | "inferred" | "not_found"}`.
-3. **Legal Research Agent (`app/agents/research_agent.py`):**
-   * Queries the Qdrant legal corpus for statutory provisions and relevant case precedents.
-   * Executes BM25 lexical search for specific sections and act titles.
-4. **Knowledge Graph Agent (`app/agents/kg_agent.py`):**
-   * Resolves entity relations and builds Cypher queries.
-   * Creates nodes (`Case`, `Party`, `Section`, `Article`, `Citation`) and relationships (`INVOLVES`, `VIOLATES`, `CITES`, `INTERPRETS`) in FalkorDB.
-5. **IRAC Legal Reasoning Agent (`app/agents/reasoning_agent.py`):**
-   * Structures legal questions into **Issue**, **Rule**, **Application**, and **Conclusion**.
-   * Evaluates prosecution vs. defense arguments and identifies procedural loopholes.
-6. **Source Validation Agent (`app/agents/validation_agent.py`):**
-   * The core grounding gate: verifies every extracted fact, section, and claim against the original PDF text.
-   * Rejects hallucinations, computes trust scores, and binds exact page numbers and verbatim quotations.
-7. **Report Compiler Agent (`app/agents/compiler_agent.py`):**
-   * Synthesizes all agent states into a unified, client-ready 16-section advisory report payload.
+1. **Case Understanding Agent:** Extracts core dispute, material facts, and event timelines.
+2. **Legal Research Agent:** Performs hybrid RAG (Vector + Lexical) to find applicable laws and precedents.
+3. **Knowledge Graph Agent:** Maps entities and relationships (Case, Party, Section, Citation) into FalkorDB.
+4. **Evidence Reliability Agent:** Evaluates the strength and admissibility of primary and electronic evidence.
+5. **Contradiction Detection Agent:** Identifies inconsistencies across testimonies, FIRs, and pleadings.
+6. **Procedural Compliance Agent:** Checks for statutory timelines, limitation periods, and filing errors.
+7. **Legal Reasoning Agent:** Applies the IRAC (Issue, Rule, Application, Conclusion) framework.
+8. **Strategy Recommendation Agent:** Proposes litigation strategies and potential defense arguments.
+9. **Risk Assessment Agent:** Calculates liability scores and identifies procedural vulnerabilities.
+10. **Confidence Fusion Agent:** Aggregates confidence scores from all agents to compute a final trust score.
+11. **Explainability Agent:** Generates a topological graph explaining the derivation of legal conclusions.
+12. **Report Compiler Agent:** Synthesizes all agent states into the final 16-section structured report.
 
 ### Hybrid RAG Search Engine
 

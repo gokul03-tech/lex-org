@@ -111,6 +111,14 @@ def test_universal_grounding_vikram():
     assert map_section_to_act('67', {}, 'criminal') == 'Information Technology Act, 2000'
     assert map_section_to_act('29A', {}, 'civil') == 'Insolvency and Bankruptcy Code, 2016'
     assert map_section_to_act('7', {}, 'civil') == 'Insolvency and Bankruptcy Code, 2016'
+    # FIX 4 canonical STATUTE_MAP entries: bare "100" is CrPC and bare "105" is
+    # BNSS, so neither ever surfaces as the "Statute (verify)" placeholder.
+    assert map_section_to_act('100', {}, 'criminal') == 'Code of Criminal Procedure, 1973'
+    assert map_section_to_act('105', {}, 'criminal') == 'Bharatiya Nagarik Suraksha Sanhita, 2023'
+    # FIX 5 year-drift guard: a wrong enactment year is normalized to the real
+    # one by the statute post-processor, never passed through to the report.
+    assert map_section_to_act('100', {'100': 'Companies Act, 2015'}, 'criminal') == 'Companies Act, 2013'
+    assert map_section_to_act('105', {'105': 'Companies Act, 2014'}, 'criminal') == 'Companies Act, 2013'
 
     # Test dynamic evidence & risk
     ev_items = extract_evidence_items(VIKRAM_TEXT)

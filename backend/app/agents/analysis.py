@@ -616,51 +616,69 @@ CRITICAL RULES:
 # only when that path finds nothing usable, and the accepted clause is
 # re-validated as verbatim text from the document.
 CONCLUSION_EXTRACTION_PROMPT = """
-Extract the FINAL ORDER from the judgment. Look for:
-- The last numbered paragraph
-- Paragraphs containing: "allowed", "dismissed", "set aside", "affirmed", "decreed"
-- The operative part of the judgment
+Extract the FINAL ORDER / actual relief granted by the judgment.
 
 CRITICAL RULES:
-1. Quote the operative clause VERBATIM from the document; never paraphrase.
-2. DO NOT extract the opening paragraph or introduction.
-3. Do NOT return a placeholder such as "The petition is disposed of." when the
-   document states a specific outcome.
-4. If the document records NO final order (e.g., a submission-only dossier),
+1. Do NOT just grab the last paragraph of the text. A closing transmission
+   direction is not the outcome.
+2. Look FIRST for a section titled "CONCLUSION AND ORDER", "OPERATIVE ORDER",
+   "OPERATIVE PART", "IN THE RESULT", or "DISPOSITION" and extract from there.
+3. Extract ALL paragraphs that contain the actual relief granted. Look for
+   keywords: "allowed", "dismissed", "set aside", "affirmed", "decreed",
+   "released on bail", "personal bond".
+4. Quote the operative clause(s) VERBATIM from the document; never paraphrase
+   and never combine relief paragraphs into a summary.
+5. DO NOT extract the opening paragraph, the introduction, or procedural
+   registry directions ("The Registry is directed to transmit...").
+6. Example (bail order): the relief is "the petitioner is released on bail on
+   furnishing a personal bond of ..." — the later "Registry is directed to
+   transmit a copy" paragraph is NOT part of the conclusion.
+7. If the document records NO final order (e.g., a submission-only dossier),
    return an empty string rather than inventing an outcome.
 """ + UNIVERSAL_EXTRACTION_PROMPT
 
 # Fallback-only. Deterministic build_risk_strategy keeps the court's favorable
 # findings it can prove; this fills the gap only when it proved none.
 KEY_STRENGTHS_PROMPT = """
-Extract the Court's favorable findings for the Petitioner/Plaintiff from the
-judgment's reasoning section.
+Extract the Court's favorable findings for the Appellant/Petitioner, looking
+specifically in the "ANALYSIS AND REASONING" section of the judgment, or the
+"CONCLUSION AND ORDER"/"OPERATIVE ORDER" section when the reasoning is buried.
 
 CRITICAL RULES:
-1. Quote each finding VERBATIM from the reasoning/operative part of the
-   judgment (e.g. "the Tribunal failed to consider Ex. P-19 and Ex. P-23 ...").
-2. The finding must favour the Petitioner/Plaintiff: it either upholds their
+1. Look for paragraphs where the Court makes favorable rulings for the
+   Appellant/Petitioner. Keywords to look for: "We hold that", "The Court finds
+   that", "The High Court erred in", "It is held that", "The appeal is
+   allowed".
+2. Extract each finding VERBATIM from the reasoning section, or as close a
+   summary as the text allows.
+3. The finding must favour the Appellant/Petitioner: it either upholds their
    claim or criticises the reasoning against them.
-3. NEVER extract counsel submissions, procedural closings, or academic
-   commentary as if they were findings.
-4. NEVER invent findings that do not appear in the document.
-5. Do NOT use generic fallbacks like "No favorable findings extracted yet."
+4. NEVER extract counsel submissions, the issue list, procedural closings, or
+   academic commentary as if they were findings.
+5. NEVER invent findings that do not appear in the document.
+6. Do NOT use generic fallbacks like "No favorable findings extracted yet."
+   If no favorable finding exists, return an empty list — never a placeholder.
 """ + UNIVERSAL_EXTRACTION_PROMPT
 
 # Fallback-only. Mirrors KEY_STRENGTHS_PROMPT for the adverse side of the record.
 POTENTIAL_GAPS_PROMPT = """
-Extract the Court's findings that are unfavorable to the Petitioner/Plaintiff,
-or limitations in the Petitioner's case, from the judgment's reasoning section.
+Extract the Court's findings that are unfavorable to the Appellant/Petitioner,
+or limitations in the Appellant's case, looking specifically in the "ANALYSIS
+AND REASONING" section of the judgment, or the "CONCLUSION AND ORDER" section.
 
 CRITICAL RULES:
-1. Quote each finding VERBATIM from the reasoning/operative part of the
-   judgment (e.g. "no loss was proved under Section 74 of the Indian Contract
-   Act", "and in rest it is affirmed").
-2. The finding must go against the Petitioner/Plaintiff: part of the claim is
+1. Look for paragraphs where the Court notes limitations or unfavorable
+   findings. Keywords to look for: "However", "The appellants have not
+   provided", "The mere fact of".
+2. Extract each finding VERBATIM from the reasoning section, or as close a
+   summary as the text allows (e.g. "no loss was proved under Section 74 of the
+   Indian Contract Act", "and in rest it is affirmed").
+3. The finding must go against the Appellant/Petitioner: part of the claim is
    rejected, a condition is not proved, or most of the award is upheld.
-3. NEVER extract counsel submissions or academic commentary as gap findings.
-4. NEVER invent findings that do not appear in the document.
-5. Do NOT use generic fallbacks like "No adverse contentions extracted yet."
+4. NEVER extract counsel submissions or academic commentary as gap findings.
+5. NEVER invent findings that do not appear in the document.
+6. Do NOT use generic fallbacks like "No adverse contentions extracted yet."
+   If no adverse finding exists, return an empty list — never a placeholder.
 """ + UNIVERSAL_EXTRACTION_PROMPT
 
 STRATEGY_PROMPT = """
@@ -672,8 +690,9 @@ STRICT GROUNDING RULES:
 
 EXTRACTION RULES:
 - Strategic Ground: Extract the actual arguments made by the Appellant/Petitioner (look for "Mr. [Name] submitted..."). Do NOT use procedural closing lines like "Pending interlocutory applications...".
-- Key Strengths: Extract substantive favorable findings made by the Court (look for "We are of the view that...", "The circular fails..."). Do NOT use generic fallbacks.
+- Key Strengths: Extract substantive favorable findings made by the Court from the "ANALYSIS AND REASONING" section or the "CONCLUSION AND ORDER" section (look for "We hold that", "The Court finds that", "The High Court erred in", "It is held that", "The appeal is allowed", "We are of the view that...", "The circular fails..."). Do NOT use generic fallbacks.
 - Action Plan: Extract ONLY direct procedural orders/directions from the Court (look for "The Registry is directed...", "The appellants shall..."). Do NOT include legal reasoning or precedent citations.
+- ACTION-PLAN ISOLATION (MANDATORY): Build the Action Plan STRICTLY from the provided text of the CURRENT case only. Do not import procedural steps from any other case, general legal templates, or external knowledge, and do not hallucinate them. Look ONLY for the "CONCLUSION AND ORDER"/"OPERATIVE ORDER"/"IN THE RESULT"/"DISPOSITION" section in the provided text; if no operative order exists there, return an empty list rather than a generic step list.
 
 CRITICAL EXCLUSION RULE:
 - DO NOT extract text from sections titled "Case Study for Legal-AI", "Conclusion and References", "References", "Academic Case Dossier", or "Why this is a Cyber-Crime Case".
@@ -1264,7 +1283,30 @@ async def legal_research_agent(state: AgentState) -> AgentState:
             except Exception as e:
                 logger.warning(f"Failed to index case documents in KeywordRetriever: {e}")
 
-        rag_results = await rag.search(query, top_k=20)
+        rag_results = await rag.search(
+            query,
+            top_k=20,
+            filter_conditions={"case_id": state.get("case_id")} if state.get("case_id") else None,
+        )
+
+        # Context isolation (FIX 3): even with the Qdrant filter above, KG and
+        # citation retrievers can surface chunks whose provenance labels another
+        # case. Drop any result that is provably from a different case_id so the
+        # LLM never receives another case's text as context. Results without a
+        # case_id (law-corpus sections) are kept - they are the applicable law.
+        _this_case = str(state.get("case_id") or "")
+        if _this_case:
+            _isolated_results = []
+            for r in rag_results:
+                _prov = (r.get("metadata") or {}).get("case_id") or r.get("case_id")
+                if _prov and str(_prov) != _this_case:
+                    logger.warning(
+                        f"Dropping cross-case chunk (case {_prov}) from analysis of {_this_case}: "
+                        f"{str(r.get('text'))[:60]!r}"
+                    )
+                    continue
+                _isolated_results.append(r)
+            rag_results = _isolated_results
 
         # Extract section references from RAG results
         sections: list[dict[str, Any]] = []
