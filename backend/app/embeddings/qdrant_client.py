@@ -179,7 +179,8 @@ class QdrantManager:
             if "embedding" not in chunk:
                 continue
 
-            point_id = str(uuid.uuid4())
+            # Corpus imports provide deterministic IDs so reruns update points instead of duplicating them.
+            point_id = str(chunk.get("point_id") or uuid.uuid4())
             metadata = chunk.get("metadata", {}) or {}
             payload = {
                 "text": chunk.get("text", ""),

@@ -8,10 +8,10 @@ from sqlalchemy.future import select
 from loguru import logger
 
 from app.api.deps import require_user
-from app.db.session import get_db, async_session_factory
+from app.db.session import get_db
 from app.db.models import Case, Document
 from app.schemas import CaseResponse, CaseUpdate
-from app.document_pipeline.parser import DocumentParser
+from app.api.v1.documents import _process_upload_async
 
 router = APIRouter()
 
@@ -67,60 +67,33 @@ async def create_case(
                 detail="Failed to save document file",
             )
 
-        # Queue document processing as background task (non-blocking)
+        document = Document(
+            case_id=db_case.id,
+            filename=file.filename or safe_filename,
+            file_path=str(stored_path),
+            document_type="judgment",
+            status="uploaded",
+            mime_type=file.content_type,
+            file_size_bytes=file.size,
+        )
+        db.add(document)
+        await db.flush()
+        document_id = document.id
+        await db.commit()
+
+        # Use the same parsing and indexing pipeline as later document uploads.
         background_tasks.add_task(
-            _process_document_async,
+            _process_upload_async,
+            document_id,
             db_case.id,
             str(stored_path),
-            file.filename,
+            file.filename or safe_filename,
             file.content_type,
+            "judgment",
+            description,
         )
 
     return db_case
-
-
-async def _process_document_async(
-    case_id: str,
-    file_path: str,
-    original_filename: str,
-    mime_type: str,
-):
-    """Background task: parse document, save metadata, index chunks."""
-    import asyncio
-
-    def _sync_parse():
-        parser = DocumentParser()
-        return parser.parse(file_path, mime_type=mime_type)
-
-    try:
-        parsed_data = await asyncio.to_thread(_sync_parse)
-    except Exception as exc:
-        logger.warning(f"Parser failed for {original_filename}: {exc}")
-        parsed_data = {"text": f"[Error parsing text content: {exc}]", "page_count": 1, "metadata": {}}
-
-    from app.agents.metadata_extractor import extract_metadata
-    legal_meta = extract_metadata(parsed_data.get("text", ""))
-
-    async with async_session_factory() as session:
-        db_doc = Document(
-            case_id=case_id,
-            filename=original_filename,
-            file_path=file_path,
-            document_type="judgment",
-            status="uploaded",
-            parsed_text=parsed_data.get("text", ""),
-            raw_text=parsed_data.get("text", ""),
-            page_count=parsed_data.get("page_count", 1),
-            metadata_={
-                **(parsed_data.get("metadata") or {}),
-                **legal_meta,
-                "pages": parsed_data.get("pages", []),
-            },
-            mime_type=mime_type,
-        )
-        session.add(db_doc)
-        await session.commit()
-        logger.info(f"Background processed document {original_filename} for case {case_id}")
 
 
 @router.get("/", response_model=list[CaseResponse])
@@ -135,9 +108,6 @@ async def list_cases(
         .order_by(Case.created_at.desc())
     )
     cases = list(result.scalars().all())
-    if not cases:
-        res_all = await db.execute(select(Case).order_by(Case.created_at.desc()))
-        return list(res_all.scalars().all())
     return cases
 
 
@@ -152,9 +122,6 @@ async def get_case(
         select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     )
     case = result.scalar_one_or_none()
-    if not case:
-        result_any = await db.execute(select(Case).where(Case.id == case_id))
-        case = result_any.scalar_one_or_none()
     if not case:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -175,9 +142,6 @@ async def update_case(
         select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     )
     case = result.scalar_one_or_none()
-    if not case:
-        result_any = await db.execute(select(Case).where(Case.id == case_id))
-        case = result_any.scalar_one_or_none()
     if not case:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -205,9 +169,6 @@ async def delete_case(
     )
     case = result.scalar_one_or_none()
     if not case:
-        result_any = await db.execute(select(Case).where(Case.id == case_id))
-        case = result_any.scalar_one_or_none()
-    if not case:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Case not found",
@@ -215,12 +176,6 @@ async def delete_case(
     
     from app.db.models import Document, Analysis, Report
     from sqlalchemy import delete
-
-    # Collect filenames BEFORE row deletion so we can purge their vectors
-    doc_rows = await db.execute(
-        select(Document.filename).where(Document.case_id == case_id)
-    )
-    filenames = [f for f in doc_rows.scalars().all() if f]
 
     # Cascade delete child records manually to satisfy foreign key constraints
     await db.execute(delete(Document).where(Document.case_id == case_id))
@@ -238,7 +193,7 @@ async def delete_case(
         from app.embeddings.qdrant_client import get_qdrant_manager
 
         qdrant = get_qdrant_manager()
-        if qdrant.is_available() and filenames:
+        if qdrant.is_available():
             qdrant.client.delete(
                 collection_name=_settings.QDRANT_COLLECTION_DOCS,
                 points_selector=Filter(
@@ -247,11 +202,11 @@ async def delete_case(
                             key="doc_type",
                             match=MatchAny(any=["uploaded_document"]),
                         ),
-                        FieldCondition(key="source", match=MatchAny(any=filenames)),
+                        FieldCondition(key="case_id", match=MatchAny(any=[case_id])),
                     ]
                 ),
             )
-            logger.info(f"Purged Qdrant vectors for deleted case {case_id} ({len(filenames)} documents)")
+            logger.info(f"Purged Qdrant vectors for deleted case {case_id}")
     except Exception as exc:
         logger.warning(f"Qdrant vector cleanup failed for case {case_id}: {exc}")
 

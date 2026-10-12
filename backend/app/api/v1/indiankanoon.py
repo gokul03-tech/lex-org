@@ -5,13 +5,16 @@ from __future__ import annotations
 from typing import Any
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Case, Document
 from app.db.session import get_db
 from app.services.indiankanoon import IndianKanoonService
+from app.api.deps import require_user
+from app.api.v1.documents import _process_upload_async
+from pathlib import Path
 
 router = APIRouter()
 
@@ -45,11 +48,13 @@ async def get_judgment(doc_id: str) -> dict[str, Any]:
 async def import_judgment(
     case_id: str,
     doc_id: str,
+    background_tasks: BackgroundTasks,
+    current_user_id: str = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Fetch a judgment from Indian Kanoon and import it as a Document for a case."""
     # Verify the case exists
-    stmt = select(Case).where(Case.id == case_id)
+    stmt = select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     result = await db.execute(stmt)
     case_obj = result.scalar_one_or_none()
     if not case_obj:
@@ -78,17 +83,20 @@ async def import_judgment(
     char_count = len(parsed_text)
     word_count = len(parsed_text.split())
 
-    # Create new Document record
+    # Persist imported text and send it through the same indexing flow as uploads.
     document_id = str(uuid.uuid4())
+    import_dir = Path("./data/uploads")
+    import_dir.mkdir(parents=True, exist_ok=True)
+    file_path = import_dir / f"{uuid.uuid4().hex}_judgment_{doc_id}.txt"
+    file_path.write_text(raw_text, encoding="utf-8")
     doc_obj = Document(
         id=document_id,
         case_id=case_id,
         filename=f"judgment_{doc_id}.txt",
-        file_path=f"data/documents/judgment_{doc_id}.txt",
+        file_path=str(file_path),
         document_type="judgment",
         description=f"Imported from Indian Kanoon (TID: {doc_id})",
-        status="complete",  # Ready for RAG indexing
-        parsed_text=parsed_text,
+        status="uploaded",
         raw_text=raw_text,
         chunk_count=0,  # Will be populated when chunked
         metadata_={
@@ -105,7 +113,17 @@ async def import_judgment(
     )
 
     db.add(doc_obj)
-    await db.flush()
+    await db.commit()
+    background_tasks.add_task(
+        _process_upload_async,
+        document_id,
+        case_id,
+        str(file_path),
+        doc_obj.filename,
+        "text/plain",
+        "judgment",
+        doc_obj.description,
+    )
 
     return {
         "message": f"Successfully imported judgment '{title}' into case {case_id}",

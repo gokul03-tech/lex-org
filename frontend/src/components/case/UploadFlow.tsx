@@ -50,7 +50,10 @@ export function UploadFlow({ caseId, hasStoredDocs = false, onCompleted }: Uploa
     setAnalyzing(true);
     setStages(INITIAL_STAGES.map((s) => ({ ...s })));
 
-    const eventSource = new EventSource(`/api/v1/analysis/case/${caseId}/stream`);
+    const token = localStorage.getItem('access_token');
+    const streamUrl = new URL(`/api/v1/analysis/case/${caseId}/stream`, window.location.origin);
+    if (token) streamUrl.searchParams.set('token', token);
+    const eventSource = new EventSource(streamUrl.toString());
     eventSourceRef.current = eventSource;
 
     eventSource.onmessage = (event) => {
@@ -100,9 +103,22 @@ export function UploadFlow({ caseId, hasStoredDocs = false, onCompleted }: Uploa
 
     try {
       setUploadProgress(40);
-      await apiClient.post('/documents/upload', formData, {
+      const response = await apiClient.post('/documents/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
+      const documentId = response.data.id as string;
+      // The analysis stream requires the parsed document to be present. Poll
+      // its stable database ID rather than racing background extraction.
+      for (let attempt = 0; attempt < 180; attempt += 1) {
+        const statusResponse = await apiClient.get(`/documents/${documentId}/status`);
+        const documentStatus = statusResponse.data.status as string;
+        if (documentStatus === 'complete') break;
+        if (documentStatus === 'failed') {
+          throw new Error(statusResponse.data.processing_error || 'Document processing failed');
+        }
+        if (attempt === 179) throw new Error('Document processing timed out');
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      }
       setUploadProgress(100);
       setUploadingFile(false);
       startAnalysisStream();

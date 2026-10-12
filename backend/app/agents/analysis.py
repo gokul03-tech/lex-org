@@ -1596,7 +1596,7 @@ async def knowledge_graph_agent(state: AgentState) -> AgentState:
         return _record_completion(state, "knowledge_graph", confidence, "kg_data", kg_data)
 
     except Exception as exc:
-        logger.error(f"[KnowledgeGraph] Error: {exc}")
+        logger.warning(f"[KnowledgeGraph] Error: {exc}")
         state["errors"] = state.get("errors", []) + [f"KnowledgeGraph: {exc}"]
         state["kg_data"] = {"nodes": [], "edges": [], "status": "error", "error": str(exc)}
         return _record_completion(state, "knowledge_graph", 0.0, "kg_data", state["kg_data"])
@@ -1667,7 +1667,7 @@ Respond with JSON:
         return _record_completion(state, "evidence_reliability", confidence, "evidence_assessment", result)
 
     except Exception as exc:
-        logger.error(f"[EvidenceReliability] Error: {exc}")
+        logger.warning(f"[EvidenceReliability] Error: {exc}")
         state["errors"] = state.get("errors", []) + [f"EvidenceReliability: {exc}"]
         state["evidence_assessment"] = {"score": 0.0, "error": str(exc)}
         return _record_completion(state, "evidence_reliability", 0.0, "evidence_assessment", state["evidence_assessment"])
@@ -1815,6 +1815,8 @@ Respond with JSON:
             max_tokens=520,
         )
 
+        if not isinstance(result, dict):
+            result = {}
         state["procedural_status"] = result
         confidence = result.get("compliance_score", 0.5)
         duration_ms = (time.monotonic() - start_time) * 1000
@@ -1903,6 +1905,8 @@ system_prompt=QWEN_SYSTEM_PROMPT,
             max_tokens=1400,
         )
 
+        if not isinstance(result, dict):
+            result = {}
         irac_issues = [str(i).strip() for i in (result.get("issues_identified") or []) if str(i).strip()]
         irac_conclusion = str(result.get("conclusion") or "").strip()
 

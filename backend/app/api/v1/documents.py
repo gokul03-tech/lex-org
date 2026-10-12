@@ -20,6 +20,7 @@ router = APIRouter()
 
 
 async def _process_upload_async(
+    document_id: str,
     case_id: str,
     file_path: str,
     original_filename: str,
@@ -27,7 +28,7 @@ async def _process_upload_async(
     document_type: str,
     description: str | None,
 ):
-    """Background task: parse uploaded document, clean it, extract metadata, save to DB."""
+    """Parse, clean, index, and update the already-created document row."""
     import asyncio
 
     def _sync_parse():
@@ -35,10 +36,24 @@ async def _process_upload_async(
         return parser.parse(file_path, mime_type=mime_type)
 
     try:
+        async with async_session_factory() as session:
+            db_doc = await session.get(Document, document_id)
+            if not db_doc:
+                logger.error(f"Upload row {document_id} disappeared before processing")
+                return
+            db_doc.status = "parsing"
+            await session.commit()
+
         parsed_data = await asyncio.to_thread(_sync_parse)
     except Exception as exc:
         logger.warning(f"Parser failed for {original_filename}: {exc}")
-        parsed_data = {"text": f"[Error parsing text content: {exc}]", "page_count": 1, "metadata": {}}
+        async with async_session_factory() as session:
+            db_doc = await session.get(Document, document_id)
+            if db_doc:
+                db_doc.status = "failed"
+                db_doc.processing_error = str(exc)
+                await session.commit()
+        return
 
     # Normalise the parsed text before anything reads it. Uploads previously stored
     # the parser output verbatim, so HTML markup, page-number noise and encoding
@@ -70,28 +85,61 @@ async def _process_upload_async(
         cleaned_pages = parsed_data.get("pages") or [raw_text]
 
     from app.agents.metadata_extractor import extract_metadata
-    legal_meta = extract_metadata(cleaned_text)
+    try:
+        legal_meta = extract_metadata(cleaned_text)
+    except Exception as exc:
+        logger.warning(f"Metadata extraction failed for {original_filename}: {exc}")
+        legal_meta = {}
+
+    chunk_count = 0
+    index_warning = None
+    try:
+        from app.document_pipeline.chunker import LegalChunker
+        from app.embeddings.bge_m3 import get_bge_m3
+        from app.embeddings.qdrant_client import get_qdrant_manager
+        from app.core.config import settings
+
+        qdrant = get_qdrant_manager()
+        def _index_document():
+            if not qdrant.is_available():
+                return 0
+            qdrant.create_collections()
+            chunks = LegalChunker().chunk_pages(
+                cleaned_pages,
+                {"filename": original_filename, "source": original_filename,
+                 "doc_type": "uploaded_document", "case_id": case_id,
+                 "document_id": document_id},
+            )
+            if not chunks:
+                return 0
+            embedder = get_bge_m3()
+            embedder.load()
+            vectors = embedder.encode([chunk["text"] for chunk in chunks])
+            for chunk, vector in zip(chunks, vectors):
+                chunk["embedding"] = vector.tolist()
+            return qdrant.upsert_chunks(chunks, collection_name=settings.QDRANT_COLLECTION_DOCS)
+
+        chunk_count = await asyncio.to_thread(_index_document)
+        if not chunk_count:
+            index_warning = "Text parsed, but vector indexing was unavailable or produced no chunks."
+    except Exception as exc:
+        logger.warning(f"Vector indexing failed for {original_filename}: {exc}")
+        index_warning = f"Text parsed, but vector indexing failed: {exc}"
 
     async with async_session_factory() as session:
-        db_doc = Document(
-            case_id=case_id,
-            filename=original_filename,
-            file_path=file_path,
-            document_type=document_type,
-            description=description,
-            status="uploaded",
-            parsed_text=cleaned_text,
-            raw_text=raw_text,
-            page_count=parsed_data.get("page_count", 1),
-            metadata_={
-                **(parsed_data.get("metadata") or {}),
-                **legal_meta,
-                "pages": cleaned_pages,
-            },
-            mime_type=mime_type,
-        )
-        session.add(db_doc)
-        await session.commit()
+        db_doc = await session.get(Document, document_id)
+        if db_doc:
+            prior_metadata = db_doc.metadata_ or {}
+            db_doc.status = "complete"
+            db_doc.parsed_text = cleaned_text
+            db_doc.raw_text = raw_text
+            db_doc.page_count = parsed_data.get("page_count", 1)
+            db_doc.chunk_count = chunk_count
+            db_doc.processing_error = index_warning
+            db_doc.metadata_ = {
+                **prior_metadata, **(parsed_data.get("metadata") or {}), **legal_meta, "pages": cleaned_pages,
+            }
+            await session.commit()
         logger.info(f"Background processed document {original_filename} for case {case_id}")
 
 
@@ -141,13 +189,29 @@ async def upload_document(
             detail="Could not save file to server storage",
         )
 
-    # Queue document processing as background task (non-blocking)
+    db_doc = Document(
+        case_id=case_id,
+        filename=file.filename or safe_filename,
+        file_path=str(file_path),
+        document_type=document_type,
+        description=description,
+        status="uploaded",
+        mime_type=file.content_type,
+        file_size_bytes=file.size,
+    )
+    db.add(db_doc)
+    await db.flush()
+    document_id = db_doc.id
+    await db.commit()
+
+    # Queue document processing (non-blocking) against the persisted row.
     background_tasks.add_task(
         _process_upload_async,
+        document_id,
         case_id,
         str(file_path),
-        file.filename,
-        file.content_type,
+        file.filename or safe_filename,
+        file.content_type or "application/octet-stream",
         document_type,
         description,
     )
@@ -157,7 +221,7 @@ async def upload_document(
     await db.commit()
 
     return {
-        "id": str(uuid.uuid4()),
+        "id": document_id,
         "filename": file.filename,
         "status": "uploaded",
         "page_count": 0,
@@ -188,6 +252,7 @@ async def get_document_status(
         "id": doc.id,
         "status": doc.status,
         "filename": doc.filename,
+        "processing_error": doc.processing_error or "",
     }
 
 
@@ -259,11 +324,6 @@ async def get_case_primary_document_file(
         ).order_by(Document.created_at.desc())
     )
     doc = result.scalars().first()
-    if not doc:
-        result_any = await db.execute(
-            select(Document).where(Document.case_id == case_id).order_by(Document.created_at.desc())
-        )
-        doc = result_any.scalars().first()
     if not doc or not doc.file_path or not os.path.exists(doc.file_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

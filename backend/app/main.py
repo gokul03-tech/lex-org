@@ -80,7 +80,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             else:
                 logger.error("CRITICAL: FalkorDB is unavailable on port 6379! Knowledge Graph features will run in DEGRADED mode.")
         except Exception as f_exc:
-            logger.error(f"Startup FalkorDB connectivity check failed: {f_exc}")
+            logger.warning(f"Startup FalkorDB connectivity check skipped: {f_exc}")
 
         # Warm up ML models (BGE-M3 embedder + CrossEncoder reranker) in a background task
         # so server startup is instant (under 10ms) and does not block HTTP requests or reload events.

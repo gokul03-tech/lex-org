@@ -11,17 +11,14 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
-from loguru import logger
-
-from app.core.config import settings
 from app.core.security import decode_token
+from app.db.models import User
+from app.db.session import get_db
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # OAuth2 scheme for extracting Bearer tokens from Authorization header
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
-
-# Default dev user fallback to prevent 401 disruptions during local development and presentations
-DEV_FALLBACK_USER_ID = "6d2b5644-2791-4bfd-a9c3-f40cce9b5d8a"
-
 
 async def get_current_user_id(
     token: Annotated[str | None, Depends(oauth2_scheme)] = None,
@@ -30,29 +27,24 @@ async def get_current_user_id(
     """Extract the current user ID from a JWT Bearer token or ?token= query parameter.
 
     Returns None when no token is provided.
-    In development mode, gracefully falls back rather than breaking demo flows.
+    Missing or invalid tokens are rejected in every environment.
     """
     raw_token = token or token_query
     if raw_token is None:
-        if settings.APP_ENV == "development" or settings.DEBUG:
-            return DEV_FALLBACK_USER_ID
         return None
 
     try:
         payload = decode_token(raw_token)
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Access token required")
         user_id: str | None = payload.get("sub")
         if user_id is None:
-            if settings.APP_ENV == "development" or settings.DEBUG:
-                return DEV_FALLBACK_USER_ID
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token: missing subject claim",
             )
         return user_id
     except JWTError as exc:
-        if settings.APP_ENV == "development" or settings.DEBUG:
-            logger.warning(f"Development token decode fallback ({exc})")
-            return DEV_FALLBACK_USER_ID
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid or expired token: {exc}",
@@ -64,13 +56,23 @@ async def require_user(
 ) -> str:
     """Require an authenticated user. Raises 401 if no valid token is present."""
     if user_id is None:
-        if settings.APP_ENV == "development" or settings.DEBUG:
-            return DEV_FALLBACK_USER_ID
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    return user_id
+
+
+async def require_admin(
+    user_id: Annotated[str, Depends(require_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> str:
+    """Require an active admin account; a token role claim alone is insufficient."""
+    result = await db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))
+    user = result.scalar_one_or_none()
+    if not user or (user.role != "admin" and not user.is_superuser):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator access required")
     return user_id
 
 

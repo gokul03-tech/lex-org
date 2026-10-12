@@ -61,7 +61,7 @@ class EmbeddingGenerator:
             if "cuda" in str(self.device):
                 self._model.half()
             self._backend = "sentence_transformers"
-            dim = self._model.get_sentence_embedding_dimension()
+            dim = self._model.get_embedding_dimension()
             logger.info(f"Loaded embedding model: {self.model_name} (dim={dim}, device={self.device})")
             return
         except ImportError:
@@ -88,6 +88,12 @@ class EmbeddingGenerator:
 
         if not texts:
             return np.zeros((0, self.vector_size), dtype=np.float32)
+
+        # Load the configured model on the first non-empty embedding request.
+        # Without this call the backend stayed unset and every embedding used
+        # the random fallback, even when sentence-transformers was installed.
+        if self._backend is None:
+            self._load_model()
 
         if self._backend == "sentence_transformers" and self._model is not None:
             return self._embed_sentence_transformers(texts)
@@ -146,5 +152,5 @@ class EmbeddingGenerator:
     def get_embedding_dimension(self) -> int:
         """Get the embedding vector dimension."""
         if self._backend == "sentence_transformers" and self._model is not None:
-            return self._model.get_sentence_embedding_dimension()
+            return self._model.get_embedding_dimension()
         return self.vector_size

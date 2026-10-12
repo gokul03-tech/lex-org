@@ -635,15 +635,39 @@ async def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc
         explanation_graph=kg_data,
     )
 
+    pipeline_report = state.get("final_report") or {}
+    pipeline_sections = pipeline_report.get("sections") if isinstance(pipeline_report, dict) else None
+    if isinstance(pipeline_sections, list) and len(pipeline_sections) == 16:
+        report_sections = [dict(section) for section in pipeline_sections if isinstance(section, dict)]
+        if report_sections and report_sections[0].get("title") == "Executive Summary":
+            report_sections[0]["title"] = "Summary"
+    else:
+        # Keep the persisted report at the documented 16-section shape even
+        # when a model run fails before the report-generation agent completes.
+        report_sections = [
+            {"title": "Summary", "content": state.get("case_summary", "No summary generated."), "order": 1},
+            {"title": "Case Facts", "content": state.get("case_facts", {}), "order": 2},
+            {"title": "Legal Issues", "content": state.get("legal_issues", []), "order": 3},
+            {"title": "Applicable Acts", "content": state.get("applicable_acts", []), "order": 4},
+            {"title": "Applicable Sections", "content": state.get("applicable_sections", []), "order": 5},
+            {"title": "Supporting Judgments", "content": state.get("precedents", []), "order": 6},
+            {"title": "Evidence Analysis", "content": state.get("evidence_assessment", {}), "order": 7},
+            {"title": "Contradiction Analysis", "content": state.get("contradictions", []), "order": 8},
+            {"title": "Risk Assessment", "content": risk_analysis, "order": 9},
+            {"title": "Procedural Compliance", "content": doc_info, "order": 10},
+            {"title": "Strategy Recommendation", "content": arguments_data, "order": 11},
+            {"title": "Trust Score", "content": trust_score, "order": 12},
+            {"title": "Confidence Scores", "content": confidence_scores, "order": 13},
+            {"title": "Explainability Graph", "content": kg_data, "order": 14},
+            {"title": "Knowledge Graph Snapshot", "content": kg_data, "order": 15},
+            {"title": "References and Disclaimer", "content": "AI-generated advisory material; verify authorities and conclusions with qualified counsel.", "order": 16},
+        ]
+
     report = Report(
         case_id=case.id,
         analysis_id=analysis.id,
         title=f"Legal Brief & Multi-Agent Advisory: {clean_title}",
-        sections=[
-            {"title": "Summary", "content": state.get("case_summary", "No summary generated."), "order": 1},
-            {"title": "Opinion", "content": state.get("legal_reasoning", "No opinion compiled."), "order": 2},
-            {"title": "Arguments", "content": arguments_data, "order": 3}
-        ],
+        sections=report_sections,
         trust_score=trust_score,
         confidence_scores=confidence_scores,
         explanation_graph=kg_data,
@@ -668,14 +692,11 @@ async def analyze_case(
     Old analysis rows are purged before inserting the fresh result so that
     subsequent GET calls never serve stale data.
     """
-    # Verify case ownership with fallback
+    # Verify case ownership.
     result = await db.execute(
         select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     )
     case = result.scalar_one_or_none()
-    if not case:
-        result_any = await db.execute(select(Case).where(Case.id == case_id))
-        case = result_any.scalar_one_or_none()
     if not case:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -756,14 +777,11 @@ async def get_analysis(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any] | None:
     """Get the latest analysis results for a case."""
-    # Verify case ownership with fallback
+    # Verify case ownership.
     c_result = await db.execute(
         select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     )
     case = c_result.scalar_one_or_none()
-    if not case:
-        c_any = await db.execute(select(Case).where(Case.id == case_id))
-        case = c_any.scalar_one_or_none()
     if not case:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1014,11 +1032,12 @@ async def get_analysis(
 async def stream_analysis(
     case_id: str,
     request: Request,
+    current_user_id: str = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """Stream real-time analysis progress via SSE."""
-    # Look up case and document
-    result = await db.execute(select(Case).where(Case.id == case_id))
+    # Look up only a case owned by the authenticated user.
+    result = await db.execute(select(Case).where(Case.id == case_id, Case.user_id == current_user_id))
     case = result.scalar_one_or_none()
     if not case:
         raise HTTPException(
@@ -1192,15 +1211,10 @@ async def chat_about_document(
         raise HTTPException(status_code=400, detail="Question is required")
         
     # Verify case
-    c_result = await db.execute(
-        select(Case).where((Case.id == case_id) & ((Case.user_id == current_user_id) | (Case.user_id.is_(None))))
-    )
+    c_result = await db.execute(select(Case).where(Case.id == case_id, Case.user_id == current_user_id))
     case = c_result.scalar_one_or_none()
     if not case:
-        c_any = await db.execute(select(Case).where(Case.id == case_id))
-        case = c_any.scalar_one_or_none()
-        if not case:
-            raise HTTPException(status_code=404, detail="Case directory not found")
+        raise HTTPException(status_code=404, detail="Case directory not found")
 
     context_parts: list[str] = []
     citations: list[str] = []
@@ -1292,7 +1306,7 @@ async def generate_case_draft(
     draft_type = body.get("draft_type", "written_arguments")
     
     c_result = await db.execute(
-        select(Case).where(Case.id == case_id)
+        select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     )
     case = c_result.scalar_one_or_none()
     if not case:

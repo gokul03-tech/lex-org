@@ -21,6 +21,8 @@ async def register(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """Register a new user account."""
+    if user_in.role.value == "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator accounts cannot be self-registered.")
     # Check if user already exists
     result = await db.execute(select(User).where(User.email == user_in.email))
     user = result.scalar_one_or_none()
