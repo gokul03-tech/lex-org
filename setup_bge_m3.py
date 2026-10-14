@@ -4,7 +4,9 @@ from huggingface_hub import snapshot_download
 from FlagEmbedding import BGEM3FlagModel
 
 # Define paths
-BASE_DIR = "/home/gokul/Downloads/final-year-project/models"
+BASE_DIR = os.environ.get(
+    "LEXORCH_MODELS_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+)
 MODEL_DIR = os.path.join(BASE_DIR, "bge-m3")
 MODEL_ID = "BAAI/bge-m3"
 

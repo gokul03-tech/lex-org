@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any
 import uuid
+from pathlib import Path
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import require_user
 from app.db.models import Case, Document
 from app.db.session import get_db
 from app.services.indiankanoon import IndianKanoonService
@@ -20,6 +22,7 @@ router = APIRouter()
 async def search_judgments(
     query: str = Query(..., description="Search query string"),
     page: int = Query(0, ge=0, description="Page index (starts at 0)"),
+    current_user_id: str = Depends(require_user),
 ) -> dict[str, Any]:
     """Search for judgments in the Indian Kanoon database."""
     service = IndianKanoonService()
@@ -31,7 +34,10 @@ async def search_judgments(
 
 
 @router.get("/doc/{doc_id}")
-async def get_judgment(doc_id: str) -> dict[str, Any]:
+async def get_judgment(
+    doc_id: str,
+    current_user_id: str = Depends(require_user),
+) -> dict[str, Any]:
     """Fetch details/text of a specific judgment by document ID."""
     service = IndianKanoonService()
     try:
@@ -45,11 +51,13 @@ async def get_judgment(doc_id: str) -> dict[str, Any]:
 async def import_judgment(
     case_id: str,
     doc_id: str,
+    background_tasks: BackgroundTasks,
+    current_user_id: str = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Fetch a judgment from Indian Kanoon and import it as a Document for a case."""
-    # Verify the case exists
-    stmt = select(Case).where(Case.id == case_id)
+    # Verify the case exists and belongs to the authenticated user.
+    stmt = select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     result = await db.execute(stmt)
     case_obj = result.scalar_one_or_none()
     if not case_obj:
@@ -59,7 +67,10 @@ async def import_judgment(
     try:
         judgment_data = await service.get_judgment(doc_id)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch judgment from Indian Kanoon: {str(exc)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch judgment from Indian Kanoon: {exc}",
+        )
 
     # Extract metadata/text
     title = judgment_data.get("title", f"Indian Kanoon Judgment {doc_id}")
@@ -69,28 +80,29 @@ async def import_judgment(
     publishdate = judgment_data.get("publishdate", "")
     docsource = judgment_data.get("docsource", "")
 
-    # Clean text if available
-    from app.document_pipeline.cleaner import TextCleaner
-    cleaner = TextCleaner()
-    parsed_text = cleaner.clean(raw_text)
-
-    # Count characters/words as metadata
-    char_count = len(parsed_text)
-    word_count = len(parsed_text.split())
-
-    # Create new Document record
+    # Persist the fetched text to disk so the shared ingestion lifecycle
+    # (parse -> chunk -> embed -> index) can process it uniformly.
     document_id = str(uuid.uuid4())
+    relative_path = Path("data/documents") / f"judgment_{doc_id}.txt"
+    file_path = Path("data/documents")
+    file_path.mkdir(parents=True, exist_ok=True)
+    with open(relative_path, "w", encoding="utf-8") as handle:
+        handle.write(raw_text or "")
+
+    char_count = len(raw_text or "")
+    word_count = len((raw_text or "").split())
+
     doc_obj = Document(
         id=document_id,
         case_id=case_id,
         filename=f"judgment_{doc_id}.txt",
-        file_path=f"data/documents/judgment_{doc_id}.txt",
+        file_path=str(relative_path),
         document_type="judgment",
         description=f"Imported from Indian Kanoon (TID: {doc_id})",
-        status="complete",  # Ready for RAG indexing
-        parsed_text=parsed_text,
+        status="uploaded",
         raw_text=raw_text,
-        chunk_count=0,  # Will be populated when chunked
+        chunk_count=0,
+        mime_type="text/plain",
         metadata_={
             "tid": doc_id,
             "title": title,
@@ -105,7 +117,12 @@ async def import_judgment(
     )
 
     db.add(doc_obj)
-    await db.flush()
+    case_obj.status = "documents_uploaded"
+    await db.commit()
+
+    from app.document_pipeline.ingestion import ingest_document
+
+    background_tasks.add_task(ingest_document, document_id)
 
     return {
         "message": f"Successfully imported judgment '{title}' into case {case_id}",

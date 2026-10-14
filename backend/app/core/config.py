@@ -12,6 +12,11 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Repository-relative locations, resolved from this file so no developer's
+# absolute home directory is ever baked into defaults.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+_MODELS_DIR = _PROJECT_ROOT / "models"
+
 
 class Settings(BaseSettings):
     """Application-wide settings loaded from environment variables."""
@@ -30,7 +35,8 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     SECRET_KEY: str = ""  # Defaults to a random ephemeral key via validator below.
     API_PREFIX: str = "/api/v1"
-    PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent.parent
+    PROJECT_ROOT: Path = _PROJECT_ROOT
+    MODELS_DIR: Path = _MODELS_DIR
 
     def model_post_init(self, __context) -> None:
         """Generate an ephemeral SECRET_KEY when none is configured."""
@@ -76,11 +82,11 @@ class Settings(BaseSettings):
 
     # ── LLM Configuration ───────────────────────────────────────
     LLM_BACKEND: Literal["llama_cpp", "mock", "openai_compatible", "transformers"] = "llama_cpp"
-    QWEN_MODEL_PATH: str = "/home/gokul/Downloads/final-year-project/models/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
-    DEEPSEEK_MODEL_PATH: str = "/home/gokul/Downloads/final-year-project/models/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
-    LLM_N_CTX: int = 8192
-    LLM_N_THREADS: int = 8
-    LLM_N_GPU_LAYERS: int = 15
+    QWEN_MODEL_PATH: str = str(_MODELS_DIR / "Qwen2.5-3B-Instruct-Q4_K_M.gguf")
+    DEEPSEEK_MODEL_PATH: str = str(_MODELS_DIR / "Qwen2.5-3B-Instruct-Q4_K_M.gguf")
+    LLM_N_CTX: int = 2048
+    LLM_N_THREADS: int = 4
+    LLM_N_GPU_LAYERS: int = 12
     LLM_TEMPERATURE: float = 0.0
     LLM_MAX_TOKENS: int = 2048
 
@@ -100,9 +106,8 @@ class Settings(BaseSettings):
     INDIANKANOON_API_BASE: str = "https://api.indiankanoon.org"
 
     # ── Embedding Model ─────────────────────────────────────────
-    # Local storage for model weights (repo-root/models). Used to avoid
-    # re-downloading models from the Hugging Face Hub on every startup.
-    MODELS_DIR: Path = Path(__file__).resolve().parents[3] / "models"
+    # MODELS_DIR (defined above) points at repo-root/models so weights are
+    # not re-downloaded from the Hugging Face Hub on every startup.
     EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"
     # Optional Hugging Face token (authenticates Hub metadata checks).
     HF_TOKEN: str = ""

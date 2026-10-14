@@ -5,94 +5,19 @@ import shutil
 import uuid
 from pathlib import Path
 from typing import Annotated, Any
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.background import BackgroundTasks
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from loguru import logger
 
 from app.api.deps import require_user
-from app.db.session import get_db, async_session_factory
-from app.db.models import Document, Case
-from app.document_pipeline.parser import DocumentParser
+from app.db.models import Case, Document
+from app.db.session import get_db
+from app.document_pipeline.ingestion import ingest_document
 
 router = APIRouter()
-
-
-async def _process_upload_async(
-    case_id: str,
-    file_path: str,
-    original_filename: str,
-    mime_type: str,
-    document_type: str,
-    description: str | None,
-):
-    """Background task: parse uploaded document, clean it, extract metadata, save to DB."""
-    import asyncio
-
-    def _sync_parse():
-        parser = DocumentParser()
-        return parser.parse(file_path, mime_type=mime_type)
-
-    try:
-        parsed_data = await asyncio.to_thread(_sync_parse)
-    except Exception as exc:
-        logger.warning(f"Parser failed for {original_filename}: {exc}")
-        parsed_data = {"text": f"[Error parsing text content: {exc}]", "page_count": 1, "metadata": {}}
-
-    # Normalise the parsed text before anything reads it. Uploads previously stored
-    # the parser output verbatim, so HTML markup, page-number noise and encoding
-    # artifacts flowed straight into metadata extraction and every downstream
-    # agent - which is how tags surfaced in Devil's Advocate and the strategy
-    # roadmap. raw_text keeps the untouched parser output.
-    from app.document_pipeline.cleaner import TextCleaner
-
-    def _sync_clean():
-        cleaner = TextCleaner()
-        raw_text = parsed_data.get("text", "") or ""
-        raw_pages = parsed_data.get("pages") or [raw_text]
-        # clean_pages drops headers/footers that repeat across pages, which is
-        # where a running title ("Cyber Crime Case Document - X v. Y") and the
-        # page stamps live in a 15+ page judgment or dossier.
-        cleaned_pages = cleaner.clean_pages(raw_pages)
-        cleaned_text = "\n\n".join(cleaned_pages).strip() or cleaner.clean(raw_text)
-        if not cleaned_text.strip():
-            # Never overwrite usable content with an empty result.
-            cleaned_text, cleaned_pages = raw_text, raw_pages
-        return raw_text, cleaned_text, cleaned_pages
-
-    try:
-        raw_text, cleaned_text, cleaned_pages = await asyncio.to_thread(_sync_clean)
-    except Exception as exc:
-        logger.warning(f"Cleaner failed for {original_filename}: {exc}")
-        raw_text = parsed_data.get("text", "") or ""
-        cleaned_text = raw_text
-        cleaned_pages = parsed_data.get("pages") or [raw_text]
-
-    from app.agents.metadata_extractor import extract_metadata
-    legal_meta = extract_metadata(cleaned_text)
-
-    async with async_session_factory() as session:
-        db_doc = Document(
-            case_id=case_id,
-            filename=original_filename,
-            file_path=file_path,
-            document_type=document_type,
-            description=description,
-            status="uploaded",
-            parsed_text=cleaned_text,
-            raw_text=raw_text,
-            page_count=parsed_data.get("page_count", 1),
-            metadata_={
-                **(parsed_data.get("metadata") or {}),
-                **legal_meta,
-                "pages": cleaned_pages,
-            },
-            mime_type=mime_type,
-        )
-        session.add(db_doc)
-        await session.commit()
-        logger.info(f"Background processed document {original_filename} for case {case_id}")
 
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
@@ -106,10 +31,12 @@ async def upload_document(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Upload a legal document (PDF, DOCX, TXT) for processing and auto-parse it.
-    
-    Document parsing happens asynchronously via background task to avoid blocking.
+
+    The Document row is created synchronously so the response returns a stable
+    document id; parsing, cleaning, chunking, embedding and Qdrant indexing run
+    asynchronously via a background task that advances the document status.
     """
-    # Verify case exists and belongs to user
+    # Verify case exists and belongs to the authenticated user.
     result = await db.execute(
         select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     )
@@ -129,7 +56,7 @@ async def upload_document(
     safe_filename = Path(file.filename or "unnamed").name
     stored_name = f"{uuid.uuid4().hex}_{safe_filename}"
     file_path = upload_dir / stored_name
-    
+
     # Save the file to disk
     try:
         with open(file_path, "wb") as buffer:
@@ -141,25 +68,32 @@ async def upload_document(
             detail="Could not save file to server storage",
         )
 
-    # Queue document processing as background task (non-blocking)
-    background_tasks.add_task(
-        _process_upload_async,
-        case_id,
-        str(file_path),
-        file.filename,
-        file.content_type,
-        document_type,
-        description,
+    # Persist the Document row before returning so the response carries the real,
+    # stable document id (previously a random UUID unrelated to the DB row).
+    db_doc = Document(
+        case_id=case_id,
+        filename=file.filename or safe_filename,
+        file_path=str(file_path),
+        document_type=document_type,
+        description=description,
+        status="uploaded",
+        chunk_count=0,
+        mime_type=file.content_type,
+        file_size_bytes=os.path.getsize(file_path) if os.path.exists(file_path) else None,
     )
+    db.add(db_doc)
 
-    # Update case status immediately
     case.status = "documents_uploaded"
     await db.commit()
+    await db.refresh(db_doc)
+
+    # Parse, clean, chunk, embed and index out-of-band (advances status).
+    background_tasks.add_task(ingest_document, db_doc.id)
 
     return {
-        "id": str(uuid.uuid4()),
-        "filename": file.filename,
-        "status": "uploaded",
+        "id": db_doc.id,
+        "filename": db_doc.filename,
+        "status": db_doc.status,
         "page_count": 0,
         "case_id": case_id,
     }
@@ -201,10 +135,10 @@ async def list_documents(
     query = select(Document).join(Case).where(Case.user_id == current_user_id)
     if case_id:
         query = query.where(Document.case_id == case_id)
-        
+
     result = await db.execute(query)
     docs = result.scalars().all()
-    
+
     return [
         {
             "id": doc.id,
@@ -259,11 +193,6 @@ async def get_case_primary_document_file(
         ).order_by(Document.created_at.desc())
     )
     doc = result.scalars().first()
-    if not doc:
-        result_any = await db.execute(
-            select(Document).where(Document.case_id == case_id).order_by(Document.created_at.desc())
-        )
-        doc = result_any.scalars().first()
     if not doc or not doc.file_path or not os.path.exists(doc.file_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -274,4 +203,3 @@ async def get_case_primary_document_file(
         media_type=doc.mime_type or "application/pdf",
         filename=doc.filename,
     )
-

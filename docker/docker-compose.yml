@@ -57,7 +57,7 @@ services:
   # ── Backend (FastAPI) ──────────────────────────────────────
   backend:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
     container_name: lexorch-backend
     ports:
@@ -77,11 +77,11 @@ services:
       - SANDBOX_BACKEND=process
       - LOG_FORMAT=json
     volumes:
-      - ./data:/app/data
-      - ./datasets:/app/datasets:ro
-      - ./logs:/app/logs
-      - ./outputs:/app/outputs
-      - ./configs:/app/configs:ro
+      - ../data:/app/data
+      - ../datasets:/app/datasets:ro
+      - ../logs:/app/logs
+      - ../outputs:/app/outputs
+      - ../configs:/app/configs:ro
       # Model volumes (uncomment when models are available)
       # - /path/to/models:/app/models:ro
     depends_on:
@@ -96,7 +96,7 @@ services:
   # ── Celery Worker ──────────────────────────────────────────
   celery-worker:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
     container_name: lexorch-celery-worker
     command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
@@ -115,10 +115,11 @@ services:
       - SANDBOX_BACKEND=process
       - LOG_FORMAT=json
     volumes:
-      - ./data:/app/data
-      - ./datasets:/app/datasets:ro
-      - ./logs:/app/logs
-      - ./outputs:/app/outputs
+      - ../data:/app/data
+      - ../datasets:/app/datasets:ro
+      - ../logs:/app/logs
+      - ../outputs:/app/outputs
+      - ../configs:/app/configs:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -127,7 +128,7 @@ services:
   # ── Frontend (Nginx + Vite Build) ──────────────────────────
   frontend:
     build:
-      context: ./frontend
+      context: ../frontend
       dockerfile: Dockerfile
     container_name: lexorch-frontend
     ports:

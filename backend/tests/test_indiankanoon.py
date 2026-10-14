@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 from app.api.v1.indiankanoon import import_judgment
 from app.services.indiankanoon import IndianKanoonService
@@ -76,6 +76,7 @@ async def test_import_judgment_success() -> None:
     mock_db.execute = AsyncMock(return_value=mock_case_result)
     mock_db.add = MagicMock()
     mock_db.flush = AsyncMock()
+    mock_db.commit = AsyncMock()
 
     # Mock the get_judgment service method
     mock_judgment_data = {
@@ -87,12 +88,16 @@ async def test_import_judgment_success() -> None:
         "docsource": "Supreme Court",
     }
 
-    with patch.object(IndianKanoonService, "get_judgment", new_callable=AsyncMock) as mock_get_judgment:
+    with patch.object(
+        IndianKanoonService, "get_judgment", new_callable=AsyncMock
+    ) as mock_get_judgment:
         mock_get_judgment.return_value = mock_judgment_data
 
         response = await import_judgment(
             case_id="test-case-id",
             doc_id="9999",
+            background_tasks=BackgroundTasks(),
+            current_user_id="test-user-id",
             db=mock_db,
         )
 
@@ -121,6 +126,8 @@ async def test_import_judgment_case_not_found() -> None:
         await import_judgment(
             case_id="invalid-case-id",
             doc_id="9999",
+            background_tasks=BackgroundTasks(),
+            current_user_id="test-user-id",
             db=mock_db,
         )
 

@@ -26,13 +26,19 @@ You are a legal metadata extractor. Read the HEADER and SIGNATURE BLOCK of the p
 4. Court Name: Extract the full court name from the header.
 5. Judge(s)/Bench Name: Extract ALL judges listed in the header or signature block, separated by commas. Do not stop after the first judge.
 6. Decision Date: The Decision Date is ALWAYS the date found in the signature
-   block at the very END of the document (e.g., "NEW DELHI \n 12 OCTOBER 2024").
-   Dates appearing in the first 20% of the text (FIR date, complaint date,
-   transaction date, incident date, lower-court date) are EVENT dates, NOT the
-   decision date - ignore them even when they look like a full judgment date.
+   block at the very END of the document (e.g., "NEW DELHI \n 18.11.2023").
+   Dates appearing in the first 30% of the text (Incorporation Date, FIR date,
+   complaint date, transaction date, incident date, lower-court date) are EVENT
+   dates, NOT the decision date - ignore them even when they look like a full
+   judgment date.
    Do NOT use dates from appeal numbers, citations, or "on [date]" case
    headings unless that same date also appears in the signature block.
-7. Case Number: Extract the main case number from the header (e.g., "CIVIL APPEAL NO. 4521 OF 2024"). Do NOT use High Court WP numbers mentioned in the body text.
+7. Case Number: Extract the main case number from the header, prioritizing
+   "Criminal Petition No.", "Writ Petition No.", "O.S. No.", "C.P. No.",
+   "Civil Appeal No.", "Criminal Appeal No." patterns (e.g., "CIVIL APPEAL NO.
+   4521 OF 2024"). Do NOT use HIGHER-priority underlying numbers such as "FIR
+   No.", "Incorporation No.", lower court numbers, or High Court WP numbers
+   mentioned in the body text.
 8. Report Reference: RULE FOR REPORT REFERENCE:
 - Extract the citation of the CURRENT case only.
 - For the Suhas Katti case, the Report Reference is "C.C. No. 4680 of 2004".
@@ -51,8 +57,8 @@ The following rules are mandatory for ALL document types (Standard Judgments, Ac
 - Treat such disclaimers as document metadata noise only.
 
 ### RULE 2: METADATA (DATES, NUMBERS, PROCEDURAL STAGE)
-1. DECISION DATE: Extract ONLY from the SIGNATURE BLOCK (very end of document, typically last 500 characters). If a date appears in the first 20% of the text (FIR date, complaint date, transaction date, citation date), treat it as an EVENT date, NOT the judgment/order date.
-2. CASE NUMBER: Extract the MAIN appellate/petition number (e.g., "Criminal Petition No. 2458 of 2023", "O.S. No. 142 of 2025", "Criminal Appeal No."). NEVER use an underlying FIR number or lower court number as the main case number.
+1. DECISION DATE: Extract ONLY from the SIGNATURE BLOCK (very end of document, typically last 500 characters). If a date appears in the first 30% of the text (Incorporation Date, FIR date, complaint date, transaction date, citation date), treat it as an EVENT date, NOT the judgment/order date. Never let an incorporation, FIR, or transaction date become the Decision Date.
+2. CASE NUMBER: Extract the MAIN appellate/petition number, prioritizing "Criminal Petition No.", "Writ Petition No.", "O.S. No.", "C.P. No.", "Civil Appeal No." (e.g., "Criminal Petition No. 2458 of 2023", "O.S. No. 142 of 2025", "Criminal Appeal No."). NEVER use an underlying FIR number, Incorporation number, or lower court number as the main case number.
 3. PROCEDURAL STAGE: Identify the actual current proceeding (e.g., "Section 482 Quashing Petition", "Civil Suit for Recovery", "Criminal Appeal", "Writ Petition", "Regular Bail/Anticipatory Bail") rather than the underlying crime/dispute.
 
 ### RULE 3: ISSUE EXTRACTION (COMPLETE, NO TRUNCATION)

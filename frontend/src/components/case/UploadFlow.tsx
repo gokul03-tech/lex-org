@@ -50,7 +50,13 @@ export function UploadFlow({ caseId, hasStoredDocs = false, onCompleted }: Uploa
     setAnalyzing(true);
     setStages(INITIAL_STAGES.map((s) => ({ ...s })));
 
-    const eventSource = new EventSource(`/api/v1/analysis/case/${caseId}/stream`);
+    // EventSource cannot set an Authorization header, so the bearer token is
+    // passed as a query parameter (the backend accepts `?token=` for SSE).
+    const token = localStorage.getItem('access_token');
+    const streamUrl = `/api/v1/analysis/case/${caseId}/stream${
+      token ? `?token=${encodeURIComponent(token)}` : ''
+    }`;
+    const eventSource = new EventSource(streamUrl);
     eventSourceRef.current = eventSource;
 
     eventSource.onmessage = (event) => {

@@ -668,14 +668,11 @@ async def analyze_case(
     Old analysis rows are purged before inserting the fresh result so that
     subsequent GET calls never serve stale data.
     """
-    # Verify case ownership with fallback
+    # Verify case exists and belongs to the authenticated user.
     result = await db.execute(
         select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     )
     case = result.scalar_one_or_none()
-    if not case:
-        result_any = await db.execute(select(Case).where(Case.id == case_id))
-        case = result_any.scalar_one_or_none()
     if not case:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -756,14 +753,11 @@ async def get_analysis(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any] | None:
     """Get the latest analysis results for a case."""
-    # Verify case ownership with fallback
+    # Verify case exists and belongs to the authenticated user.
     c_result = await db.execute(
         select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     )
     case = c_result.scalar_one_or_none()
-    if not case:
-        c_any = await db.execute(select(Case).where(Case.id == case_id))
-        case = c_any.scalar_one_or_none()
     if not case:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1014,11 +1008,18 @@ async def get_analysis(
 async def stream_analysis(
     case_id: str,
     request: Request,
+    current_user_id: str = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
-    """Stream real-time analysis progress via SSE."""
-    # Look up case and document
-    result = await db.execute(select(Case).where(Case.id == case_id))
+    """Stream real-time analysis progress via SSE.
+
+    Authentication is supplied via the ``?token=`` query parameter because the
+    browser EventSource API cannot set an Authorization header.
+    """
+    # Look up case scoped to the authenticated owner.
+    result = await db.execute(
+        select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
+    )
     case = result.scalar_one_or_none()
     if not case:
         raise HTTPException(
@@ -1191,16 +1192,13 @@ async def chat_about_document(
     if not question:
         raise HTTPException(status_code=400, detail="Question is required")
         
-    # Verify case
+    # Verify case exists and belongs to the authenticated user.
     c_result = await db.execute(
-        select(Case).where((Case.id == case_id) & ((Case.user_id == current_user_id) | (Case.user_id.is_(None))))
+        select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     )
     case = c_result.scalar_one_or_none()
     if not case:
-        c_any = await db.execute(select(Case).where(Case.id == case_id))
-        case = c_any.scalar_one_or_none()
-        if not case:
-            raise HTTPException(status_code=404, detail="Case directory not found")
+        raise HTTPException(status_code=404, detail="Case directory not found")
 
     context_parts: list[str] = []
     citations: list[str] = []
@@ -1290,9 +1288,10 @@ async def generate_case_draft(
 ) -> dict[str, Any]:
     """Generate formal High Court legal pleadings (Written Arguments, Bail Applications, etc.)."""
     draft_type = body.get("draft_type", "written_arguments")
-    
+
+    # Verify case exists and belongs to the authenticated user.
     c_result = await db.execute(
-        select(Case).where(Case.id == case_id)
+        select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
     )
     case = c_result.scalar_one_or_none()
     if not case:

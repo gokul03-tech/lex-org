@@ -84,7 +84,7 @@ def norm_act(name: str) -> str:
         return "Code of Criminal Procedure, 1973"
     if 'constitution' in n:
         return "Constitution of India"
-    return name.strip()
+    return _fix_statute_year(name)
 
 # "Section 63 of the X Act" and the plural form "Sections 469 and 509 of the
 # Indian Penal Code", which the singular-only pattern never matched, leaving both
@@ -126,27 +126,57 @@ BNSS_DEFAULT = {480, 482, 483, 528}
 BSA_DEFAULT = {61, 62, 63, 64, 65}
 IT_DEFAULT = {"66", "66A", "66B", "66C", "66D", "67", "67A", "43"}
 
-# Well-known provisions whose Act is fixed by law, regardless of document era
-# or category. Final fallback in map_section_to_act for sections no table above
-# claims ("Section 420" in a criminal petition previously resolved to the
-# placeholder "Statute (verify)" instead of the IPC section it cites).
-# The STATUTE_MAP additions (483, 67, 29A, 7, 32, 21) honour the project
-# decision that these ambiguous bare sections map to their conventional Act;
-# the map is consulted last so document-era sanhita defaults keep deciding
-# bare "482" for post-July-2024 BNSS-era documents.
-STATUTE_MAPPING = {
+# Canonical override table for the statute normalization post-processor (FIX 4).
+# Consulted AFTER the LLM returns its sections, as the final step of
+# map_section_to_act, so a provision never surfaces as the placeholder
+# "Statute (verify)" when its true Act is fixed by law. Bare "482"/"483" keep
+# their document-era resolution (BNSS for post-July-2024 records) because the
+# sanhita defaults run BEFORE this table.
+STATUTE_MAP = {
+    "100": "Code of Criminal Procedure, 1973",
+    "105": "Bharatiya Nagarik Suraksha Sanhita, 2023",
     "420": "Indian Penal Code, 1860",
     "468": "Indian Penal Code, 1860",
     "471": "Indian Penal Code, 1860",
     "482": "Code of Criminal Procedure, 1973",
-    "483": "Code of Criminal Procedure, 1973",
     "66D": "Information Technology Act, 2000",
+}
+
+# Well-known provisions whose Act is fixed by law, regardless of document era
+# or category. Final fallback in map_section_to_act for sections no table above
+# claims ("Section 420" in a criminal petition previously resolved to the
+# placeholder "Statute (verify)" instead of the IPC section it cites).
+# The additional entries (483, 67, 29A, 7, 32, 21) honour the project decision
+# that these ambiguous bare sections map to their conventional Act; STATUTE_MAP
+# supplies the FIX 4 canonical set. The map is consulted last so document-era
+# sanhita defaults keep deciding bare "482"/"483" for BNSS-era documents.
+STATUTE_MAPPING = {
+    "483": "Code of Criminal Procedure, 1973",
     "67": "Information Technology Act, 2000",
     "29A": "Insolvency and Bankruptcy Code, 2016",
     "7": "Insolvency and Bankruptcy Code, 2016",
     "32": "Constitution of India",
     "21": "Constitution of India",
+    "528": "Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023",
+    "65B": "Bharatiya Sakshya Adhiniyam (BSA), 2023",
+    **STATUTE_MAP,
 }
+
+# Year-drift guard (FIX 5): an LLM or upstream extractor occasionally emits the
+# right Act with the wrong enactment year ("Companies Act, 2015"). This is a
+# deterministic, fixed mapping, applied AFTER the LLM returns results as the
+# final step of the statute normalization post-processor, so a drifted year can
+# never reach the report as a hallucinated statute.
+STATUTE_YEAR_FIX = {
+    "Companies Act, 2015": "Companies Act, 2013",
+    "Companies Act, 2014": "Companies Act, 2013",
+    "Indian Evidence Act, 1872": "Indian Evidence Act, 1872",  # ensure no year drift
+}
+
+def _fix_statute_year(name: str) -> str:
+    """Apply STATUTE_YEAR_FIX to an Act name, returning it unchanged if unknown."""
+    s = str(name).strip()
+    return STATUTE_YEAR_FIX.get(s, s)
 
 # Constitutional articles. Articles belong to the Constitution unless the
 # document names another instrument; without this an environmental judgment
@@ -221,7 +251,7 @@ def map_section_to_act(
                 "Code of Criminal Procedure, 1973" if category == 'criminal'
                 else "Code of Civil Procedure, 1908"
             )
-        return act
+        return _fix_statute_year(act)
 
     num_str = _num(sec)
     n = int(num_str) if num_str.isdigit() else 0
@@ -271,7 +301,7 @@ def map_section_to_act(
     # different provision.
     mapped = STATUTE_MAPPING.get(full) or STATUTE_MAPPING.get(root) or STATUTE_MAPPING.get(num_str)
     if mapped:
-        return mapped
+        return _fix_statute_year(mapped)
 
     return "Statute (verify)"
 
@@ -421,7 +451,7 @@ def extract_evidence_items(doc_or_meta: Any = None, category: str = 'criminal') 
         text = doc_or_meta
     elif isinstance(doc_or_meta, dict):
         text = str(doc_or_meta.get("parsed_text") or doc_or_meta.get("text") or doc_or_meta.get("case_summary") or "")
-        
+
     items: list[dict[str, str]] = []
     seen_labels = set()
 
@@ -441,30 +471,6 @@ def extract_evidence_items(doc_or_meta: Any = None, category: str = 'criminal') 
             'exhibit': label,
             'tendered_by': _SIDE_ROLE.get(m.group('side').upper(), 'Record'),
             'reliability': 'HIGH — exhibit identified in the document',
-        })
-
-    # Pass 2: narrative evidence cues that carry no exhibit number.
-    for pat, label in CUES:
-        m = re.search(pat, text, re.IGNORECASE) if text else None
-        if not m or label in seen_labels:
-            continue
-        seen_labels.add(label)
-
-        # Word-align window boundaries so text never starts mid-word
-        raw_start = max(0, m.start() - 110)
-        raw_end = min(len(text), m.end() + 110)
-        s_pos = text.rfind(' ', 0, raw_start + 1) if raw_start > 0 else 0
-        e_pos = text.find(' ', raw_end - 1) if raw_end < len(text) else len(text)
-        start_idx = s_pos + 1 if s_pos != -1 else raw_start
-        end_idx = e_pos if e_pos != -1 else raw_end
-        win = re.sub(r'\s+', ' ', text[start_idx:end_idx]).strip()
-
-        is_elec = any(k in label.lower() for k in ('cdr', 'cell-site', 'electronic'))
-        disputed = is_elec and bool(re.search(r'without compliance|not certified|lack', text, re.IGNORECASE))
-        items.append({
-            'type': label,
-            'description': win,
-            'reliability': 'DISPUTED — certification u/s 63 BSA not shown' if disputed else 'HIGH — contemporaneous official record'
         })
 
     if not items:
@@ -494,52 +500,6 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
     from app.agents.presentation_universal import extract_submissions as _canonical
 
     return _canonical(text)
-    pros_pats = [
-        r'(?:The case of the prosecution is that|She argued that|She further pointed out that|On the other hand, the learned APP|prosecution submitted that)\s*([^.]*\.)',
-        r'(?:learned counsel appearing for the respondent|respondent contends that|defence raised by the insurer)\s*([^.]*\.)'
-    ]
-    def_pats = [
-        r'(?:Mr\. [A-Za-z]+, learned (?:Senior )?Counsel for the (?:applicant|petitioner|appellant)|counsel for the (?:applicant|petitioner)|He contends that|submitted that)\s*([^.]*\.)',
-        r'(?:petitioner has filed this petition|contended that the majority award|placed strong reliance)\s*([^.]*\.)'
-    ]
-    pros_raw, def_raw = [], []
-    for pat in pros_pats:
-        for m in re.finditer(pat, text, re.IGNORECASE):
-            s = re.sub(r'\s+', ' ', m.group(0)).replace('<DOT>', '.').strip()
-            if s:
-                pros_raw.append(s)
-    for pat in def_pats:
-        for m in re.finditer(pat, text, re.IGNORECASE):
-            s = re.sub(r'\s+', ' ', m.group(0)).replace('<DOT>', '.').strip()
-            if s:
-                def_raw.append(s)
-
-    # Deduplicate and filter out fragmented lines
-    valid_pros = []
-    seen_p = set()
-    for p in pros_raw:
-        clean_p = p.strip()
-        if len(clean_p) > 35:
-            norm_key = re.sub(r'[^a-z]', '', clean_p.lower())[:32]
-            if norm_key not in seen_p:
-                seen_p.add(norm_key)
-                valid_pros.append(clean_p)
-
-    valid_def = []
-    seen_d = set()
-    for d in def_raw:
-        clean_d = d.strip()
-        if len(clean_d) > 35:
-            norm_key = re.sub(r'[^a-z]', '', clean_d.lower())[:32]
-            if norm_key not in seen_d:
-                seen_d.add(norm_key)
-                valid_def.append(clean_d)
-
-    if not valid_pros:
-        valid_pros = []
-    if not valid_def:
-        valid_def = []
-    return valid_pros[:4], valid_def[:4]
 
 
 # ================= 6) RISK & STRATEGY: 100% GROUNDED =================
@@ -760,13 +720,10 @@ def build_risk_strategy(text: str, meta: dict[str, Any]) -> dict[str, Any]:
             strengths.append(value.strip())
 
     if not strengths:
-        # Generic fallback: quote the document's own findings instead of either
-        # inventing praise or returning nothing. The previous behaviour appended a
-        # fixed sentence ("Pleadings and documentary record prima facie favor ...")
-        # for every document, and the pattern list above only recognises bail and
-        # cybercrime strings, so any other subject produced either a fabrication or
-        # an empty list.
-        strengths = _findings_sentences(text)[:3]
+        # Do not use generic fallbacks. When no specific favorable findings
+        # matching the favorable_patterns are found, return an empty list as
+        # the honest answer; the STRATEGY_PROMPT forbids generic fallbacks.
+        strengths = []
 
     # Dynamic extraction of case weaknesses & risks
     weaknesses: list[str] = []

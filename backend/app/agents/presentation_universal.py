@@ -2165,13 +2165,12 @@ def _court_framed_issues(text: str) -> list[dict[str, Any]]:
         out = [o for o in out if o['text'].split(':')[0].upper() != key or len(o['text']) >= len(item['text'])]
         seen.add(key)
         out.append(item)
-    # Roman-numeral framing found: return it.
-    # The cap was 4, which silently discarded the LAST issue ("Issue IV",
-    # "Issue V") whenever a court framed more than four - the reported Aarav
-    # Enterprises failure. Raising it is the lesser evil: showing one extra
-    # bullet beats dropping a question the court actually decided.
+    # Roman-numeral framing found: return all issues.
+    # Removed the cap to ensure ALL issues framed by the court are extracted,
+    # preventing truncation that would drop later issues (e.g. "Issue IV",
+    # "Issue V", etc.) when a court frames more than four issues.
     if out:
-        return out[:8]
+        return out
 
     # No "Issue I:" framing. Accept an explicitly enumerated issue list instead
     # ("First, whether ...", "1. whether ..."), which study documents, moot notes

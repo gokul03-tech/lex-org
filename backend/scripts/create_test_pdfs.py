@@ -2,7 +2,10 @@
 import os
 import fitz  # PyMuPDF
 
-TEST_DIR = "/home/gokul/Downloads/final-year-project/backend/test_data"
+TEST_DIR = os.environ.get(
+    "LEXORCH_TEST_DATA_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "test_data"),
+)
 os.makedirs(TEST_DIR, exist_ok=True)
 
 def create_pdf(filename: str, title: str, text: str):

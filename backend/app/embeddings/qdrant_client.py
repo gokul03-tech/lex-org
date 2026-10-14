@@ -44,10 +44,11 @@ class QdrantManager:
         """Initialize Qdrant client connection."""
         try:
             from qdrant_client import QdrantClient
-            from qdrant_client.http import models as rest
 
             if self.api_key:
-                self._client = QdrantClient(url=self.url, api_key=self.api_key, check_compatibility=False)
+                self._client = QdrantClient(
+                    url=self.url, api_key=self.api_key, check_compatibility=False
+                )
             else:
                 self._client = QdrantClient(url=self.url, check_compatibility=False)
             self._initialized = True
@@ -262,6 +263,11 @@ class QdrantManager:
                     "doc_type": r.payload.get("doc_type", ""),
                     "act": r.payload.get("act", ""),
                     "chunk_index": r.payload.get("chunk_index", 0),
+                    "case_id": r.payload.get("case_id", ""),
+                    "document_id": r.payload.get("document_id", ""),
+                    "filename": r.payload.get("filename", r.payload.get("source", "")),
+                    "page_number": r.payload.get("page_number"),
+                    "chunk_id": r.payload.get("chunk_id", ""),
                     "metadata": r.payload.get("metadata", {}),
                 }
                 for r in response.points
@@ -293,7 +299,7 @@ class QdrantManager:
 
         try:
             from qdrant_client.http import models as rest
-            
+
             results = self._client.query_batch_points(
                 collection_name=collection,
                 requests=[
@@ -317,6 +323,11 @@ class QdrantManager:
                         "doc_type": r.payload.get("doc_type", ""),
                         "act": r.payload.get("act", ""),
                         "chunk_index": r.payload.get("chunk_index", 0),
+                        "case_id": r.payload.get("case_id", ""),
+                        "document_id": r.payload.get("document_id", ""),
+                        "filename": r.payload.get("filename", r.payload.get("source", "")),
+                        "page_number": r.payload.get("page_number"),
+                        "chunk_id": r.payload.get("chunk_id", ""),
                         "metadata": r.payload.get("metadata", {}),
                     }
                     for r in batch_results.points

@@ -13,8 +13,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-INPUT_DIR = "/home/gokul/Downloads/final-year-project/json_output"
-MODEL_PATH = "/home/gokul/Downloads/final-year-project/models/bge-m3"
+_REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+INPUT_DIR = os.environ.get("LEXORCH_JSON_INPUT_DIR", os.path.join(_REPO_ROOT, "json_output"))
+MODEL_PATH = os.environ.get("LEXORCH_EMBEDDING_MODEL_DIR", os.path.join(_REPO_ROOT, "models", "bge-m3"))
 QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
 COLLECTION_NAME = "legal_documents"

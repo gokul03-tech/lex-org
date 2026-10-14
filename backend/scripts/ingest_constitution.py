@@ -23,8 +23,14 @@ from qdrant_client.http import models as rest
 from app.core.config import settings
 
 
-DATA_PATH = "/home/gokul/Downloads/final-year-project/json_output/constitution/constitution of india/data.json"
-LOCAL_MODEL_PATH = "/home/gokul/Downloads/final-year-project/models/bge-m3"
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DATA_PATH = os.environ.get(
+    "LEXORCH_CONSTITUTION_DATA",
+    os.path.join(_REPO_ROOT, "json_output", "constitution", "constitution of india", "data.json"),
+)
+LOCAL_MODEL_PATH = os.environ.get(
+    "LEXORCH_EMBEDDING_MODEL_DIR", os.path.join(_REPO_ROOT, "models", "bge-m3")
+)
 
 
 def clean_text(text: str) -> str:
