@@ -11,10 +11,12 @@ from app.agents.agentic_pipeline import (
     _extract_json,
     attribute_counsel_arguments,
     classify_judgment_date,
+    clean_document_text,
     clean_text_with_llm,
     critic_extraction,
     critic_issues,
     critic_strengths,
+    critic_strengths_and_gaps,
     resolve_act_from_context,
     run_agentic_pipeline,
 )
@@ -65,6 +67,18 @@ class FakeProvider:
         return '{}'
 
 
+class StructuredFakeProvider(FakeProvider):
+    """Provider double that verifies the structured JSON path is used."""
+
+    def __init__(self):
+        super().__init__()
+        self.structured_calls = []
+
+    def generate_structured(self, prompt="", output_schema=None, **kwargs):
+        self.structured_calls.append((prompt, output_schema, kwargs))
+        return {"cleaned_text": "cleaned legal text"}
+
+
 @pytest.fixture
 def fake():
     return FakeProvider()
@@ -83,6 +97,17 @@ async def test_clean_text_with_llm_returns_cleaned_text(fake):
     cleaned = await clean_text_with_llm("Page 1 of 3 ACADEMIC CASE STUDY ... bail allowed.", fake)
     assert "IN THE HIGH COURT" in cleaned
     assert "bail petition is allowed" in cleaned
+
+
+@pytest.mark.asyncio
+async def test_clean_document_text_uses_public_agent_one_entry_point():
+    provider = StructuredFakeProvider()
+
+    cleaned = await clean_document_text("raw legal text", provider)
+
+    assert cleaned == "cleaned legal text"
+    assert provider.structured_calls
+    assert provider.structured_calls[0][2]["max_tokens"] >= 1500
 
 
 @pytest.mark.asyncio
@@ -173,6 +198,21 @@ async def test_critic_strengths_keeps_grounded_list(fake):
 
 
 @pytest.mark.asyncio
+async def test_critic_strengths_and_gaps_fallback_on_invalid_json(fake):
+    bad = FakeProvider(responder=lambda _p: "not-json")
+
+    corrected = await critic_strengths_and_gaps(
+        ["No favorable findings extracted yet."],
+        ["No potential gaps extracted yet."],
+        "analysis text",
+        bad,
+    )
+
+    assert corrected["key_strengths"] == ["No favorable findings extracted yet."]
+    assert corrected["potential_gaps"] == ["No potential gaps extracted yet."]
+
+
+@pytest.mark.asyncio
 async def test_critic_extraction_returns_original_on_failure():
     failing = FakeProvider(responder=lambda _p: RuntimeError("critic down"))
     result = {"issues": ["original issue?"], "strengths": ["original strength"]}
@@ -187,6 +227,7 @@ async def test_run_agentic_pipeline_orchestrates(fake):
         sections=["482"],
         issues=["Whether the arrest was lawful? plus reasoning that bleeds"],
         strengths=["No favorable findings extracted yet."],
+        gaps=["No potential gaps extracted yet."],
         petitioner_args=["Learned counsel for the petitioner submits X."],
         respondent_args=["The State argues Y."],
         provider=fake,
@@ -198,3 +239,4 @@ async def test_run_agentic_pipeline_orchestrates(fake):
     assert out["counsel_attribution"]["respondent_args"]
     assert out["criticized"]["issues"] == ["Whether the arrest was lawful?"]
     assert "The Court held that the arrest was unlawful." in out["criticized"]["strengths"]
+    assert "strengths_and_gaps" in out["criticized"]

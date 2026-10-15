@@ -12,6 +12,8 @@ from typing import Any
 
 from loguru import logger
 
+from app.document_pipeline.ocr_corrections import correct_ocr_errors
+
 
 class DocumentParser:
     """Multi-format document parser for legal documents.
@@ -134,7 +136,9 @@ class DocumentParser:
                 "ﬂ": "fl", "ﬃ": "ffi", "ﬁ": "fi", "ﬀ": "ff", "œ": "oe",
             }.get(ligature, ligature)
             text = text.replace(ligature, replacement)
-        return _strip_markup(text)
+        text = _strip_markup(text)
+        corrected, _ = correct_ocr_errors(text)
+        return corrected
 
     def _parse_pdf_with_pdfplumber(self, file_path: Path) -> tuple[list[str], dict]:
         """Fallback PDF parser using pdfplumber."""

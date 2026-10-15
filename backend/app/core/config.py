@@ -81,21 +81,20 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
     # ── LLM Configuration ───────────────────────────────────────
-    LLM_BACKEND: Literal["llama_cpp", "mock", "openai_compatible", "transformers"] = "llama_cpp"
+    LLM_BACKEND: Literal["llama_cpp", "mock", "openai_compatible", "transformers"] = "openai_compatible"
     QWEN_MODEL_PATH: str = str(_MODELS_DIR / "Qwen2.5-3B-Instruct-Q4_K_M.gguf")
     DEEPSEEK_MODEL_PATH: str = str(_MODELS_DIR / "Qwen2.5-3B-Instruct-Q4_K_M.gguf")
-    LLM_N_CTX: int = 2048
+    LLM_N_CTX: int = 17000
     LLM_N_THREADS: int = 4
     LLM_N_GPU_LAYERS: int = 12
     LLM_TEMPERATURE: float = 0.0
-    LLM_MAX_TOKENS: int = 2048
+    LLM_MAX_TOKENS: int = 1500
 
     # OpenAI-compatible API configurations (vLLM / Ollama)
-    LLM_API_BASE: str = "http://localhost:8000/v1"
+    LLM_API_BASE: str = "https://api.groq.com/openai/v1"
     LLM_API_KEY: str = ""
-    QWEN_MODEL_NAME: str = "Qwen/Qwen3-8B-AWQ"
-    # NOTE: deepseek-ai never released an 8B Qwen distill; use the 7B AWQ quant
-    DEEPSEEK_MODEL_NAME: str = "casperhansen/deepseek-r1-distill-qwen-7b-awq"
+    QWEN_MODEL_NAME: str = "llama-3.1-70b-versatile"
+    DEEPSEEK_MODEL_NAME: str = "llama-3.1-70b-versatile"
 
     # Transformers local model configurations
     QWEN_HF_MODEL_ID: str = "Qwen/Qwen3-8B-AWQ"

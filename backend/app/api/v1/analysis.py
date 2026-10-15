@@ -2,22 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 import re
-from datetime import date
+import time
 from collections import Counter
-from typing import Any, AsyncGenerator
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from collections.abc import AsyncGenerator
+from datetime import date
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from loguru import logger
 
+from app.agents.supervisor import build_supervisor_graph, run_analysis_pipeline
 from app.api.deps import require_user
-from app.db.session import get_db
 from app.db.models import Analysis, Case, Document, Report
-from app.agents.supervisor import run_analysis_pipeline, build_supervisor_graph
-from app.schemas import AnalysisRequest, AnalysisResponse
+from app.db.session import get_db
 
 router = APIRouter()
 
@@ -92,8 +93,8 @@ def generate_mock_analysis_data(case_title: str, doc_name: str, case_id: str) ->
             ]
         },
         "keywords": [
-            "Bail Application", "Organised Crime", "Section 111 BNS", "Phishing Fraud", 
-            "Section 482 BNSS", "Cyber Security", "Precedent", "Custodial Detention", 
+            "Bail Application", "Organised Crime", "Section 111 BNS", "Phishing Fraud",
+            "Section 482 BNSS", "Cyber Security", "Precedent", "Custodial Detention",
             "Section 63 BSA", "Call Details Record", "Syndicate", "Electronic Certificate",
             "Pre-trial Detention", "Mens Rea", "Forensics", "Bombay High Court",
             "Judicial Custody", "Charge Sheet", "Evidence Admissibility", "Sanjay Chandra"
@@ -214,9 +215,9 @@ def _stored_doc_text(doc: Document) -> str:
 
 async def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Document) -> tuple[Analysis, Report]:
     doc_text = _stored_doc_text(doc)
-    
+
     # Extract articles (literal only - no hallucinated fallbacks)
-    from app.agents.analysis_fixes import extract_articles, build_evidence_brief
+    from app.agents.analysis_fixes import extract_articles
     articles_list = []
     found_articles = state.get("articles") or extract_articles(doc_text)
     for art in found_articles:
@@ -247,7 +248,7 @@ async def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc
         if isinstance(v, dict):
             return v.get("value", default)
         return v if v is not None else default
-    
+
     p_name = _val("petitioner")
     if not p_name or p_name == "Not found in document":
         parties = state.get("entities", {}).get("parties", {})
@@ -327,13 +328,13 @@ async def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc
         "explainability": "Explainability Agent",
         "report_generation": "Report Generation Agent"
     }
-    
+
     agent_results = []
     confidence_scores = {}
     completed_agents = state.get("completed_agents", [])
     agent_confidence = state.get("agent_confidence", {})
     agent_timings = state.get("agent_timings", {})
-    
+
     timing_defaults = {
         "case_understanding": 140,
         "legal_research": 210,
@@ -348,7 +349,7 @@ async def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc
         "explainability": 125,
         "report_generation": 190
     }
-    
+
     for agent_id, agent_name in agent_name_map.items():
         status_str = "Completed" if agent_id in completed_agents else "Failed"
         conf = agent_confidence.get(agent_id, 0.92)
@@ -361,10 +362,10 @@ async def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc
         confidence_scores[agent_name] = conf * 100.0
 
     from app.agents.analysis_fixes_v2 import (
+        build_fact_timeline,
+        build_risk_strategy,
         extract_evidence_items,
         extract_submissions,
-        build_risk_strategy,
-        build_fact_timeline
     )
 
     # Category-aware Risk analysis mapping (zero status leakage, no mocks)
@@ -411,6 +412,102 @@ async def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc
         pros_subs = llm_subs.get("petitioner") or llm_subs.get("plaintiff") or llm_subs.get("applicant") or []
     if not def_subs and isinstance(llm_subs, dict):
         def_subs = llm_subs.get("respondent") or llm_subs.get("defendant") or llm_subs.get("prosecution") or []
+
+    # Map the 4-agent self-correction pipeline into the persisted analysis.
+    legal_issues_payload = state.get("legal_issue_details") or state.get("legal_issues", [])
+    issue_texts: list[str] = []
+    if isinstance(legal_issues_payload, list):
+        for item in legal_issues_payload:
+            if isinstance(item, dict):
+                issue_texts.append(str(item.get("issue") or item.get("text") or "").strip())
+            else:
+                issue_texts.append(str(item).strip())
+        issue_texts = [t for t in issue_texts if t]
+
+    section_numbers = [
+        str(s.get("section_number") or s.get("num") or "").strip()
+        for s in state.get("applicable_sections", [])
+        if isinstance(s, dict) and (s.get("section_number") or s.get("num"))
+    ]
+    section_numbers = [s for s in section_numbers if s]
+
+    raw_gaps = risk_analysis.get("weaknesses")
+    gaps_for_agent = [str(g).strip() for g in raw_gaps if str(g).strip()] if isinstance(raw_gaps, list) else []
+
+    try:
+        from app.agents.agentic_pipeline import run_agentic_pipeline
+
+        agentic = await run_agentic_pipeline(
+            doc_text,
+            sections=section_numbers,
+            issues=issue_texts,
+            strengths=[str(s).strip() for s in (risk_analysis.get("strengths") or []) if str(s).strip()],
+            gaps=gaps_for_agent,
+            petitioner_args=pros_subs,
+            respondent_args=def_subs,
+        )
+    except Exception as exc:
+        logger.warning(f"[AgenticPipeline] unavailable, keeping baseline extraction: {exc}")
+        agentic = {}
+
+    judgment_date = str(agentic.get("judgment_date") or "").strip()
+    if judgment_date:
+        dec_date = judgment_date
+        meta["decision_date"] = {"value": judgment_date, "status": "extracted"}
+        meta["date"] = {"value": judgment_date, "status": "extracted"}
+
+    act_resolutions = agentic.get("act_resolutions") if isinstance(agentic, dict) else {}
+    if isinstance(act_resolutions, dict) and act_resolutions:
+        for section in state.get("applicable_sections", []):
+            if not isinstance(section, dict):
+                continue
+            sec_no = str(section.get("section_number") or section.get("num") or "").strip()
+            if sec_no and act_resolutions.get(sec_no):
+                section["act"] = act_resolutions[sec_no]
+
+    attribution = agentic.get("counsel_attribution") if isinstance(agentic, dict) else {}
+    if isinstance(attribution, dict):
+        mapped_petitioner = attribution.get("petitioner_args")
+        mapped_respondent = attribution.get("respondent_args")
+        if isinstance(mapped_petitioner, list) and mapped_petitioner:
+            pros_subs = [str(item) for item in mapped_petitioner if str(item).strip()]
+        if isinstance(mapped_respondent, list) and mapped_respondent:
+            def_subs = [str(item) for item in mapped_respondent if str(item).strip()]
+
+    criticized = agentic.get("criticized") if isinstance(agentic, dict) else {}
+    if isinstance(criticized, dict):
+        cleaned_issues = criticized.get("issues")
+        if isinstance(cleaned_issues, list) and cleaned_issues:
+            cleaned_issues = [str(issue).strip() for issue in cleaned_issues if str(issue).strip()]
+            if cleaned_issues:
+                if (
+                    isinstance(legal_issues_payload, list)
+                    and legal_issues_payload
+                    and all(isinstance(item, dict) for item in legal_issues_payload)
+                    and len(cleaned_issues) == len(legal_issues_payload)
+                ):
+                    updated_payload = []
+                    for idx, item in enumerate(legal_issues_payload):
+                        enriched = dict(item)
+                        if "issue" in enriched:
+                            enriched["issue"] = cleaned_issues[idx]
+                        elif "text" in enriched:
+                            enriched["text"] = cleaned_issues[idx]
+                        else:
+                            enriched["issue"] = cleaned_issues[idx]
+                        updated_payload.append(enriched)
+                    legal_issues_payload = updated_payload
+                else:
+                    legal_issues_payload = cleaned_issues
+
+        strengths_and_gaps = criticized.get("strengths_and_gaps")
+        if isinstance(strengths_and_gaps, dict):
+            key_strengths = strengths_and_gaps.get("key_strengths")
+            potential_gaps = strengths_and_gaps.get("potential_gaps")
+            if isinstance(key_strengths, list):
+                risk_analysis["strengths"] = [str(s).strip() for s in key_strengths if str(s).strip()]
+            if isinstance(potential_gaps, list):
+                risk_analysis["weaknesses"] = [str(g).strip() for g in potential_gaps if str(g).strip()]
 
     # Counter-arguments must come from the document. Previously this was a
     # hardcoded per-category sentence, which surfaced as a fabricated argument
@@ -508,12 +605,9 @@ async def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc
             })
 
     from app.agents.presentation_universal import (
-        safe,
-        render_issues,
-        render_conclusion,
-        render_chips,
         build_kg,
-        lint
+        lint,
+        render_conclusion,
     )
 
     # Dynamic Universal Knowledge Graph
@@ -624,7 +718,7 @@ async def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc
         # as an AI issue, which mislabelled every verbatim document issue. Each
         # dict keeps issue/text and, for document-sourced items, the verbatim
         # evidence quote the UI needs for its "Document Fact" badge.
-        legal_issues=state.get("legal_issue_details") or state.get("legal_issues", []),
+        legal_issues=legal_issues_payload,
         applicable_acts=state.get("applicable_acts", []),
         applicable_sections=sections_list,
         precedents=precedents_list,
@@ -763,7 +857,7 @@ async def get_analysis(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Case directory not found",
         )
-        
+
     # Several analysis rows can exist per case (re-runs, re-uploads).
     # scalar_one_or_none raises MultipleResultsFound for exactly that case,
     # which is what the frontend hit on every second analysis.
@@ -785,7 +879,7 @@ async def get_analysis(
         select(Report).where(Report.case_id == case_id).order_by(Report.created_at.desc())
     )
     report = r_result.scalars().first()
-    
+
     summary = ""
     opinion = ""
     arguments = {}
@@ -798,7 +892,7 @@ async def get_analysis(
                 opinion = s["content"]
             elif s["title"] == "Arguments":
                 arguments = s["content"]
-                
+
     doc_info = dict(analysis.procedural_status or {})
     if doc and (doc.parsed_text or doc.raw_text):
         from app.agents.presentation_universal import build_analysis
@@ -1026,7 +1120,7 @@ async def stream_analysis(
             status_code=404,
             detail="Case directory not found",
         )
-        
+
     d_result = await db.execute(
         select(Document).where(Document.case_id == case_id).order_by(Document.created_at.desc())
     )
@@ -1058,7 +1152,7 @@ async def stream_analysis(
                 "metadata": doc.metadata_ or {},
             }
         ]
-        
+
         graph = build_supervisor_graph()
         state = {
             "case_id": case_id,
@@ -1068,17 +1162,17 @@ async def stream_analysis(
             "errors": [],
             "agent_confidence": {},
         }
-        
+
         # Stream events from compiled graph
         try:
             async for chunk in graph.astream(state):
                 if await request.is_disconnected():
                     logger.info("SSE client disconnected")
                     break
-                    
+
                 node_name = list(chunk.keys())[0]
                 state.update(chunk[node_name])
-                
+
                 # Map completed nodes to the SSE stages
                 if node_name == "case_understanding":
                     yield f"data: {json.dumps({'stage': 'detecting_parties', 'label': 'Detecting Parties', 'status': 'completed', 'progress': 100})}\n\n"
@@ -1114,9 +1208,9 @@ async def stream_analysis(
                     yield f"data: {json.dumps({'stage': 'completed', 'label': 'Completed Successfully', 'status': 'in_progress', 'progress': 50})}\n\n"
                 elif node_name == "report_generation":
                     yield f"data: {json.dumps({'stage': 'completed', 'label': 'Completed Successfully', 'status': 'completed', 'progress': 100})}\n\n"
-                
+
                 await asyncio.sleep(0.05)
-                
+
         except Exception as exc:
             logger.error(f"Error executing multi-agent graph stream: {exc}")
             yield f"data: {json.dumps({'stage': 'completed', 'label': 'Analysis could not be completed', 'status': 'failed', 'progress': 100})}\n\n"
@@ -1129,7 +1223,7 @@ async def stream_analysis(
                 .order_by(Analysis.created_at.desc())
             )
             analysis = a_result.scalars().first()
-            
+
             new_analysis, new_report = await map_pipeline_result_to_analysis(state, case, doc)
             if not analysis:
                 db.add(new_analysis)
@@ -1162,12 +1256,12 @@ async def stream_analysis(
                 else:
                     new_report.analysis_id = analysis.id
                     db.add(new_report)
-                
+
             case.status = "analysis_complete"
             await db.commit()
         except Exception as exc:
             logger.error(f"Error compiling analysis in SSE stream finalizer: {exc}")
-            
+
         final_payload = {
             "stage": "all_done",
             "label": "Analysis Compiled Successfully",
@@ -1191,7 +1285,7 @@ async def chat_about_document(
     question = body.get("question") or body.get("message") or body.get("query") or ""
     if not question:
         raise HTTPException(status_code=400, detail="Question is required")
-        
+
     # Verify case exists and belongs to the authenticated user.
     c_result = await db.execute(
         select(Case).where(Case.id == case_id, Case.user_id == current_user_id)
@@ -1204,15 +1298,15 @@ async def chat_about_document(
     citations: list[str] = []
 
     try:
+        from app.llm.qwen import QWEN_SYSTEM_PROMPT, get_qwen_provider
         from app.rag.rag_pipeline import RAGPipeline
-        from app.llm.qwen import get_qwen_provider, QWEN_SYSTEM_PROMPT
 
         # Search for chunks belonging to this case in Qdrant
         rag = RAGPipeline()
         filter_conds = {
             "case_id": case_id,
         }
-        
+
         rag_results = await rag.search(
             query=question,
             top_k=5,
@@ -1249,7 +1343,7 @@ async def chat_about_document(
                 context_parts.append(f"Formulated Issues: {json.dumps(latest_analysis.legal_issues)}")
 
         context_str = "\n\n---\n\n".join(context_parts) if context_parts else "No specific text excerpts available."
-        
+
         prompt = f"""You are LexOrch-KG Legal Advisory AI. Answer the advocate's question regarding their uploaded case dossier.
 Answer strictly and concisely using the provided case context and statutory provisions.
 If the information is not present in the record, explicitly state that you cannot find it in the uploaded document.
@@ -1335,7 +1429,7 @@ async def generate_case_draft(
     court = _meta_val(doc_meta, "court", case.court_name or "the Hon'ble Court")
     decision_date = _meta_val(doc_meta, "decision_date", (case.filing_date.strftime("%d-%m-%Y") if case.filing_date else date.today().strftime("%d-%m-%Y")))
     case_number = _meta_val(doc_meta, "case_number", case.case_number or "Not available")
-    
+
     issues_text = "\n".join([f"- {i.get('issue', str(i)) if isinstance(i, dict) else str(i)}" for i in issues]) or "Substantial question of statutory compliance."
     precedents_text = "\n".join([f"- {p.get('case_name', '')} ({p.get('citation', '')}): {p.get('summary', '')}" for p in precedents if isinstance(p, dict)])
 
@@ -1345,7 +1439,7 @@ async def generate_case_draft(
         "arbitration_petition": "PETITION UNDER SECTION 11(6) OF THE ARBITRATION AND CONCILIATION ACT, 1996",
         "injunction_application": "APPLICATION FOR INTERIM INJUNCTION UNDER ORDER XXXIX RULES 1 & 2 CPC",
     }
-    
+
     heading = draft_title_map.get(draft_type, "FORMAL LEGAL SUBMISSION BEFORE THE HON'BLE HIGH COURT")
 
     prompt = f"""You are a Senior High Court Advocate. Draft a formal, courtroom-ready Indian legal document: {heading}.
@@ -1390,9 +1484,9 @@ async def generate_case_draft(
     The DATED line must show the actual decision date: {decision_date}.
     The ADVOCATE line must show the actual Petitioner name.
     NO BRACKETS. NO PLACEHOLDERS. USE REAL VALUES ONLY."""
-    
+
     try:
-        from app.llm.qwen import get_qwen_provider, QWEN_SYSTEM_PROMPT
+        from app.llm.qwen import QWEN_SYSTEM_PROMPT, get_qwen_provider
         provider = get_qwen_provider()
         # temperature 0.6 avoids greedy repetition loops in the 7B model.
         # CPU ~5 tok/s: 6144 tokens exceeded any practical client timeout.
@@ -1462,5 +1556,3 @@ DATED: {decision_date}"""
         "draft_type": draft_type,
         "content": draft_content,
     }
-
-

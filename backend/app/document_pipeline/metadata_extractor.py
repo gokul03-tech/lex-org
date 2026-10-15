@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any
 
 from app.llm.provider import get_llm_provider
+from app.document_pipeline.validation import validate_metadata_evidence
 
 
 METADATA_EXTRACTION_PROMPT = """
@@ -368,6 +369,7 @@ class LegalMetadataExtractor:
             "case_category": category_res,
             "word_count": word_count
         }
+        metadata["validation"] = validate_metadata_evidence(text, metadata)
 
         return metadata
 
@@ -719,6 +721,25 @@ class LegalMetadataExtractor:
                 if nu := re.fullmatch(NUMERIC, got):
                     return _from_numeric(nu)
             return None
+
+        # Indian judgments commonly end with a city followed directly by the
+        # signed date ("NEW DELHI 15 AUGUST 2024"). This is stronger evidence
+        # than an earlier narrative date or a date attached to a lower-court
+        # order, so inspect the final signature lines before generic cues.
+        signature_date = re.search(
+            rf"(?:^|\n)\s*(?:NEW\s+DELHI|NEW\s+DELHI:|DATED?)?\s*"
+            rf"({DMY}|{MDY}|{NUMERIC})\s*$",
+            tail,
+            re.IGNORECASE | re.MULTILINE,
+        )
+        if signature_date:
+            raw_date = signature_date.group(1)
+            if dm := re.fullmatch(DMY, raw_date, re.IGNORECASE):
+                return _from_dmy(dm)
+            if md := re.fullmatch(MDY, raw_date, re.IGNORECASE):
+                return _from_mdy(md)
+            if nu := re.fullmatch(NUMERIC, raw_date):
+                return _from_numeric(nu)
 
         # 1a. Explicit cue in the tail (a signature block always wins)
         if (hit := _from_cue(tail)):

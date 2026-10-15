@@ -12,7 +12,9 @@ export default function ReportPage() {
   const [loading, setLoading] = useState(true);
   const [caseDetail, setCaseDetail] = useState<any>(null);
   const [analysisData, setAnalysisData] = useState<any>(null);
+  const [reportData, setReportData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -22,8 +24,12 @@ export default function ReportPage() {
         setCaseDetail(caseRes.data);
 
         try {
-          const analysisRes = await apiClient.get(`/analysis/case/${caseId}`);
+          const [analysisRes, reportRes] = await Promise.all([
+            apiClient.get(`/analysis/case/${caseId}`),
+            apiClient.get(`/reports/case/${caseId}`),
+          ]);
           setAnalysisData(analysisRes.data);
+          setReportData(reportRes.data);
         } catch (e) {
           setError('No analysis report has been compiled yet. Please analyze the case first.');
         }
@@ -38,6 +44,28 @@ export default function ReportPage() {
       fetchData();
     }
   }, [caseId]);
+
+  const downloadPdf = async () => {
+    if (!caseId) return;
+    try {
+      setDownloadError(null);
+      const response = await apiClient.get(`/reports/case/${caseId}/download`, {
+        params: { format: 'pdf' },
+        responseType: 'blob',
+      });
+      const url = URL.createObjectURL(response.data);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `lexorch-report-${caseId}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error downloading report:', err);
+      setDownloadError('Unable to download the report. Please try again.');
+    }
+  };
 
   if (loading) {
     return (
@@ -65,8 +93,8 @@ export default function ReportPage() {
     );
   }
 
-  const reportDate = analysisData.created_at
-    ? new Date(analysisData.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+  const reportDate = (reportData?.created_at || analysisData.created_at)
+    ? new Date(reportData?.created_at || analysisData.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
     : 'Recently';
 
   return (
@@ -91,11 +119,14 @@ export default function ReportPage() {
           <Button variant="outline" size="sm" onClick={() => window.print()} className="gap-1.5 rounded-lg bg-card text-[13px]">
             <Printer className="h-3.5 w-3.5" /> Print
           </Button>
-          <Button size="sm" onClick={() => window.print()} className="gap-1.5 rounded-lg text-[13px]">
+          <Button size="sm" onClick={downloadPdf} className="gap-1.5 rounded-lg text-[13px]">
             <Download className="h-3.5 w-3.5" /> Download PDF
           </Button>
         </div>
       </div>
+      {downloadError && (
+        <p role="alert" className="text-right text-sm text-destructive">{downloadError}</p>
+      )}
 
       {/* Document sheet */}
       <motion.div

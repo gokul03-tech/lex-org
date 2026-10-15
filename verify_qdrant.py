@@ -180,8 +180,7 @@ def run_corpus_check(
     complete = not missing
 
     if count_chunks:
-        info = client.get_collection(collection_name)
-        points = info.points_count or 0
+        points = client.count(collection_name=collection_name, exact=True).count
         baseline = points - scan["expected_chunks"]
         logger.info(
             f"Points: {points} = {scan['expected_chunks']} corpus chunks "

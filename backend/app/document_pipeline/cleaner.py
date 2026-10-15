@@ -10,6 +10,8 @@ import html
 import re
 from typing import Any
 
+from app.document_pipeline.ocr_corrections import correct_ocr_errors
+
 # Tags whose *content* is markup, not prose, and must be dropped wholesale.
 _DROP_CONTENT_TAGS = ("script", "style", "head", "noscript", "iframe", "svg")
 
@@ -157,7 +159,8 @@ def clean_pdf_text(text: str) -> str:
     for bad, good in _MOJIBAKE_MAP.items():
         if bad in text:
             text = text.replace(bad, good)
-    return text
+    corrected, _ = correct_ocr_errors(text)
+    return corrected
 
 
 class TextCleaner:

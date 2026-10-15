@@ -219,7 +219,7 @@ def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers:
         try:
             model = Llama(
                 model_path=model_path,
-                n_ctx=min(n_ctx, 8192),
+                n_ctx=min(n_ctx, 17000),
                 n_threads=n_threads,
                 n_gpu_layers=n_gpu_layers,
                 enable_thinking=False,
@@ -235,7 +235,7 @@ def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers:
             try:
                 model = Llama(
                     model_path=model_path,
-                    n_ctx=2048,
+                    n_ctx=min(n_ctx, 2048),
                     n_threads=n_threads,
                     n_gpu_layers=10,
                     enable_thinking=False,
@@ -248,7 +248,7 @@ def _get_shared_llama(model_path: str, n_ctx: int, n_threads: int, n_gpu_layers:
                 logger.warning(f"Failed with n_gpu_layers=10: {exc2}. Retrying on CPU (n_gpu_layers=0)...")
                 model = Llama(
                     model_path=model_path,
-                    n_ctx=2048,
+                    n_ctx=min(n_ctx, 2048),
                     n_threads=n_threads,
                     n_gpu_layers=0,
                     enable_thinking=False,

@@ -42,7 +42,7 @@ class OpenAICompatibleProvider(LLMProvider):
         """Generate response via chat completion API."""
         headers = {}
         if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers["Authorization"] = "Bearer " + self.api_key
 
         messages = []
         if system_prompt:
@@ -83,7 +83,7 @@ class OpenAICompatibleProvider(LLMProvider):
         """Generate structured JSON response using API's JSON mode."""
         headers = {}
         if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers["Authorization"] = "Bearer " + self.api_key
 
         messages = []
         if system_prompt:
@@ -134,7 +134,7 @@ class OpenAICompatibleProvider(LLMProvider):
         """Stream token generation from the completion API."""
         headers = {}
         if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers["Authorization"] = "Bearer " + self.api_key
 
         messages = []
         if system_prompt:

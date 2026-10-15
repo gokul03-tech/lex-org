@@ -35,6 +35,14 @@ AGENTIC_SYSTEM_PROMPT = (
 )
 
 
+def _fit_context(text: str, limit: int) -> str:
+    """Keep an agent prompt within the local model's context budget."""
+    if len(text) <= limit:
+        return text
+    head = limit // 2
+    return f"{text[:head]}\n...[context truncated]...\n{text[-(limit - head):]}"
+
+
 def _get_provider(provider: Any = None) -> Any:
     """Return the injected provider or the lightweight default (Qwen)."""
     return provider if provider is not None else get_qwen_provider()
@@ -71,12 +79,22 @@ async def _call_json(
     system_prompt: str = AGENTIC_SYSTEM_PROMPT,
     max_tokens: int = 600,
     temperature: float = 0.0,
+    output_schema: dict[str, Any] | None = None,
 ) -> Any:
     """Run a lightweight, deterministic JSON-producing LLM call (off thread).
 
     Returns the parsed JSON structure, or None if the call/parse fails.
     """
     try:
+        if hasattr(provider, "generate_structured"):
+            return await asyncio.to_thread(
+                provider.generate_structured,
+                prompt=prompt,
+                output_schema=output_schema or {"type": "object"},
+                system_prompt=system_prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
         response = await asyncio.to_thread(
             provider.generate,
             prompt=prompt,
@@ -123,8 +141,17 @@ exhibits, signatures. Do not paraphrase, summarize, reorder, or invent.
 Return STRICT JSON: {{"cleaned_text": "the cleaned document"}}
 
 DOCUMENT:
-{text[:30000]}"""
-    parsed = await _call_json(provider, prompt, max_tokens=1400)
+{_fit_context(text, 50000)}"""
+    parsed = await _call_json(
+        provider,
+        prompt,
+        max_tokens=1500,
+        output_schema={
+            "type": "object",
+            "properties": {"cleaned_text": {"type": "string"}},
+            "required": ["cleaned_text"],
+        },
+    )
     cleaned = (
         str(parsed.get("cleaned_text", "")).strip() if isinstance(parsed, dict) else ""
     )
@@ -132,6 +159,11 @@ DOCUMENT:
         logger.info("Noise filter produced empty output; keeping original text.")
         return text
     return cleaned
+
+
+async def clean_document_text(text: str, provider: Any = None) -> str:
+    """Public Agent 1 entry point used by ingestion and tests."""
+    return await clean_text_with_llm(text, provider)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -176,7 +208,28 @@ async def resolve_act_from_context(
         "\"act\": \"Full Act Name, Year\" or null, \"in_context\": true}]}\n\n"
         + "\n".join(lines)
     )
-    parsed = await _call_json(provider, prompt, max_tokens=700)
+    parsed = await _call_json(
+        provider,
+        prompt,
+        max_tokens=1500,
+        output_schema={
+            "type": "object",
+            "properties": {
+                "resolutions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "section": {"type": "string"},
+                            "act": {"type": ["string", "null"]},
+                        },
+                        "required": ["section", "act"],
+                    },
+                }
+            },
+            "required": ["resolutions"],
+        },
+    )
     if not parsed:
         return {}
     result: dict[str, str] = {}
@@ -214,8 +267,26 @@ async def classify_judgment_date(text: str, provider: Any = None) -> str | None:
     provider = _get_provider(provider)
     parsed = await _call_json(
         provider,
-        _DATES_PROMPT.format(tail=text[-8000:]),
-        max_tokens=700,
+        _DATES_PROMPT.format(tail=_fit_context(text[-40000:], 40000)),
+        max_tokens=1500,
+        output_schema={
+            "type": "object",
+            "properties": {
+                "dates": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "date": {"type": "string"},
+                            "sentence": {"type": "string"},
+                            "role": {"type": "string"},
+                        },
+                        "required": ["date", "sentence", "role"],
+                    },
+                }
+            },
+            "required": ["dates"],
+        },
     )
     if not isinstance(parsed, dict):
         return None
@@ -256,7 +327,7 @@ async def attribute_counsel_arguments(
         return {"petitioner_args": list(petitioner_args), "respondent_args": list(respondent_args)}
 
     arg_lines = "\n".join(f"[{aid}] {a}" for aid, a in entries)
-    src = (source_text or "")[:16000]
+    src = _fit_context(source_text or "", 35000)
     prompt = f"""You are assigning counsel arguments to columns. NEVER swap them.
 
 Each argument is prefixed as "[id] text". Assign by SPEAKER/SECTION cue ONLY:
@@ -275,7 +346,19 @@ SOURCE TEXT (for context):
 
 ARGUMENTS:
 {arg_lines}"""
-    parsed = await _call_json(provider, prompt, max_tokens=700)
+    parsed = await _call_json(
+        provider,
+        prompt,
+        max_tokens=1500,
+        output_schema={
+            "type": "object",
+            "properties": {
+                "petitioner_args": {"type": "array", "items": {"type": "integer"}},
+                "respondent_args": {"type": "array", "items": {"type": "integer"}},
+            },
+            "required": ["petitioner_args", "respondent_args"],
+        },
+    )
     if not isinstance(parsed, dict):
         # Fallback: keep the raw extraction exactly as received.
         return {"petitioner_args": list(petitioner_args), "respondent_args": list(respondent_args)}
@@ -318,7 +401,16 @@ Return STRICT JSON: {{"issues": ["..."]}}
 
 ISSUES:
 {chr(10).join(f"- {i}" for i in issues)}"""
-    parsed = await _call_json(provider, prompt, max_tokens=800)
+    parsed = await _call_json(
+        provider,
+        prompt,
+        max_tokens=1500,
+        output_schema={
+            "type": "object",
+            "properties": {"issues": {"type": "array", "items": {"type": "string"}}},
+            "required": ["issues"],
+        },
+    )
     if isinstance(parsed, dict):
         cleaned = [str(i).strip() for i in parsed.get("issues", []) if str(i).strip()]
         if len(cleaned) == len(issues):
@@ -352,13 +444,74 @@ RULES:
 Return STRICT JSON: {{"strengths": ["..."]}}
 
 DOCUMENT:
-{text[:18000]}"""
-    parsed = await _call_json(provider, prompt, max_tokens=700)
+{_fit_context(text, 50000)}"""
+    parsed = await _call_json(
+        provider,
+        prompt,
+        max_tokens=1500,
+        output_schema={
+            "type": "object",
+            "properties": {"strengths": {"type": "array", "items": {"type": "string"}}},
+            "required": ["strengths"],
+        },
+    )
     if isinstance(parsed, dict):
         recovered = [str(s).strip() for s in parsed.get("strengths", []) if str(s).strip()]
         if recovered:
             return recovered
     return [s for s in strengths if s.strip()]
+
+
+async def critic_strengths_and_gaps(
+    strengths: list[str],
+    gaps: list[str],
+    text: str,
+    provider: Any = None,
+) -> dict[str, list[str]]:
+    """Critic pass for both party strengths and potential gaps."""
+    provider = _get_provider(provider)
+    prompt = f"""Review the Analysis and Reasoning section below.
+
+Extract only document-grounded findings:
+- key_strengths: findings favorable to the petitioner/applicant
+- potential_gaps: weaknesses, risks, or adverse findings affecting that party
+- Never return generic fallback text.
+- Return empty arrays when the source contains no supported finding.
+
+Return STRICT JSON:
+{{"key_strengths": ["..."], "potential_gaps": ["..."]}}
+
+CURRENT STRENGTHS:
+{json.dumps(strengths)}
+
+CURRENT GAPS:
+{json.dumps(gaps)}
+
+SOURCE:
+{_fit_context(text, 50000)}"""
+    parsed = await _call_json(
+        provider,
+        prompt,
+        max_tokens=1500,
+        output_schema={
+            "type": "object",
+            "properties": {
+                "key_strengths": {"type": "array", "items": {"type": "string"}},
+                "potential_gaps": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["key_strengths", "potential_gaps"],
+        },
+    )
+    if not isinstance(parsed, dict):
+        return {"key_strengths": list(strengths), "potential_gaps": list(gaps)}
+    return {
+        "key_strengths": [
+            str(item).strip() for item in parsed.get("key_strengths", []) if str(item).strip()
+        ],
+        "potential_gaps": [
+            str(item).strip() for item in parsed.get("potential_gaps", []) if str(item).strip()
+        ],
+    }
 
 
 async def critic_extraction(
@@ -390,6 +543,7 @@ async def run_agentic_pipeline(
     sections: list[str] | None = None,
     issues: list[str] | None = None,
     strengths: list[str] | None = None,
+    gaps: list[str] | None = None,
     petitioner_args: list[str] | None = None,
     respondent_args: list[str] | None = None,
     provider: Any = None,
@@ -427,7 +581,17 @@ async def run_agentic_pipeline(
     )
 
     out["criticized"] = await critic_extraction(
-        {"issues": list(issues or []), "strengths": list(strengths or [])},
+        {
+            "issues": list(issues or []),
+            "strengths": list(strengths or []),
+            "gaps": list(gaps or []),
+        },
+        cleaned,
+        provider,
+    )
+    out["criticized"]["strengths_and_gaps"] = await critic_strengths_and_gaps(
+        list(strengths or []),
+        list(gaps or []),
         cleaned,
         provider,
     )

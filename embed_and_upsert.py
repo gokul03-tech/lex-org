@@ -161,8 +161,10 @@ def process_and_embed():
                 "text": item["text"],
                 "chunk_index": item["chunk_index"],
                 "source": item["metadata"].get("filename") or item["metadata"].get("source") or item["source_file"],
-                "doc_type": item["metadata"].get("document_type") or item["metadata"].get("doc_type") or "act",
-                "act": item["metadata"].get("act_name") or item["metadata"].get("act") or "Unknown"
+                "doc_type": item.get("document_type") or item["metadata"].get("doc_type") or "act",
+                "act": item["metadata"].get("act_name") or item["metadata"].get("act") or "Unknown",
+                "source_type": item.get("source_type"),
+                "court": item["metadata"].get("court"),
             }
             
             points.append(rest.PointStruct(
@@ -224,7 +226,9 @@ def process_and_embed():
                     "chunk_index": chunk_index,
                     "source_file": os.path.basename(file_path),
                     "unique_str": unique_str,
-                    "metadata": metadata
+                    "metadata": metadata,
+                    "document_type": doc.get("document_type"),
+                    "source_type": doc.get("source_type")
                 })
                 total_chunks += 1
                 file_chunks_count += 1
