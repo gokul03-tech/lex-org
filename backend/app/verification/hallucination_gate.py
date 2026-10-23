@@ -306,8 +306,8 @@ def validate_section(act_name: str | None, section_num: str | None) -> dict[str,
 
 
 def validate_precedent(prec: dict[str, Any]) -> dict[str, Any]:
-    name = (prec.get("case_name") or "").strip()
-    citation = (prec.get("citation") or "").strip()
+    name = str(prec.get("case_name") or "").strip()
+    citation = str(prec.get("citation") or "").strip()
     year = str(prec.get("year") or "").strip()
 
     if not name or name.lower() in _PLACEHOLDER_NAMES or name.lower().startswith("no sufficiently"):

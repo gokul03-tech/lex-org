@@ -213,6 +213,83 @@ def _stored_doc_text(doc: Document) -> str:
     return DocumentParser._clean_text(doc.parsed_text or doc.raw_text or "")
 
 
+async def _await_document_ingestion(
+    db: AsyncSession, doc: Document, *, timeout: float = 300.0
+) -> None:
+    """Block until an uploaded document is parsed, chunked and embedded.
+
+    ``upload_document`` persists the row with status ``uploaded`` and defers
+    parsing/embedding to a background task. The analysis stream can begin before
+    those vectors land in Qdrant, so the first analysis retrieved nothing and
+    read empty ``parsed_text``. Claim the job inline if no runner has taken it,
+    otherwise wait for that runner to finish, then copy the fresh row onto
+    ``doc``.
+
+    Status and row contents are read through short-lived sessions rather than
+    ``db.refresh``: the request's session holds an open read transaction, so its
+    snapshot would hide the background task's committed writes and make this
+    helper re-ingest a document that is already complete (duplicate vectors).
+    """
+    from sqlalchemy import select
+
+    from app.db.models import Document
+    from app.db.session import async_session_factory
+    from app.document_pipeline.ingestion import (
+        STATUS_COMPLETE,
+        STATUS_FAILED,
+        STATUS_UPLOADED,
+        ingest_document,
+    )
+
+    async def _fresh_status() -> str | None:
+        async with async_session_factory() as probe:
+            return await probe.scalar(
+                select(Document.status).where(Document.id == doc.id)
+            )
+
+    async def _copy_fresh() -> None:
+        async with async_session_factory() as fresh:
+            latest = await fresh.get(Document, doc.id)
+        if latest is None:
+            return
+        for field in (
+            "status",
+            "raw_text",
+            "parsed_text",
+            "page_count",
+            "metadata_",
+            "chunk_count",
+            "processing_error",
+        ):
+            setattr(doc, field, getattr(latest, field))
+
+    status = await _fresh_status()
+
+    # If no runner has claimed the document yet, take it ourselves. The claim
+    # inside ingest_document makes a concurrent background task a no-op, so the
+    # parse/embed work happens exactly once regardless of who wins. Previously
+    # this waited a fixed 3s and then ingested inline, which could race the
+    # background task and duplicate vectors.
+    if status == STATUS_UPLOADED:
+        logger.info(f"[Analysis] No background claim for {doc.id}; ingesting inline")
+        await ingest_document(doc.id)
+        status = await _fresh_status()
+
+    # Wait for whichever runner owns the document to reach a terminal status.
+    deadline = time.monotonic() + timeout
+    while status not in (STATUS_COMPLETE, STATUS_FAILED) and time.monotonic() < deadline:
+        await asyncio.sleep(0.5)
+        status = await _fresh_status()
+
+    if status != STATUS_COMPLETE:
+        logger.info(f"[Analysis] Recovering ingestion for {doc.id} (status={status})")
+        await ingest_document(doc.id, force=True)
+
+    await _copy_fresh()
+
+
+
+
 async def map_pipeline_result_to_analysis(state: dict[str, Any], case: Case, doc: Document) -> tuple[Analysis, Report]:
     doc_text = _stored_doc_text(doc)
 
@@ -813,11 +890,16 @@ async def analyze_case(
             await db.delete(old)
         await db.flush()
 
+        await _await_document_ingestion(db, doc)
+
         documents_list = [
             {
                 "filename": doc.filename,
                 "text": _stored_doc_text(doc),
                 "metadata": doc.metadata_ or {},
+                # Ingestion already chunked+embedded this document into Qdrant,
+                # so case_understanding must not re-embed the same chunks.
+                "indexed": doc.status == "complete" and bool(doc.chunk_count),
             }
         ]
 
@@ -1004,7 +1086,10 @@ async def get_analysis(
         analysis.precedents = [p for p in prec_rows if isinstance(p, dict) and (p.get("case_name") or '').strip().lower() not in ("vector", "keyword", "precedent citation", "precedent", "court of law")]
         if verification["hallucination_count"]:
             analysis.trust_score = max(0.0, min(float(analysis.trust_score or 0.0), 86.0) - 3.0 * verification["hallucination_count"])
-            logger.warning(f"[Verification] {verification['hallucination_count']} hallucinated citation(s) flagged for case {case_id}")
+            logger.info(
+                f"[Verification] {verification['hallucination_count']} citation(s) "
+                f"corrected by the verification gate for case {case_id}"
+            )
 
         if not doc_info.get("word_count") or doc_info.get("word_count") == 4882:
             doc_info["word_count"] = len(doc_raw_text.split())
@@ -1142,6 +1227,12 @@ async def stream_analysis(
         yield f"data: {json.dumps({'stage': 'parsing_content', 'label': 'Parsing Legal Content', 'status': 'completed', 'progress': 100})}\n\n"
         await asyncio.sleep(0.05)
 
+        # The upload endpoint parses/embeds in a background task; wait for it so
+        # this analysis can retrieve the document's own vectors (and sees a
+        # populated parsed_text). Progress is streamed so the SSE stays alive.
+        yield f"data: {json.dumps({'stage': 'creating_embeddings', 'label': 'Indexing Document', 'status': 'in_progress', 'progress': 25})}\n\n"
+        await _await_document_ingestion(db, doc)
+
         # Set up pipeline state
         documents_list = [
             {
@@ -1150,6 +1241,9 @@ async def stream_analysis(
                 # Pass stored metadata through so the pipeline keeps page
                 # boundaries for provenance (metadata_ contains "pages").
                 "metadata": doc.metadata_ or {},
+                # Ingestion already chunked+embedded this document into Qdrant,
+                # so case_understanding must not re-embed the same chunks.
+                "indexed": doc.status == "complete" and bool(doc.chunk_count),
             }
         ]
 

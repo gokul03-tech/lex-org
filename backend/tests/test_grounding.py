@@ -129,6 +129,25 @@ def test_universal_grounding_vikram():
     assert 'Bail application is allowed' in risk['conclusion']
 
 
+def test_sanhita_context_blocks_ndps_default():
+    """A bare "52g"/"52" in a BNSS/BNS/BSA judgment must not be hijacked by the
+    NDPS numeric default when the text never names the NDPS Act."""
+    # No document context: the legacy NDPS default is unchanged.
+    assert map_section_to_act('52g', {}, 'criminal') == 'NDPS Act, 1985'
+    # Plain BNSS document with no NDPS mention: the default is suppressed, so an
+    # unbound OCR-mangled provision is left as the honest "Statute (verify)"
+    # placeholder rather than a fabricated NDPS attribution.
+    assert map_section_to_act('52g', {}, 'criminal', doc_text=VIKRAM_TEXT) == 'Statute (verify)'
+    assert map_section_to_act('2', {}, 'criminal', doc_text=VIKRAM_TEXT) == 'Statute (verify)'
+    # An explicit in-text binding still wins over the guard.
+    assert map_section_to_act(
+        '52g', {'52g': 'Bharatiya Nagarik Suraksha Sanhita, 2023'}, 'criminal',
+        doc_text=VIKRAM_TEXT,
+    ) == 'Bharatiya Nagarik Suraksha Sanhita, 2023'
+    # A document that names the NDPS Act keeps the NDPS default.
+    assert map_section_to_act('52g', {}, 'criminal', doc_text=MAKWANA_TEXT) == 'NDPS Act, 1985'
+
+
 def test_universal_grounding_apex():
     report, binds, precs, timeline = analyze(APEX_TEXT)
     assert report['petitioner']['value'] == 'Apex Infrastructure Pvt. Ltd.'
@@ -203,3 +222,223 @@ def test_presentation_universal_layer():
     lint(conclusion, chips, kg)
     with pytest.raises(ValueError):
         lint("This is a Mock summary response with Not found in document")
+
+
+def test_analogy_mention_is_not_an_applicable_section():
+    """A provision cited only "by analogy" must be filtered out, while a
+    genuinely applied provision in the same document survives."""
+    from app.agents.analysis_fixes_v2 import (
+        filter_contextual_sections,
+        section_mention_is_contextual,
+    )
+
+    text = (
+        "The petitioner relies on Section 482 BNSS for the relief sought. "
+        "Learned counsel, by analogy, referred to Section 50 of the NDPS Act, 1985."
+    )
+    assert section_mention_is_contextual(text, "50") is True
+    assert section_mention_is_contextual(text, "482") is False
+    kept = filter_contextual_sections(
+        [{"section_number": "50"}, {"section_number": "482"}], text
+    )
+    assert [s["section_number"] for s in kept] == ["482"]
+
+
+def test_strategy_and_gaps_prompts_guard_source():
+    """Fix 2 / Fix 3: strategy must forbid mining the judicial disposition, and
+    gaps must be sourced from the opposing side's submissions."""
+    from app.agents.analysis import POTENTIAL_GAPS_PROMPT, STRATEGY_PROMPT
+
+    assert "OPERATIVE ORDER" in STRATEGY_PROMPT
+    assert "The appeal is allowed" in STRATEGY_PROMPT
+
+    assert "RESPONDENT'S SUBMISSIONS" in POTENTIAL_GAPS_PROMPT
+    assert "PER CONTRA" in POTENTIAL_GAPS_PROMPT
+    assert "flight risk" in POTENTIAL_GAPS_PROMPT.lower()
+
+    # The counter/opposing-counsel field must be respondent-side only.
+    assert "Per contra" in STRATEGY_PROMPT
+    assert "Additional Public Prosecutor" in STRATEGY_PROMPT
+    assert "petitioner's own arguments" in STRATEGY_PROMPT
+
+
+def test_section_number_is_not_captured_as_constitutional_article():
+    """A "Section N" must not be recast as a coincidental constitutional
+    Article N; an explicit "Article N" still resolves to the Constitution."""
+    bnss = (
+        "The applicant seeks quashing of the FIR under Section 35 of the "
+        "Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023."
+    )
+    assert map_section_to_act("35", {}, "criminal", doc_text=bnss) != "Constitution of India"
+
+    writ = "The petitioner invokes Article 21 and Article 32 of the Constitution of India."
+    assert map_section_to_act("21", {}, "criminal", doc_text=writ) == "Constitution of India"
+
+
+def test_ocr_section_token_is_repaired_only_in_context():
+    """An OCR-misread section token is repaired when it actually occurs in the
+    document text; an isolated probe is never silently fabricated."""
+    doc = (
+        "Quashing of the FIR under Section 52g of the Bharatiya Nagarik "
+        "Suraksha Sanhita (BNSS), 2023."
+    )
+    assert (
+        map_section_to_act("52g", {}, "criminal", doc_text=doc)
+        == "Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023"
+    )
+
+    # Same BNSS context but the token is absent from the text: keep the honest
+    # placeholder rather than inventing Section 528.
+    absent = "The applicant seeks bail under the Bharatiya Nagarik Suraksha Sanhita, 2023."
+    assert map_section_to_act("52g", {}, "criminal", doc_text=absent) == "Statute (verify)"
+
+
+
+
+def test_stated_question_is_surfaced_when_no_issues_framed():
+    """A document that states the question for determination as a plain
+    "Whether ...?" sentence, with no "ISSUES FRAMED" heading, still has its
+    issues surfaced - the sentence is the document's own words, not invented."""
+    from app.agents.presentation_universal import _court_framed_issues
+
+    text = (
+        "IN THE HIGH COURT OF JUDICATURE AT BOMBAY\n"
+        "The applicant seeks quashing of the FIR and proceedings. "
+        "Whether the allegations, taken at face value, disclose a cognizable "
+        "offence, or are they civil in nature?"
+    )
+    issues = [i["text"] for i in _court_framed_issues(text)]
+    assert any("civil in nature" in s for s in issues)
+
+
+def test_no_issue_is_invented_without_a_question_or_prayer():
+    """A judgment that frames no issue and states no prayer must keep an empty
+    issue list - inference never manufactures one from a bare section mention."""
+    from app.agents.presentation_universal import _court_framed_issues
+
+    assert _court_framed_issues(VIKRAM_TEXT) == []
+
+
+def test_relief_clause_yields_inferred_issue():
+    """An explicit prayer clause is sufficient to infer the relief-based issue."""
+    from app.agents.presentation_universal import _court_framed_issues
+
+    text = (
+        "IN THE HIGH COURT\nThe petitioner humbly prays that the impugned order "
+        "be set aside and that bail be granted."
+    )
+    issues = _court_framed_issues(text)
+    assert issues and issues[0]["source"] == "inferred"
+
+
+def test_bare_act_abbreviation_binds_section_to_correct_act():
+    """A section followed by a bare abbreviation ("of BNSS", "under IPC") binds
+    to that Act; the long-title path is unaffected."""
+    from app.agents.analysis_fixes_v2 import (
+        extract_section_act_bindings,
+        map_section_to_act,
+    )
+
+    bnss = "Notice under Section 35(3) of BNSS was served on the petitioners."
+    binds = extract_section_act_bindings(bnss)
+    assert map_section_to_act("35(3)", bnss and binds, "criminal", doc_text=bnss) == (
+        "Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023"
+    )
+
+    ipc = "Charges were framed under Sections 469 and 509 of the IPC."
+    binds2 = extract_section_act_bindings(ipc)
+    assert binds2.get("469") == "Indian Penal Code, 1860"
+    assert binds2.get("509") == "Indian Penal Code, 1860"
+
+
+def test_action_plan_prefers_specific_direction_over_bail_bond():
+    """The action plan keeps an operative direction with an authority/period and
+    does not reduce to a boilerplate bond clause when a specific one exists."""
+    from app.agents.analysis_fixes_v2 import _extract_procedural_directions
+
+    text = (
+        "The petition is allowed. The petitioners are directed to furnish a "
+        "personal bond of Rs. 50,000/- with two sureties. "
+        "The Registry is directed to list the matter before the appropriate "
+        "bench within four weeks."
+    )
+    plan = _extract_procedural_directions(text)
+    # The specific, time-bound Registry direction is ranked ahead of the bare
+    # bond clause.
+    assert plan.split(";")[0].strip() and "four weeks" in plan.split(";")[0]
+
+
+def test_per_contra_introduces_the_respondent_side():
+    """Standalone "Per contra" (no named State counsel in the same sentence) is
+    the standard lead-in for the opposing side's argument and must populate the
+    respondent column rather than being dropped."""
+    from app.agents.presentation_universal import extract_submissions
+
+    text = (
+        "IN THE HIGH COURT\n"
+        "The petitioner submitted that the FIR is an abuse of process. "
+        "Per contra, the allegations disclose a cognizable offence and the "
+        "investigation must continue. "
+        "The State further contended that the petitioner is a flight risk."
+    )
+    a, b = extract_submissions(text)
+    assert a
+    assert b and any("cognizable" in s or "flight risk" in s for s in b)
+
+
+def test_administrative_questions_are_not_legal_issues():
+    """Supreme Court reporting formalities ("Whether Reporters of Local Papers
+    may be allowed...") must never surface as legal issues, while a substantively
+    framed question is kept."""
+    from app.agents.presentation_universal import _court_framed_issues
+    from app.agents.agentic_pipeline import clean_issues_deterministic
+
+    text = (
+        "IN THE SUPREME COURT OF INDIA\n"
+        "Whether Reporters of Local Papers may be allowed to see the judgment? "
+        "Whether the judgment should be reported in the Digest? "
+        "Whether leave to appeal granted? "
+        "Whether the appellant has made out a case for quashing the FIR?"
+    )
+    issues = [i["text"] for i in _court_framed_issues(text)]
+    assert issues == ["Whether the appellant has made out a case for quashing the FIR?"]
+
+    cleaned = clean_issues_deterministic([
+        "Whether Reporters of Local Papers may be allowed to see the judgment?",
+        "Whether the appellant has made out a case for quashing the FIR?",
+    ])
+    assert cleaned == ["Whether the appellant has made out a case for quashing the FIR?"]
+
+
+def test_section_headings_do_not_crash_submission_extraction():
+    """Regression: the section-anchor branch called _switch before its
+    definition, so any document with a heading like "STATE'S SUBMISSIONS" raised
+    UnboundLocalError and both counsel columns came back empty."""
+    from app.agents.presentation_universal import extract_submissions
+
+    text = (
+        "8. DEFENCE CONTENTIONS The accused contends the FIR is an abuse of process. "
+        "The State submitted that the offence is grave and custodial interrogation "
+        "is needed. "
+        "10. RESPONDENT'S SUBMISSIONS Per contra, the petitioner is a flight risk."
+    )
+    a, b = extract_submissions(text)
+    assert a and b
+
+
+def test_present_tense_cues_and_dispositive_directions():
+    """ "The petitioner contends"/"The State submitted" (present/past) are speaker
+    cues, while the court's own "The petitioners are directed to..." order must
+    NOT be filed as a petitioner submission."""
+    from app.agents.presentation_universal import extract_submissions
+
+    text = (
+        "The petitioner contends that the FIR is an abuse of process. "
+        "Taking into consideration the facts, the petitioners are directed to "
+        "appear before the Investigating Officer. "
+        "The State submitted that the offence is grave."
+    )
+    a, b = extract_submissions(text)
+    assert any("abuse of process" in s for s in a)
+    assert not any("directed to appear" in s for s in a)
+    assert any("offence is grave" in s for s in b)

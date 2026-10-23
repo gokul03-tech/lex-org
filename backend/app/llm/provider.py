@@ -103,7 +103,10 @@ def get_llm_provider(model_type: str = "qwen") -> LLMProvider:
     """Factory function to instantiate the appropriate LLM provider.
 
     Args:
-        model_type: Either "qwen" or "deepseek".
+        model_type: One of "qwen" / "deepseek" (concrete roles) or
+            "fast" / "strong" (task-based routing roles). "fast" selects the
+            cheap model for simple, high-frequency tasks; "strong" selects the
+            powerful model for complex reasoning.
 
     Returns:
         Configured LLMProvider instance.
@@ -114,8 +117,16 @@ def get_llm_provider(model_type: str = "qwen") -> LLMProvider:
     """
     from app.core.config import settings
 
-    if model_type not in ("qwen", "deepseek"):
-        raise ValueError(f"Unknown model type: {model_type}. Use 'qwen' or 'deepseek'.")
+    valid_roles = ("qwen", "deepseek", "fast", "strong", "vision")
+    if model_type not in valid_roles:
+        raise ValueError(
+            f"Unknown model type: {model_type}. Use one of {', '.join(valid_roles)}."
+        )
+
+    # "fast" follows the lightweight "qwen" path and "strong" the reasoning
+    # "deepseek" path on the local backends; the openai_compatible backend maps
+    # each role to its own model id.
+    legacy_type = "qwen" if model_type in ("qwen", "fast", "vision") else "deepseek"
 
     if settings.LLM_BACKEND == "mock":
         from app.llm.mock_provider import MockProvider
@@ -126,14 +137,17 @@ def get_llm_provider(model_type: str = "qwen") -> LLMProvider:
         from app.llm.llama_cpp_provider import LlamaCppProvider
 
         model_path = (
-            settings.QWEN_MODEL_PATH if model_type == "qwen"
+            settings.QWEN_MODEL_PATH
+            if legacy_type == "qwen"
             else (settings.DEEPSEEK_MODEL_PATH or settings.QWEN_MODEL_PATH)
         )
         if not model_path:
             # No GGUF configured for this slot: load local HF weights instead
             # (e.g. an AWQ model stored under MODELS_DIR) via transformers.
             hf_model_id = (
-                settings.QWEN_HF_MODEL_ID if model_type == "qwen" else settings.DEEPSEEK_HF_MODEL_ID
+                settings.QWEN_HF_MODEL_ID
+                if legacy_type == "qwen"
+                else settings.DEEPSEEK_HF_MODEL_ID
             )
             from loguru import logger
 
@@ -156,20 +170,49 @@ def get_llm_provider(model_type: str = "qwen") -> LLMProvider:
         )
 
     if settings.LLM_BACKEND == "openai_compatible":
+        from app.llm.fallback_provider import FallbackProvider
         from app.llm.openai_compatible_provider import OpenAICompatibleProvider
 
-        model_id = settings.QWEN_MODEL_NAME if model_type == "qwen" else settings.DEEPSEEK_MODEL_NAME
-        return OpenAICompatibleProvider(
-            model_name=f"{model_type}-openai-compatible",
-            api_base=settings.LLM_API_BASE,
-            api_key=settings.LLM_API_KEY,
-            model_id=model_id,
-        )
+        role_model = {
+            "qwen": settings.QWEN_MODEL_NAME,
+            "deepseek": settings.DEEPSEEK_MODEL_NAME,
+            "fast": settings.FAST_MODEL_NAME,
+            "strong": settings.STRONG_MODEL_NAME,
+            # Empty VLM_OCR_MODEL inherits the Gemini model (multimodal).
+            "vision": settings.VLM_OCR_MODEL or settings.GEMINI_MODEL,
+        }[model_type]
+
+        def _build(api_base: str, api_key: str, model_id: str) -> OpenAICompatibleProvider:
+            return OpenAICompatibleProvider(
+                model_name=f"{model_type}-openai-compatible",
+                api_base=api_base,
+                api_key=api_key,
+                model_id=model_id,
+            )
+
+        # Gemini (free tier) is primary when configured; the OpenRouter/LiteLLM
+        # endpoint acts as an automatic fallback for 402/429/outage resilience.
+        if settings.GEMINI_API_KEY:
+            primary = _build(
+                settings.GEMINI_API_BASE, settings.GEMINI_API_KEY, settings.GEMINI_MODEL
+            )
+            if settings.LLM_API_KEY and settings.LLM_API_KEY != settings.GEMINI_API_KEY:
+                return FallbackProvider(
+                    primary,
+                    _build(settings.LLM_API_BASE, settings.LLM_API_KEY, role_model),
+                )
+            return primary
+
+        return _build(settings.LLM_API_BASE, settings.LLM_API_KEY, role_model)
 
     if settings.LLM_BACKEND == "transformers":
         from app.llm.transformers_provider import TransformersProvider
 
-        model_id = settings.QWEN_HF_MODEL_ID if model_type == "qwen" else settings.DEEPSEEK_HF_MODEL_ID
+        model_id = (
+            settings.QWEN_HF_MODEL_ID
+            if legacy_type == "qwen"
+            else settings.DEEPSEEK_HF_MODEL_ID
+        )
         return TransformersProvider(
             model_name=f"{model_type}-transformers",
             model_id=model_id,

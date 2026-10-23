@@ -105,6 +105,72 @@ def _num(sec: str) -> str:
     m = re.match(r'\d+', str(sec))
     return m.group() if m else "0"
 
+
+# Common OCR digit/letter confusions in scanned Indian judgments. Applied ONLY
+# when a section token resolves to no known provision, so a genuine
+# letter-suffixed section ("66D", "29A") is never disturbed.
+_OCR_DIGIT_MAP = str.maketrans({
+    'g': '8', 'G': '8', 'q': '9', 'Q': '9', 'o': '0', 'O': '0',
+    'l': '1', 'I': '1', 'i': '1', '|': '1', 's': '5', 'S': '5',
+    'z': '2', 'Z': '2', 'b': '6', 'B': '8', 't': '7', 'T': '7',
+    'a': '4', 'A': '4', 'e': '6',
+})
+
+
+def _ocr_section_candidates(sec: str) -> list[str]:
+    """Digit-only candidates for an OCR-misread section token ("52g" → "528").
+
+    Only the leading number is repaired; a trailing sub-section is reattached
+    untouched. Returns [] for tokens that are already digits-only.
+    """
+    s = str(sec or "")
+    head, sep, tail = s.partition('(')
+    if not re.search(r'\d', head) or head.isdigit():
+        return []
+    cands: list[str] = []
+    fixed = head.translate(_OCR_DIGIT_MAP)
+    if fixed != head and fixed.isdigit():
+        cands.append(fixed + (sep + tail if sep else ""))
+    # Repair one confused character at a time as well, so a single stray letter
+    # surrounded by real digits still recovers ("l05" → "105").
+    for i, ch in enumerate(head):
+        if ch in _OCR_DIGIT_MAP and not ch.isdigit():
+            single = head[:i] + ch.translate(_OCR_DIGIT_MAP) + head[i + 1:]
+            candidate = single + (sep + tail if sep else "")
+            if single.isdigit() and candidate not in cands:
+                cands.append(candidate)
+    return cands
+
+# Bare statutory abbreviations. Real petitions and interim orders write
+# "Section 35(3) of BNSS" or "under Section 3 BNS" far more often than the full
+# long title, and ACT_RE - which needs an "Act|Sanhita|Adhiniyam|Code|
+# Constitution" tail - never matched those, so the section reached the resolver
+# unbound and surfaced as the wrong Act or the "Statute (verify)" placeholder.
+# Each abbreviation is expanded to the same canonical name the defaults use.
+_ACT_ABBREV = {
+    "BNSS": "Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023",
+    "BNS": "Bharatiya Nyaya Sanhita (BNS), 2023",
+    "BSA": "Bharatiya Sakshya Adhiniyam (BSA), 2023",
+    "IPC": "Indian Penal Code, 1860",
+    "CRPC": "Code of Criminal Procedure, 1973",
+    "IEA": "Indian Evidence Act, 1872",
+    "NDPS": "NDPS Act, 1985",
+    "CPC": "Code of Civil Procedure, 1908",
+}
+_ACT_ABBREV_RE = re.compile(
+    r'Sections?\s+(\d+(?:\([\w]+\))*)\s*(?:(?:,|and|&)\s*\d+(?:\([\w]+\))*)*'
+    r'\s+(?:(?:of|under|in)\s+)?(?:the\s+)?'
+    r'(b\.?n\.?s\.?s\.?|b\.?n\.?s\.?|b\.?s\.?a\.?|i\.?p\.?c\.?|'
+    r'c\.?r\.?p\.?c\.?|i\.?e\.?a\.?|n\.?d\.?p\.?s\.?|c\.?p\.?c\.?)(?![A-Za-z])',
+    re.IGNORECASE,
+)
+
+
+def _expanded_abbrev(token: str) -> str:
+    key = re.sub(r'[^A-Za-z]', '', token).upper()
+    return _ACT_ABBREV.get(key, "")
+
+
 def extract_section_act_bindings(text: str) -> dict[str, str]:
     binds: dict[str, str] = {}
     for m in re.finditer(ACT_RE, text, re.IGNORECASE):
@@ -113,6 +179,17 @@ def extract_section_act_bindings(text: str) -> dict[str, str]:
         # not just the first, so each one resolves to the named Act.
         clause = m.group(0)
         for num in re.findall(r'\d+(?:\([\w]+\))*', clause.split(' of ')[0]):
+            sec_raw = num.strip()
+            binds[sec_raw] = act
+            binds[_num(sec_raw)] = act
+    # Abbreviation pass: run AFTER the full-title pass so a document that names
+    # the long title keeps that exact string, and only a bare abbreviation binds
+    # the canonical expansion.
+    for m in re.finditer(_ACT_ABBREV_RE, text):
+        act = _expanded_abbrev(m.group(2))
+        if not act:
+            continue
+        for num in re.findall(r'\d+(?:\([\w]+\))*', m.group(0)):
             sec_raw = num.strip()
             binds[sec_raw] = act
             binds[_num(sec_raw)] = act
@@ -125,6 +202,17 @@ BNS_DEFAULT = {111, 302, 307, 318, 319, 351, 352}
 BNSS_DEFAULT = {480, 482, 483, 528}
 BSA_DEFAULT = {61, 62, 63, 64, 65}
 IT_DEFAULT = {"66", "66A", "66B", "66C", "66D", "67", "67A", "43"}
+
+# In a BNSS/BNS-era document that names no other Act for the number, a bare
+# section that otherwise collides with an older Act resolves to its sanhita
+# provision: bare "Section 3" is BNS (not the Evidence Act's interpretation
+# clause) and bare "Section 35" is BNSS (arrest notice, CrPC 41 no longer
+# applies). Consulted only when _sanhita_document() is true, so a mixed or
+# NDPS file - where 3 is IEA and 35 is NDPS - is never affected.
+_SANHITA_CONTEXT_DEFAULT = {
+    3: "Bharatiya Nyaya Sanhita (BNS), 2023",
+    35: "Bharatiya Nagarik Suraksha Sanhita (BNSS), 2023",
+}
 
 # Canonical override table for the statute normalization post-processor (FIX 4).
 # Consulted AFTER the LLM returns its sections, as the final step of
@@ -232,12 +320,38 @@ MONTH_NAMES = (
     "july", "august", "september", "october", "november", "december",
 )
 
+_SANHITA_CONTEXT_RE = re.compile(
+    r"\b(?:b\.?n\.?s\.?s\.?|b\.?n\.?s\.?|b\.?s\.?a\.?|"
+    r"nagarik\s+suraksha|nyaya\s+sanhita|sakshya\s+adhiniyam)(?![A-Za-z])",
+    re.IGNORECASE,
+)
+_NDPS_CONTEXT_RE = re.compile(r"\b(?:ndps|narcotic)\b", re.IGNORECASE)
+
+
+def _sanhita_document(text: str | None) -> bool:
+    """True when a document belongs to the 2023 sanhita era and never names the
+    NDPS Act.
+
+    A bare "Section 52" is ambiguous: NDPS s.52 and BNSS s.528 both read as
+    "52" once OCR drops the final letter. When the text is plainly a BNSS/BNS/
+    BSA judgment and never mentions the NDPS Act, the legacy NDPS numeric
+    default must not hijack the provision.
+    """
+    if not text:
+        return False
+    sample = text[:20000]
+    return bool(_SANHITA_CONTEXT_RE.search(sample)) and not _NDPS_CONTEXT_RE.search(
+        sample
+    )
+
+
 def map_section_to_act(
     sec: str,
     binds: dict[str, str],
     category: str = "criminal",
     is_article: bool = False,
     decision_date: str | None = None,
+    doc_text: str | None = None,
 ) -> str:
     act = binds.get(sec) or binds.get(_num(sec))
     if act:
@@ -258,17 +372,33 @@ def map_section_to_act(
     root = num_str.upper()
     full = (sec or "").upper()
 
-    # An Article number is constitutional unless the document bound it otherwise.
-    # The numeric root of a BARE digit section ("32", "21") refers to a
-    # constitutional article, but a letter-suffixed provision must match its own
-    # full token: "29A" must not be read as Article 29 (it is IBC eligibility).
+    # An Article number is constitutional, but ONLY when the document itself
+    # frames it as an Article. A bare "Section 35" (BNSS), "Section 50" (NDPS)
+    # or "Section 52" shares its digits with Articles 35/50/52 of the
+    # Constitution; without this guard that coincidence silently recast a
+    # statutory provision as a constitutional one. When the document text is
+    # available we require textual Article framing; legacy callers that pass no
+    # text keep the previous number-list behaviour. The numeric root of a BARE
+    # digit section ("32", "21") counts as an article, but a letter-suffixed
+    # provision must match its own full token: "29A" is IBC eligibility, not
+    # Article 29.
     in_const = (sec in CONSTITUTION_ARTICLES) or (full in CONSTITUTION_ARTICLES)
     root_const = not re.search(r'\d[a-zA-Z]', sec) and (root in CONSTITUTION_ARTICLES)
-    if is_article or in_const or root_const:
-        if is_article and not (in_const or root_const):
-            pass  # "Article N of an Act" falls through to the statutory tables
+    if in_const or root_const:
+        framed_as_article = is_article
+        if doc_text is not None:
+            framed_as_article = is_article or bool(
+                re.search(
+                    rf'\b(?:Art|Article|Arts)\.?\s*{re.escape(root)}\b',
+                    doc_text,
+                    re.I,
+                )
+            )
         else:
+            framed_as_article = True  # legacy: the number list decides
+        if framed_as_article:
             return "Constitution of India"
+        # Otherwise fall through to the statutory tables below.
 
     if num_str in IT_DEFAULT or root in IT_DEFAULT:
         return "Information Technology Act, 2000"
@@ -279,13 +409,20 @@ def map_section_to_act(
     if n in BSA_DEFAULT:
         return "Bharatiya Sakshya Adhiniyam (BSA), 2023"
 
+    # Sanhita-era context: bare sections that collide with an older Act default
+    # to the corresponding sanhita provision (see _SANHITA_CONTEXT_DEFAULT).
+    if _sanhita_document(doc_text):
+        sanhita_ctx = _SANHITA_CONTEXT_DEFAULT.get(n)
+        if sanhita_ctx:
+            return sanhita_ctx
+
     if category in ("civil", "environment", "environmental"):
         for act_name, numbers in ENVIRONMENT_DEFAULTS.items():
             if n in numbers:
                 return act_name
 
     if category == 'criminal':
-        if n in NDPS_DEFAULT:
+        if n in NDPS_DEFAULT and not _sanhita_document(doc_text):
             return "NDPS Act, 1985"
         if n in EVIDENCE_DEFAULT:
             return "Indian Evidence Act, 1872"
@@ -302,6 +439,20 @@ def map_section_to_act(
     mapped = STATUTE_MAPPING.get(full) or STATUTE_MAPPING.get(root) or STATUTE_MAPPING.get(num_str)
     if mapped:
         return _fix_statute_year(mapped)
+
+    # OCR repair, last resort: a scanned token ("52g") that resolved to nothing
+    # may be a misread digit sequence ("528"). The token must actually occur in
+    # the supplied document (so an isolated probe is never "repaired" into a
+    # fabricated attribution), and each candidate is recursed once (it is
+    # digits-only, so it cannot re-enter this block) and accepted only if it
+    # lands on a real provision - never merely to avoid the placeholder.
+    if doc_text and re.search(rf'(?<![\w]){re.escape(str(sec))}(?![\w])', doc_text, re.I):
+        for candidate in _ocr_section_candidates(sec):
+            resolved = map_section_to_act(
+                candidate, binds, category, is_article, decision_date, doc_text
+            )
+            if resolved and resolved != "Statute (verify)":
+                return resolved
 
     return "Statute (verify)"
 
@@ -801,9 +952,34 @@ def _extract_procedural_directions(text: str) -> str:
             break
 
     if directions:
-        # Later directives are the operative ones (they add to or modify earlier
-        # ones), so order by document position descending.
-        directions.sort(key=lambda t: -t[0])
+        # Prefer the specific operative clause over a boilerplate bail-bond
+        # phrase. A judgment's tail usually carries both "the petitioners are
+        # directed to ..." and "on furnishing a personal bond of ..."; the
+        # generic bond line alone is what makes an action plan read as a
+        # template. Specificity = a deadline/period, a named authority, or an
+        # operative verb; a bare bond/surety clause scores negative so it is
+        # kept only when nothing more specific exists.
+        def _specificity(clause: str) -> int:
+            score = 0
+            if re.search(
+                r'\b(?:within|before|on\s+or\s+before|by\s+\d|days?|weeks?|'
+                r'months?|forthwith|expeditiously)\b',
+                clause, re.I,
+            ):
+                score += 3
+            if re.search(
+                r'\b(?:registry|magistrate|sessions|tribunal|authority|'
+                r'department|respondent|state|prosecution)\b',
+                clause, re.I,
+            ):
+                score += 2
+            if re.search(r'\b(?:shall|directed|ordered|required)\b', clause, re.I):
+                score += 1
+            if re.search(r'\b(?:bond|surety|sureties)\b', clause, re.I):
+                score -= 2
+            return score
+
+        directions.sort(key=lambda t: (_specificity(t[1]), t[0]), reverse=True)
         return "; ".join(d for _, d in directions[:3])
 
     # No court order in the document. Use the next steps the document itself
@@ -1005,7 +1181,13 @@ _META_CUE_RE = re.compile(
     r'\b(?:do\s+not\s+confuse|should\s+not\s+confuse|confus\w+\s+with|'
     r'distinguish\s+between|as\s+opposed\s+to|often\s+list\w*|'
     r'commonly\s+list\w*|is\s+not\s+to\s+be\s+confused|'
-    r'no\s+longer\s+list\w*|earlier\s+(?:provision|offence|offense))\b',
+    r'no\s+longer\s+list\w*|earlier\s+(?:provision|offence|offense)|'
+    # Cited only by analogy / comparative argument, not actually charged or
+    # applied: "Section 50 of the NDPS Act (by analogy)", "drawing an analogy
+    # to Section 482 CrPC". Such a mention must not surface the Act as a
+    # primary statute of this case.
+    r'by\s+(?:way\s+of\s+)?analogy|drawing\s+an?\s+analogy|in\s+analogy|'
+    r'mutatis\s+mutandis|analogous\s+(?:provision|section|case))\b',
     re.IGNORECASE,
 )
 

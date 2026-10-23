@@ -90,8 +90,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 try:
                     import time as _time
                     t0 = _time.monotonic()
-                    from app.embeddings.bge_m3 import get_bge_m3
-                    if get_bge_m3().load():
+                    from app.embeddings.embedder import get_embedder
+                    if get_embedder().load():
                         logger.info(f"BGE-M3 embedder warmed up in {_time.monotonic() - t0:.1f}s")
                     else:
                         logger.warning("BGE-M3 failed to load; embeddings will use deterministic fallback.")

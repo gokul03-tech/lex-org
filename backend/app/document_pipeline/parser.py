@@ -109,6 +109,23 @@ class DocumentParser:
                 raise RuntimeError(f"Failed to parse PDF: {file_path.name}") from exc2
 
         full_text = "\n\n".join(text_pages)
+
+        # Vision-LLM fallback: if the text layer is unusable (too short or too
+        # noisy), re-read the leading pages as images before returning.
+        try:
+            from app.document_pipeline.vlm_ocr import needs_vlm_ocr, vlm_ocr_fallback
+
+            if needs_vlm_ocr(full_text):
+                logger.info(f"Low-quality text layer; trying VLM OCR: {file_path.name}")
+                vlm_text = vlm_ocr_fallback(file_path)
+                if vlm_text.strip() and not needs_vlm_ocr(vlm_text, min_chars=1):
+                    full_text = vlm_text
+                    text_pages = [vlm_text]
+                    needs_ocr = False
+                    logger.info(f"VLM OCR replaced extracted text for {file_path.name}")
+        except Exception as exc:  # noqa: BLE001 - never block parsing
+            logger.warning(f"VLM OCR fallback skipped: {exc}")
+
         return {
             "text": self._clean_text(full_text),
             "pages": [self._clean_text(p) for p in text_pages],

@@ -28,6 +28,22 @@ class QueryRewriter:
         # Total variants to return, including the original query.
         self.max_variants = max(1, max_variants)
 
+    _SECTION_RE = re.compile(
+        r"\b(?:section|sec\.?|s\.)\s*\d+|\b(?:ipc|crpc|bnss|bns|bsa|article)\b",
+        re.IGNORECASE,
+    )
+
+    def _is_self_sufficient(self, query: str) -> bool:
+        """True when the query is detailed enough that an LLM rewrite adds little.
+
+        Long, already-articulated queries (a concatenation of court-framed
+        issues) and statute-rich queries already carry the terms retrieval needs.
+        """
+        q = query.strip()
+        if len(q) >= 200:
+            return True
+        return len(q) >= 100 and bool(self._SECTION_RE.search(q))
+
     def rewrite(self, query: str, intent: str | None = None) -> list[str]:
         """Generate multiple query variants for parallel retrieval.
 
@@ -43,35 +59,42 @@ class QueryRewriter:
 
         variants = [query.strip()]
 
-        # Try LLM-based rewriting
-        try:
-            from app.llm.qwen import get_qwen_provider
-
-            provider = get_qwen_provider()
-            prompt = self._build_rewrite_prompt(query, intent)
-            # Five short query variants need a few hundred tokens, not the 2048
-            # default. Left uncapped, the model ran on to 12,000 characters of
-            # repeated variants and this single call cost 252s of a 12-minute
-            # pipeline, for output that is then truncated to 5 lines anyway.
-            result = provider.generate(prompt, temperature=0.3, max_tokens=320)
-
-            # Parse generated variants, keeping only the requested number.
-            limit = max(1, self.max_variants)
-            for line in result.strip().split("\n"):
-                line = line.strip()
-                if not line:
-                    continue
-                # Drop numbering/bullets the model may add ("1. ", "- ").
-                line = re.sub(r'^(?:[-*•]|\d+[.)])\s*', '', line).strip()
-                if not line:
-                    continue
-                if line not in variants:
-                    variants.append(line)
-                if len(variants) >= limit + 1:  # +1 for the original query
-                    break
-        except Exception as exc:
-            logger.warning(f"LLM query rewrite failed, using rule-based fallback: {exc}")
+        if self._is_self_sufficient(query):
+            # The LLM rewrite is the single slowest retrieval stage (tens of
+            # seconds on the 70B model) and buys almost nothing for a query that
+            # already names its statutes. Use the deterministic variants.
             variants.extend(self._rule_based_rewrite(query, intent))
+        else:
+            # Try LLM-based rewriting
+            try:
+                from app.llm.routing import get_fast_provider
+
+                provider = get_fast_provider()
+                prompt = self._build_rewrite_prompt(query, intent)
+                # Five short query variants need a few hundred tokens, not the
+                # 2048 default. Left uncapped, the model ran on to 12,000
+                # characters of repeated variants and this single call cost 252s
+                # of a 12-minute pipeline, for output that is then truncated to
+                # 5 lines anyway.
+                result = provider.generate(prompt, temperature=0.3, max_tokens=320)
+
+                # Parse generated variants, keeping only the requested number.
+                limit = max(1, self.max_variants)
+                for line in result.strip().split("\n"):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # Drop numbering/bullets the model may add ("1. ", "- ").
+                    line = re.sub(r'^(?:[-*•]|\d+[.)])\s*', '', line).strip()
+                    if not line:
+                        continue
+                    if line not in variants:
+                        variants.append(line)
+                    if len(variants) >= limit + 1:  # +1 for the original query
+                        break
+            except Exception as exc:
+                logger.warning(f"LLM query rewrite failed, using rule-based fallback: {exc}")
+                variants.extend(self._rule_based_rewrite(query, intent))
 
         # Deduplicate while preserving order
         seen: set[str] = set()

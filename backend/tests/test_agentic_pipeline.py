@@ -9,16 +9,24 @@ import pytest
 
 from app.agents.agentic_pipeline import (
     _extract_json,
+    _looks_like_ocr_noise,
     attribute_counsel_arguments,
+    classify_header_blocks,
     classify_judgment_date,
     clean_document_text,
+    clean_issues_deterministic,
+    clean_ocr_text_with_llm,
     clean_text_with_llm,
     critic_extraction,
     critic_issues,
     critic_strengths,
     critic_strengths_and_gaps,
+    recover_from_ocr,
     resolve_act_from_context,
+    resolve_act_from_snippet,
+    resolve_acts_detailed,
     run_agentic_pipeline,
+    validate_understanding_query,
 )
 
 
@@ -184,6 +192,26 @@ async def test_critic_issues_truncate_to_question(fake):
     assert corrected == ["Whether the arrest was lawful?"]
 
 
+def test_clean_issues_deterministic_strips_judicial_reasoning():
+    issues = [
+        "Whether the seizure was lawful? We hold that the search was valid.",
+        "Whether bail was denied? In the result the petition is dismissed.",
+    ]
+    assert clean_issues_deterministic(issues) == [
+        "Whether the seizure was lawful?",
+        "Whether bail was denied?",
+    ]
+
+
+def test_clean_issues_deterministic_truncates_overlong_issue():
+    overlong = "Whether the order is sustainable? " + ("word " * 120)
+    assert clean_issues_deterministic([overlong]) == ["Whether the order is sustainable?"]
+
+
+def test_clean_issues_deterministic_drops_blanks():
+    assert clean_issues_deterministic(["  ", "Valid issue?"]) == ["Valid issue?"]
+
+
 @pytest.mark.asyncio
 async def test_critic_strengths_recovers_real_findings(fake):
     generic = ["No favorable findings extracted yet."]
@@ -234,9 +262,150 @@ async def test_run_agentic_pipeline_orchestrates(fake):
     )
     assert "IN THE HIGH COURT" in out["cleaned_text"]
     assert out["act_resolutions"] == {"482": "Code of Criminal Procedure, 1973"}
+    assert out["act_details"] == {"482": {"act_name": "Code of Criminal Procedure", "year": "1973"}}
+    assert out["legal_content_blocks"]
     assert out["judgment_date"] == "18 November 2023"
     assert out["counsel_attribution"]["petitioner_args"]
     assert out["counsel_attribution"]["respondent_args"]
     assert out["criticized"]["issues"] == ["Whether the arrest was lawful?"]
     assert "The Court held that the arrest was unlawful." in out["criticized"]["strengths"]
     assert "strengths_and_gaps" in out["criticized"]
+
+
+def test_validate_understanding_query_gate():
+    assert validate_understanding_query("") is False
+    assert validate_understanding_query("Client: .") is False
+    assert validate_understanding_query("legal case analysis") is False
+    assert validate_understanding_query(
+        "Whether the bail petition under Section 439 is maintainable"
+    ) is True
+
+
+@pytest.mark.asyncio
+async def test_recover_from_ocr_reads_header_and_footer():
+    provider = FakeProvider(
+        responder=lambda _p: (
+            '{"case_name": "A v. B", "judgment_date": "1 May 2024",'
+            ' "final_order": "Bail granted"}'
+        )
+    )
+    out = await recover_from_ocr("garbled body text", provider)
+    assert out == {
+        "case_name": "A v. B",
+        "judgment_date": "1 May 2024",
+        "final_order": "Bail granted",
+    }
+
+
+@pytest.mark.asyncio
+async def test_recover_from_ocr_handles_bad_json(fake):
+    out = await recover_from_ocr("garbled body text", fake)
+    assert out == {"case_name": "", "judgment_date": "", "final_order": ""}
+
+
+# ── OCR repair pre-pass ────────────────────────────────────
+def test_looks_like_ocr_noise_flags_fused_text_but_not_prose():
+    assert _looks_like_ocr_noise("224of " * 120) is True
+    assert _looks_like_ocr_noise("The petition is allowed.") is False
+
+
+@pytest.mark.asyncio
+async def test_clean_ocr_text_skips_clean_document_without_calling_llm():
+    provider = FakeProvider(responder=lambda p: "SHOULD NOT BE CALLED")
+    out = await clean_ocr_text_with_llm("The petition is allowed.", provider)
+    assert out == "The petition is allowed."
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_clean_ocr_text_repairs_noisy_document():
+    garbled = "224of " * 120
+    provider = FakeProvider(
+        responder=lambda _p: '{"cleaned_text": "' + ("clean text " * 100) + '"}'
+    )
+    out = await clean_ocr_text_with_llm(garbled, provider)
+    assert out != garbled
+    assert "clean text" in out
+    assert len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_clean_ocr_text_keeps_original_when_output_shrinks():
+    garbled = "224of " * 120
+    provider = FakeProvider(responder=lambda _p: '{"cleaned_text": "tiny"}')
+    out = await clean_ocr_text_with_llm(garbled, provider)
+    assert out == garbled
+
+
+@pytest.mark.asyncio
+async def test_clean_ocr_text_repairs_long_document_in_windows():
+    garbled = "224of " * 600
+    provider = FakeProvider(
+        responder=lambda _p: '{"cleaned_text": "' + ("clean text " * 100) + '"}'
+    )
+    out = await clean_ocr_text_with_llm(garbled, provider, force=True, chunk_size=800)
+    assert len(provider.calls) > 1
+    assert "224of" not in out
+
+
+@pytest.mark.asyncio
+async def test_clean_ocr_text_caps_repair_to_leading_chars():
+    head = "X" * 100
+    tail = "TAILMARKER " + ("y " * 50)
+    provider = FakeProvider(
+        responder=lambda _p: '{"cleaned_text": "CLEANHEAD' + ("z" * 200) + '"}'
+    )
+    out = await clean_ocr_text_with_llm(head + tail, provider, force=True, max_chars=100)
+    assert len(provider.calls) == 1
+    assert out.startswith("CLEANHEAD")
+    assert "TAILMARKER" in out  # untouched tail is re-appended
+
+
+# ── Statute resolution (section -> act_name, year) ─────────
+@pytest.mark.asyncio
+async def test_resolve_act_from_snippet_returns_name_and_year():
+    provider = FakeProvider(
+        responder=lambda _p: (
+            '{"section": "528", "act_name": "Indian Penal Code", "year": "1860"}'
+        )
+    )
+    out = await resolve_act_from_snippet(
+        "528", "as defined in the Indian Penal Code 1860", provider
+    )
+    assert out == {"section": "528", "act_name": "Indian Penal Code", "year": "1860"}
+
+
+@pytest.mark.asyncio
+async def test_resolve_act_from_snippet_empty_on_failure():
+    provider = FakeProvider(responder=lambda _p: "junk")
+    out = await resolve_act_from_snippet("528", "no act named here", provider)
+    assert out == {"section": "528", "act_name": "", "year": ""}
+
+
+@pytest.mark.asyncio
+async def test_resolve_acts_detailed_splits_combined_act_string(fake):
+    out = await resolve_acts_detailed(["482"], "Section 482 of the Code cited here.", fake)
+    assert out == {"482": {"act_name": "Code of Criminal Procedure", "year": "1973"}}
+
+
+# ── Header block classifier ────────────────────────────────
+@pytest.mark.asyncio
+async def test_classify_header_blocks_keeps_only_legal_content():
+    text = (
+        "Reporter is granted permission to report this judgment.\n\n"
+        "The petitioner was arrested on 12 January 2018.\n\n"
+        "The argument of the State is that the arrest was lawful."
+    )
+    provider = FakeProvider(responder=lambda _p: '{"legal_content": [1, 2]}')
+    out = await classify_header_blocks(text, provider)
+    assert out == [
+        "The petitioner was arrested on 12 January 2018.",
+        "The argument of the State is that the arrest was lawful.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_classify_header_blocks_falls_back_to_all_on_bad_json():
+    text = "Block one.\n\nBlock two."
+    out = await classify_header_blocks(text, FakeProvider(responder=lambda _p: "not-json"))
+    assert out == ["Block one.", "Block two."]

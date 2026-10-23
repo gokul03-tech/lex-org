@@ -42,3 +42,21 @@ def test_validation_rejects_body_only_decision_date() -> None:
 
     assert result["passed"] is False
     assert "decision_date" in result["failures"]
+
+
+def test_court_matter_prefers_appeal_over_fir() -> None:
+    from app.document_pipeline.metadata_extractor import LegalMetadataExtractor
+
+    caption = "Criminal Appeal No. 2847 of 2024\n(arising out of FIR No. 143 of 2024)"
+    result = LegalMetadataExtractor()._extract_court_matter(caption)
+
+    assert result["value"] == "Criminal Appeal No. 2847 of 2024"
+    assert result["status"] == "extracted"
+
+
+def test_court_matter_reads_fir_when_it_is_the_only_docket() -> None:
+    from app.document_pipeline.metadata_extractor import LegalMetadataExtractor
+
+    result = LegalMetadataExtractor()._extract_court_matter("FIR No. 143 of 2024")
+
+    assert result["value"] == "FIR No. 143 of 2024"

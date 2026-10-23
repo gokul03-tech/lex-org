@@ -1,730 +1,754 @@
-# LexOrch-KG: Trust-Aware Multi-Agent Legal Advisory Framework
+# LexOrch-KG: A Trust-Calibrated Multi-Agent Framework for Grounded Legal Advisory on Indian Criminal Law
 
-[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-3776AB?logo=python&logoColor=white)](https://python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![TailwindCSS](https://img.shields.io/badge/TailwindCSS-3.4-38B2AC?logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
-[![Qdrant](https://img.shields.io/badge/Qdrant-v1.10-DC2626?logo=qdrant&logoColor=white)](https://qdrant.tech)
-[![FalkorDB](https://img.shields.io/badge/FalkorDB-Graph_DB-FF4438?logo=redis&logoColor=white)](https://www.falkordb.com)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+**LexOrch-KG** is an end-to-end, fully offline legal-analysis framework that ingests Indian case files
+(FIRs, charge sheets, criminal petitions, and High Court / Supreme Court judgments) and synthesises a
+**16-section, source-grounded legal advisory report**. It unifies four ingredients that are usually
+studied in isolation:
 
-**LexOrch-KG** is an end-to-end, trust-calibrated multi-agent legal advisory framework specializing in Indian Criminal Law, Constitutional Jurisprudence, and Statutory Analysis (including the Bharatiya Nyaya Sanhita [BNS], Bharatiya Nagarik Suraksha Sanhita [BNSS], and Bharatiya Sakshya Adhiniyam [BSA]).
+1. **Hybrid retrieval** — dense semantic search (BGE-M3, 1024-d), lexical (BM25), and graph (FalkorDB)
+   retrieval fused via Reciprocal Rank Fusion and reranked by a cross-encoder.
+2. **A 12-agent reasoning graph** orchestrated as a stateful LangGraph workflow over a shared,
+   typed state.
+3. **A source-provenance gate** that binds every fact, section, and precedent to a verbatim quote with
+   a page number and an overlap score.
+4. **A trust-calibration module** that fuses per-agent confidences with evidence-quality,
+   procedural-compliance, and contradiction signals under a hallucination-verification constraint.
 
-Designed for advocates and legal researchers, LexOrch-KG ingests case files (FIRs, charge sheets, trial petitions, High Court and Supreme Court judgments) and synthesizes a **16-section structured legal advisory report**. By uniting **Dense Vector Search (Qdrant)**, a **Knowledge Graph (FalkorDB)**, and **Verbatim Source Provenance Validation**, LexOrch-KG eliminates generative hallucinations, attributing every factual finding, statutory section, and precedent directly to source page numbers and quote excerpts.
-
----
-
-## 📑 Table of Contents
-
-- [Key Highlights](#-key-highlights)
-- [System Architecture](#-system-architecture)
-  - [High-Level Architectural Diagram](#high-level-architectural-diagram)
-  - [Component Interaction & Data Flow](#component-interaction--data-flow)
-- [Frontend Architecture & Features](#-frontend-architecture--features)
-  - [Tech Stack & UI Design System](#tech-stack--ui-design-system)
-  - [Application Pages & Workflows](#application-pages--workflows)
-  - [Interactive Case Workspace](#interactive-case-workspace)
-  - [Explainability & Graph Visualizer](#explainability--graph-visualizer)
-  - [Grounded Assistant & Chatbot Drawer](#grounded-assistant--chatbot-drawer)
-- [Backend Architecture & Pipeline](#-backend-architecture--pipeline)
-  - [Core Technologies & Services](#core-technologies--services)
-  - [12-Agent LangGraph Workflow](#12-agent-langgraph-workflow)
-  - [Hybrid RAG Search Engine](#hybrid-rag-search-engine)
-  - [FalkorDB Knowledge Graph Schema](#falkordb-knowledge-graph-schema)
-  - [Relational Database Schema (SQLAlchemy)](#relational-database-schema-sqlalchemy)
-  - [LLM Provider Abstraction Layer](#llm-provider-abstraction-layer)
-- [16-Section Legal Advisory Report](#-16-section-legal-advisory-report)
-- [REST API Reference](#-rest-api-reference)
-- [Evaluation & Grounding Framework](#-evaluation--grounding-framework)
-  - [8-Suite Evaluation Matrix (E1–E8)](#8-suite-evaluation-matrix-e1e8)
-  - [Corpus Grounding Gate (600 Docs)](#corpus-grounding-gate-600-docs)
-- [Installation & Getting Started](#-installation--getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Option A: Docker Compose (Quickest)](#option-a-docker-compose-quickest)
-  - [Option B: Local Development Setup](#option-b-local-development-setup)
-  - [Data Ingestion & Embedding Cache](#data-ingestion--embedding-cache)
-- [Configuration Reference (.env)](#-configuration-reference-env)
-- [Repository Structure](#-repository-structure)
-- [Testing & Quality Assurance](#-testing--quality-assurance)
-- [License](#-license)
+The system runs **entirely offline** on local hardware using quantised GGUF language models and
+locally cached encoder weights, and it ships with a reproducible 8-suite evaluation harness (E1–E8).
 
 ---
 
-## 🌟 Key Highlights
+## Table of Contents
 
-* **100% Grounded Provenance:** Every factual finding, legal issue, and procedural claim is verified against source documents using verbatim string-overlap checks with page numbers, bounding text, and confidence scores.
-* **Hybrid Retrieval (Vector + Lexical + KG):** Combines **BGE-M3** dense embeddings (1024-d), **BM25** exact statutory lexical search, and **FalkorDB** Cypher entity traversal with **CrossEncoder** reranking.
-* **Dual Statutory Regime Awareness:** Mappable cross-references between legacy codes (IPC, CrPC, IEA) and new statutory enactments (BNS 2023, BNSS 2023, BSA 2023).
-* **Deterministic Fallback & Fast Startup:** Multi-stage fallback mechanisms allow instant startup (<10ms) with background ML model warmup and mock LLM testability.
-* **Explainability Graph:** Interactive React Flow node-link graph mapping parties, statutory sections, constitutional articles, and precedent citations.
-* **Standardized 16-Section Legal Reports:** Instant client-ready executive reports formatted for advocates with PDF and Markdown export support.
-* **Comprehensive Benchmarking:** Built-in 8-suite evaluation system testing extraction macro-F1, retrieval MRR, grounding violations, and IRAC logic consistency.
+1. [Introduction](#1-introduction)
+2. [Contributions](#2-contributions)
+3. [Related Work](#3-related-work)
+4. [System Architecture](#4-system-architecture)
+5. [Data Ingestion and Representation](#5-data-ingestion-and-representation)
+6. [Hybrid Retrieval (RAG)](#6-hybrid-retrieval-rag)
+7. [Multi-Agent Reasoning Engine](#7-multi-agent-reasoning-engine)
+8. [Knowledge Graph Schema](#8-knowledge-graph-schema)
+9. [Trust Calibration and Grounding](#9-trust-calibration-and-grounding)
+10. [Local Inference Stack and Reproducibility](#10-local-inference-stack-and-reproducibility)
+11. [Relational Data Model](#11-relational-data-model)
+12. [The 16-Section Advisory Report](#12-the-16-section-advisory-report)
+13. [Programmatic Interface](#13-programmatic-interface)
+14. [Datasets and Evaluation Protocol](#14-datasets-and-evaluation-protocol)
+15. [Results](#15-results)
+16. [Ablation Study](#16-ablation-study)
+17. [Reproducibility Checklist](#17-reproducibility-checklist)
+18. [Limitations and Threats to Validity](#18-limitations-and-threats-to-validity)
+19. [Ethics and Responsible Use](#19-ethics-and-responsible-use)
+20. [Installation and Getting Started](#20-installation-and-getting-started)
+21. [Configuration Reference](#21-configuration-reference)
+22. [Repository Structure](#22-repository-structure)
+23. [Testing and Quality Assurance](#23-testing-and-quality-assurance)
+24. [Citation](#24-citation)
+25. [License](#25-license)
 
 ---
 
-## 🏗️ System Architecture
+## 1. Introduction
 
-### High-Level Architectural Diagram
+Indian legal practice is at an inflection point. The 2023 reform triad — **Bharatiya Nyaya Sanhita
+(BNS)**, **Bharatiya Nagarik Suraksha Sanhita (BNSS)**, and **Bharatiya Sakshya Adhiniyam (BSA)** —
+replaced the colonial-era Indian Penal Code (IPC), Code of Criminal Procedure (CrPC), and Indian
+Evidence Act (IEA), introducing new provisions for electronic evidence, digital due process, and
+revised procedural timelines. Practitioners must now reason across **two statutory regimes at once**,
+mapping legacy provisions to their modern counterparts while preserving procedural correctness.
+
+Generic LLM assistants struggle here for structural reasons:
+
+* **Retrieval loss** — judgments exceed a single context window, and pure vector search misses exact
+  statutory identifiers such as `§34(2A)` or `O.39 R.1-2`.
+* **Grounding loss** — generated summaries interleave true and fabricated facts, and fabricated
+  citations are hard for a non-expert to detect.
+* **Calibration loss** — a single confidence number from an LLM is neither interpretable nor reliable.
+
+LexOrch-KG reframes the task as **structured extraction and reasoning with strict provenance** rather
+than free-form generation. Every output is either bound to a verbatim quote with a page number and an
+overlap score, or explicitly labelled as machine *inference*. This makes the system auditable and lets
+us measure extraction quality and hallucination rate independently.
+
+**Scope.** LexOrch-KG targets document-grounded advisory for advocates and legal researchers. It is
+not a substitute for professional legal judgment and emits an explicit disclaimer in every report.
+
+---
+
+## 2. Contributions
+
+* **Hybrid, identifier-aware retrieval.** Dense (BGE-M3), lexical (BM25), and graph (FalkorDB)
+  retrieval fused by Reciprocal Rank Fusion and reranked by a cross-encoder.
+* **Multi-agent reasoning graph.** Twelve specialised agents over a shared `AgentState`, with
+  deterministic extractors first and the language model only for residuals, so the pipeline degrades
+  gracefully when the model is slow or unavailable.
+* **Source-provenance gate.** Every emitted item is bound or relabelled, so facts, sections, and
+  precedents cannot be silently fabricated.
+* **Trust calibration.** A weighted fusion of per-agent confidences blended with evidence, procedural,
+  and contradiction signals, constrained by a citation-verification gate and forced to zero when the
+  model backends fall back to placeholders.
+* **Dual-regime awareness.** Abbreviation-aware statute binding and document-level context used to map
+  and disambiguate legacy (IPC/CrPC/IEA) and modern (BNS/BNSS/BSA) provisions.
+* **Reproducible, offline evaluation.** An E1–E8 harness with a documented gold standard and batch
+  validation checks, running on local model weights.
+
+---
+
+## 3. Related Work
+
+* **Legal RAG.** Prior systems retrieve statutory text to condition generation but usually evaluate
+  answer fluency rather than per-claim provenance. LexOrch-KG treats provenance as a measured quantity.
+* **Legal knowledge graphs.** Graphs of cases, statutes, and citations aid multi-hop retrieval;
+  LexOrch-KG incorporates a KG alongside dense and lexical channels rather than replacing them.
+* **Multi-agent LLM systems.** Task decomposition across specialised agents improves robustness; few
+  report calibrated confidence over agent outputs. LexOrch-KG adds a verification-constrained fusion.
+* **Hallucination detection.** String-overlap and citation-verification methods expose fabricated
+  references; LexOrch-KG embeds both as runtime gates instead of post-hoc filters.
+
+---
+
+## 4. System Architecture
+
+### High-level architecture
 
 ```mermaid
 graph TB
-    subgraph ClientLayer["🖥️ Frontend Client Layer (Vite + React 19 + TS)"]
-        UI["Advocate Dashboard / Case Explorer"]
+    subgraph Client["Client Layer (Vite + React 19 + TypeScript)"]
+        UI["Advocate Dashboard & Case Explorer"]
         Workspace["Case Workspace (Overview / Statutes / Evidence / Graph / Risk)"]
-        ReportView["16-Section Interactive Report Viewer"]
-        ChatDrawer["Contextual Grounded Chatbot"]
-        GraphViz["React Flow Graph Engine"]
-        ZustandStore["Zustand State Stores & React Query"]
+        ReportView["16-Section Report Viewer"]
+        GraphViz["Interactive Knowledge-Graph Visualiser"]
     end
 
-    subgraph APILayer["⚡ API Gateway & Server (FastAPI + Asynchronous Workers)"]
-        Router["FastAPI Router (/api/v1)"]
-        AuthService["JWT Authentication & RBAC"]
-        UploadHandler["Document Parser (pypdf + PaddleOCR)"]
-        SSEStream["Server-Sent Events (SSE) Streamer"]
-        CeleryWorker["Celery Worker Queue (Async Analysis Jobs)"]
+    subgraph Server["Application Server (FastAPI, async)"]
+        Router["Request Router"]
+        Auth["Authentication & Role Guards"]
+        Parser["Document Parser + Local OCR"]
+        SSE["Server-Sent Events Progress Streamer"]
+        Worker["Background Analysis Workers"]
     end
 
-    subgraph AgentPipeline["🤖 Multi-Agent Reasoning Engine (LangGraph Supervisor)"]
-        A1["1. Case Understanding"]
-        A2["2. Legal Research"]
-        A3["3. Knowledge Graph"]
-        A4["4. Evidence Reliability"]
-        A5["5. Contradiction Detection"]
-        A6["6. Procedural Compliance"]
-        A7["7. Legal Reasoning (IRAC)"]
-        A8["8. Strategy Recommendation"]
-        A9["9. Risk Assessment"]
-        A10["10. Confidence Fusion"]
-        A11["11. Explainability"]
-        A12["12. Report Generation"]
+    subgraph Agents["Multi-Agent Reasoning Engine (LangGraph Supervisor)"]
+        A1["1 Case Understanding"] --> A2["2 Legal Research"] --> A3["3 Knowledge Graph"]
+        A3 --> A4["4 Evidence Reliability"] --> A5["5 Contradiction Detection"]
+        A5 --> A6["6 Procedural Compliance"] --> A7["7 Legal Reasoning (IRAC)"]
+        A7 --> A8["8 Strategy Recommendation"] --> A9["9 Risk Assessment"]
+        A9 --> A10["10 Confidence Fusion"] --> A11["11 Explainability"] --> A12["12 Report Generation"]
     end
 
-    subgraph StorageLayer["🗄️ Hybrid Storage & Retrieval Layer"]
-        QdrantDB[("Qdrant Vector DB<br/>BGE-M3 1024-d Vectors")]
-        FalkorGraph[("FalkorDB Graph DB<br/>Redis Cypher Entities & Relations")]
-        SQLiteDB[("SQLite Metadata DB<br/>Async SQLAlchemy ORM")]
-        RedisQueue[("Redis Broker<br/>Celery Tasks & Cache")]
+    subgraph Store["Hybrid Storage & Retrieval Layer"]
+        Qdrant[("Qdrant Vector DB / BGE-M3 1024-d")]
+        Falkor[("FalkorDB Knowledge Graph")]
+        SQLite[("Relational Metadata Store")]
     end
 
-    subgraph ModelLayer["🧠 Model & Inference Providers"]
-        BGEM3["BAAI/bge-m3 Embeddings"]
-        Reranker["CrossEncoder ms-marco-MiniLM"]
-        LocalLLM["Local LLMs (Llama.cpp / Qwen / Transformers / Ollama)"]
+    subgraph Local["Local Model & Retrieval Runtime (offline)"]
+        LLM["Quantised GGUF LLM (llama.cpp)"]
+        Embed["BGE-M3 Embedder"]
+        Rank["Cross-Encoder Reranker"]
+        BM25["BM25 Lexical Index"]
     end
 
-    UI <--> Router
-    Workspace <--> Router
-    ReportView <--> Router
-    ChatDrawer <--> Router
-    Router <--> AuthService
-    Router <--> UploadHandler
-    Router <--> SSEStream
-    Router <--> SQLiteDB
-    Router --> CeleryWorker
-    CeleryWorker <--> RedisQueue
-    CeleryWorker --> AgentPipeline
-
-    AgentPipeline <--> BGEM3
-    AgentPipeline <--> Reranker
-    AgentPipeline <--> LocalLLM
-    AgentPipeline <--> QdrantDB
-    AgentPipeline <--> FalkorGraph
-    AgentPipeline --> SQLiteDB
+    Client --> Router
+    Router --> Auth
+    Router --> Parser
+    Router --> SSE
+    Router --> Worker
+    Worker --> Agents
+    Agents --> Store
+    Agents --> Local
+    Store --> ReportView
+    Agents --> ReportView
+    Agents --> GraphViz
 ```
 
-### Component Interaction & Data Flow
+### Layered view
 
-1. **Document Ingestion:** The advocate uploads a legal case PDF (e.g., judgment, charge sheet, FIR) via the React UI.
-2. **Text & OCR Extraction:** FastAPI receives the payload, invokes `DocumentParser`, performs page-wise text extraction, and automatically falls back to `PaddleOCR` for scanned low-character pages.
-3. **Multi-Agent Orchestration:** The LangGraph supervisor initiates a stateful 12-stage processing cycle.
-4. **Hybrid Retrieval:** The research agent executes simultaneous dense semantic vector queries in Qdrant and lexical queries via BM25, combining results via Reciprocal Rank Fusion (RRF) and reranking top candidates with a CrossEncoder.
-5. **Knowledge Graph Expansion:** Relevant statutory sections, constitutional articles, and citations are extracted and mapped into FalkorDB nodes and relationships.
-6. **IRAC Legal Reasoning:** The reasoning agent evaluates arguments according to the Issue-Rule-Application-Conclusion framework.
-7. **Strict Grounding Validation:** The Source Validation Agent compares all generated statements against the original document text. Items failing grounding checks are pruned or flagged.
-8. **Real-Time Client Streaming:** As processing progresses, Server-Sent Events (SSE) update the frontend progress checklist and state stores in real time.
-9. **Final Synthesis:** The compiled 16-section report and graph model are committed to the SQLite database and rendered in the frontend.
-
----
-
-## 💻 Frontend Architecture & Features
-
-The frontend is a single-page application (SPA) built with React 19, TypeScript, and Vite. It employs a dark-mode glassmorphic interface styled with Tailwind CSS, Lucide icons, and Framer Motion micro-animations.
-
-### Tech Stack & UI Design System
-
-* **Core:** React 19, TypeScript 5.5, Vite 5.
-* **Routing:** React Router v6 with nested layout routes.
-* **State Management:** Zustand for global state (auth, active cases, analysis progress, UI drawers).
-* **Styling:** Tailwind CSS with custom CSS variables, glassmorphism filters (`backdrop-blur-md`), and responsive flex/grid layouts.
-* **Visualizations:** React Flow (`react-flow-renderer`) interactive node-link graph with zoom, pan, node-drag, mini-map, and entity filtering.
-* **Feedback & Components:** Custom Shadcn-inspired UI components (Dialogs, Tabs, Tooltips, Toasters, Badges, Accordions, Sliders).
-
-### Application Pages & Workflows
-
-| Page | Route | Description |
+| Layer | Responsibility | Technologies |
 | :--- | :--- | :--- |
-| **Authentication** | `/login`, `/register` | JWT token authentication, user session persistence, and role guards. |
-| **Dashboard** | `/dashboard` | Case metrics summary, trust score averages, recent uploads, and quick-action cards. |
-| **Cases Explorer** | `/cases` | Case portfolio directory with filtering, sorting, status badges, and new case creation modal. |
-| **Case Workspace** | `/cases/:caseId/*` | Deep analysis workspace containing 5 specialized analytical sub-views. |
-| **Advisory Report** | `/cases/:caseId/report` | Clean 16-section printable legal brief with markdown export and section jump navigation. |
-| **Admin Panel** | `/admin` | Infrastructure diagnostics (Qdrant collections, FalkorDB node counts, Redis health, and system logs). |
+| Presentation | Advocate workspace, report reader, graph visualiser | React 19, TypeScript, Vite, Zustand, React Flow, Tailwind |
+| Application | Routing, auth, upload, streaming, background jobs | FastAPI (ASGI), Server-Sent Events, workers |
+| Reasoning | Decomposed legal analysis and synthesis | LangGraph state machine; 12 agents |
+| Retrieval | Candidate generation and reranking | Qdrant, BM25, FalkorDB, BGE-M3, cross-encoder |
+| Storage | Metadata, vectors, graph | SQLite (async SQLAlchemy), Qdrant, FalkorDB |
+| Inference | Offline language model and encoders | llama.cpp (GGUF) / PyTorch, sentence-transformers |
 
-### Interactive Case Workspace
+### End-to-end data flow
 
-The case workspace (`/cases/:caseId`) provides a modular tabbed interface:
-
-```text
-/cases/:caseId
-  ├── Overview    -> Metadata status cards, executive summary, grounded facts with page chips
-  ├── Statutes    -> Applicable Acts & Sections (Cited vs Inferred), BNS/BNSS cross-references
-  ├── Evidence    -> Event chronological timeline, electronic records (§63 BSA), contradiction matrix
-  ├── Graph       -> Interactive React Flow entity-relationship graph with search & node inspector
-  └── Risk        -> Strategic liability matrix, procedural compliance checks, defense options
-```
-
-1. **Overview Tab:** Presents petitioner/respondent data, court name, filing date, and extracted facts. Every fact displays an interactive **Provenance Badge** (e.g. `Page 4 • 94% Confidence`) that expands to show the verbatim source quote.
-2. **Statutes Tab:** Displays governing Acts (BNS, IPC, NDPS, PMLA, Constitution of India) with badges indicating whether the section was explicitly cited in the petition or dynamically inferred by the agent.
-3. **Evidence & Timeline Tab:** Chronologically sequences all case incidents. Assesses evidentiary admissibility under Bharatiya Sakshya Adhiniyam (BSA) Section 63 for electronic records.
-4. **Graph Tab:** Interactive React Flow node-link visualization rendering linked Case, Party, Section, Article, and Citation nodes.
-5. **Risk & Strategy Tab:** Quantitative risk assessment scoring procedural vulnerabilities, statutory liabilities, and recommended litigation strategies.
-
-### Explainability & Graph Visualizer
-
-The embedded knowledge graph viewer (`frontend/src/components/graph/CaseGraph.tsx`) renders interactive node-link graphs with:
-* **Color-Coded Nodes:** Case (Blue), Party (Emerald), Section (Violet), Article (Amber), Citation (Cyan).
-* **Interactive Physics Simulation:** Force-directed charge, collision detection, and spring links.
-* **Node Inspector Drawer:** Clicking any node reveals its connected entities, statutory text, and occurrence context in the brief.
-
-### Grounded Assistant & Chatbot Drawer
-
-Accessible from any case view, the sliding chatbot drawer allows advocates to query the uploaded brief. Every answer is synthesized strictly from the retrieved document chunks and cites exact page numbers to prevent ungrounded reasoning.
+1. **Ingestion.** A case PDF is uploaded; the parser extracts page-wise text and applies **local OCR**
+   to scanned or low-character pages.
+2. **Representation.** Text is cleaned, chunked with overlap, embedded with **BGE-M3** (1024-d), and
+   upserted into **Qdrant**; identical content is de-duplicated by hash.
+3. **Orchestration.** The **LangGraph supervisor** walks the 12-agent `StateGraph` over a shared
+   `AgentState`, emitting **Server-Sent Events** for live progress.
+4. **Retrieval.** The research agent runs **dense + lexical + KG** retrieval, fuses candidates with
+   **Reciprocal Rank Fusion**, and reranks with a **cross-encoder**.
+5. **Graph expansion.** Statutory sections, constitutional articles, and citations become **FalkorDB**
+   nodes and edges.
+6. **Reasoning.** The **IRAC** agent structures the analysis into Issue–Rule–Application–Conclusion.
+7. **Grounding and verification.** A provenance gate and a citation-verification gate prune or flag
+   ungrounded content before synthesis.
+8. **Trust calibration.** Per-agent confidences are fused into a single trust score.
+9. **Synthesis.** A **16-section report** and the explainability graph are persisted and rendered.
 
 ---
 
-## ⚙️ Backend Architecture & Pipeline
+## 5. Data Ingestion and Representation
 
-The backend is built with FastAPI, LangGraph, SQLAlchemy (Async SQLite), Celery, Qdrant, and FalkorDB.
+Implemented in `app/document_pipeline/`:
 
-### Core Technologies & Services
+* **Parsing** (`parser.py`) — page-wise text extraction with a robust library fallback chain.
+* **Local OCR** (`ocr.py`, `ocr_corrections.py`, `vlm_ocr.py`) — falls back to OCR when a page has too
+  few characters; an optional local vision model handles image-heavy pages. Digit/character confusions
+  common to legal OCR (`§3` ↔ `S3`, `§35` ↔ `S35`) are normalised via a correction map.
+* **Cleaning** (`cleaner.py`) — whitespace, hyphenation, and header/footer normalisation.
+* **Chunking** (`chunker.py`) — sentence-aware chunking with overlap; average chunk length is logged
+  for traceability.
+* **Embedding** (`embedder.py`) — BGE-M3 1024-dimensional embeddings produced locally.
+* **Ingestion** (`ingestion.py`) — content-hash de-duplication and idempotent upsert, with an atomic
+  "claim" so concurrent uploads of identical content are ingested exactly once.
+* **Metadata** (`metadata_extractor.py`) — document type, court, parties, and dates.
 
-* **Web Framework:** FastAPI with asynchronous ASGI request handlers.
-* **Agent Orchestration:** LangGraph state machine maintaining mutable analysis states and routing checkpoints.
-* **Relational Storage:** SQLite with `aiosqlite` and SQLAlchemy async sessions.
-* **Vector Database:** Qdrant (1024-dimensional cosine similarity indexing).
-* **Knowledge Graph:** FalkorDB (Redis Graph engine executing openCypher queries).
-* **Asynchronous Task Queue:** Celery workers backed by a Redis broker for heavy document parsing and LLM inference.
-* **Structured Logging:** Loguru with unified terminal formatting and JSON file logs.
+> **Design note.** Ingestion is *idempotent*: re-uploading identical content is detected by content
+> hash and skipped, preventing vector duplication and keeping retrieval stable.
 
-### 12-Agent LangGraph Workflow
+---
 
-The supervisor (`app/agents/supervisor.py`) builds a LangGraph `StateGraph` over a shared `AgentState`, routing sequentially through the following 12 agent nodes. All node implementations live in `app/agents/analysis.py`.
+## 6. Hybrid Retrieval (RAG)
 
-```mermaid
-flowchart LR
-    Start([Case PDF]) --> A1[1. Case Understanding]
-    A1 --> A2[2. Legal Research]
-    A2 --> A3[3. Knowledge Graph]
-    A3 --> A4[4. Evidence Reliability]
-    A4 --> A5[5. Contradiction Detection]
-    A5 --> A6[6. Procedural Compliance]
-    A6 --> A7[7. Legal Reasoning]
-    A7 --> A8[8. Strategy Recommendation]
-    A8 --> A9[9. Risk Assessment]
-    A9 --> A10[10. Confidence Fusion]
-    A10 --> A11[11. Explainability]
-    A11 --> A12[12. Report Generation]
-    A12 --> End([16-Section Report])
-```
-
-1. **Case Understanding (`case_understanding_agent`):** Classifies the document and extracts the structured case summary, parties, court, and filing metadata.
-2. **Legal Research (`legal_research_agent`):** Queries the Qdrant legal corpus for statutory provisions and relevant precedents, and applies BM25 lexical search for specific sections and act titles.
-3. **Knowledge Graph (`knowledge_graph_agent`):** Resolves entity relations and creates nodes (`Case`, `Party`, `Section`, `Article`, `Citation`) and relationships (`INVOLVES`, `VIOLATES`, `CITES`, `INTERPRETS`) in FalkorDB.
-4. **Evidence Reliability (`evidence_reliability_agent`):** Assesses evidentiary weight and admissibility, including electronic records.
-5. **Contradiction Detection (`contradiction_detection_agent`):** Detects inconsistencies across the pleadings, depositions, and exhibits.
-6. **Procedural Compliance (`procedural_compliance_agent`):** Checks procedural and limitation compliance against the applicable statutory regime.
-7. **Legal Reasoning (`legal_reasoning_agent`):** Structures the analysis into **Issue**, **Rule**, **Application**, and **Conclusion** (IRAC), evaluating prosecution vs. defense arguments.
-8. **Strategy Recommendation (`strategy_recommendation_agent`):** Produces litigation strategy and defense options.
-9. **Risk Assessment (`risk_assessment_agent`):** Scores procedural vulnerabilities and statutory liabilities.
-10. **Confidence Fusion (`confidence_fusion_agent`):** Aggregates per-agent confidence into a calibrated trust score.
-11. **Explainability (`explainability_agent`):** Builds the evidence-to-conclusion graph model consumed by the frontend.
-12. **Report Generation (`report_generation_agent`):** Delegates to `app/services/report_service.py`, which assembles the unified 16-section advisory report payload.
-
-> **Grounding:** Verbatim source-provenance validation runs as a cross-cutting gate (`app/agents/universal_grounding.py`, `app/agents/doc_meta_guard.py`) so every fact, section, and claim is checked against the original document text before it reaches the report.
-
-### Hybrid RAG Search Engine
+Implemented in `app/rag/`. Four complementary channels feed a fusion stage:
 
 ```mermaid
 flowchart TD
-    Query[Advocate Legal Query] --> Dense[Qdrant Dense Search<br/>BGE-M3 1024-d]
-    Query --> Lexical[BM25 Lexical Search<br/>Statutory Code Index]
-    Dense -->|Top 25 Candidates| RRF[Reciprocal Rank Fusion<br/>RRF Score = 1 / (60 + Rank)]
-    Lexical -->|Top 25 Candidates| RRF
-    RRF -->|Combined 50 Chunks| Reranker[BAAI CrossEncoder Reranker]
-    Reranker -->|Top 5 Context Chunks| AgentContext[Grounded Agent Context]
+    Q[Legal Query] --> D[Dense: Qdrant + BGE-M3]
+    Q --> L[Lexical: BM25 statute index]
+    Q --> K[Graph: FalkorDB Cypher traversal]
+    Q --> C[Citation: precedent lookup]
+    D --> F[Reciprocal Rank Fusion]
+    L --> F
+    K --> F
+    C --> F
+    F --> R[Cross-Encoder Reranker]
+    R --> CTX[Grounded Context for Agents]
 ```
 
-* **Reciprocal Rank Fusion (RRF):**
-  $$RRF\_Score(d) = \sum_{m \in M} \frac{1}{60 + r_m(d)}$$
-* **CrossEncoder Reranking:** Computes full cross-attention between query and retrieved legal chunks, discarding candidates below relevance thresholds.
+* **Dense retrieval** (`retrievers/vector_search.py`) — cosine similarity over BGE-M3 embeddings.
+* **Lexical retrieval** (`retrievers/keyword_search.py`) — BM25 over a statutory term index; captures
+  exact identifiers that dense search misses.
+* **Knowledge-graph retrieval** (`retrievers/kg_search.py`) — multi-hop entity traversal.
+* **Citation retrieval** (`retrievers/citation_search.py`) — precedent lookup by citation string.
+* **Fusion** (`merger.py`) — Reciprocal Rank Fusion (RRF):
 
-### FalkorDB Knowledge Graph Schema
+  $$\text{RRF}(d) = \sum_{c \in C} \frac{1}{k + \text{rank}_c(d)}, \qquad k = 60$$
 
-Entities and relationships are modeled in FalkorDB via openCypher:
+* **Reranking** (`reranker.py`) — a cross-encoder (`ms-marco-MiniLM-L-6-v2`) rescores fused candidates
+  and yields the top context passages.
+* **Pre-processing** — an intent detector (`intent_detector.py`) classifies the query, and a query
+  rewriter (`query_rewriter.py`) expands it into variants to improve recall.
+
+---
+
+## 7. Multi-Agent Reasoning Engine
+
+Implemented in `app/agents/`. A single typed `AgentState` is threaded through a LangGraph `StateGraph`
+(`supervisor.py`); node implementations live in `analysis.py`, with deterministic extraction in
+`presentation_universal.py`, risk/strategy synthesis in `analysis_fixes_v2.py`, and grounding in
+`universal_grounding.py`.
+
+```mermaid
+flowchart LR
+    S([Case File]) --> A1[1 Case Understanding] --> A2[2 Legal Research]
+    A2 --> A3[3 Knowledge Graph] --> A4[4 Evidence Reliability]
+    A4 --> A5[5 Contradiction Detection] --> A6[6 Procedural Compliance]
+    A6 --> A7[7 Legal Reasoning / IRAC] --> A8[8 Strategy Recommendation]
+    A8 --> A9[9 Risk Assessment] --> A10[10 Confidence Fusion]
+    A10 --> A11[11 Explainability] --> A12[12 Report Generation]
+    A12 --> E([16-Section Report])
+```
+
+| # | Agent | Input | Output | Trust weight |
+| :-: | :--- | :--- | :--- | :---: |
+| 1 | Case Understanding | raw documents | summary, facts, parties, court, metadata, entities, timeline | 0.10 |
+| 2 | Legal Research | issue query | applicable sections, precedents | 0.15 |
+| 3 | Knowledge Graph | extracted entities | graph nodes and edges | 0.05 |
+| 4 | Evidence Reliability | exhibits and testimony | admissibility and weight score | 0.15 |
+| 5 | Contradiction Detection | all statements | contradiction set and score | 0.10 |
+| 6 | Procedural Compliance | timeline and statutes | compliance score, deadlines | 0.10 |
+| 7 | Legal Reasoning (IRAC) | facts and law | issue-rule-application-conclusion | 0.15 |
+| 8 | Strategy Recommendation | IRAC outcome | litigation strategies | 0.10 |
+| 9 | Risk Assessment | evidence and procedure | liability and vulnerability scores | 0.10 |
+| 10 | Confidence Fusion | all agent confidences | calibrated trust score | — |
+| 11 | Explainability | conclusions | evidence-to-conclusion graph | — |
+| 12 | Report Generation | full state | 16-section report payload | — |
+
+**Hybrid deterministic plus LLM design.** Each agent attempts a deterministic extractor first — for
+example rule-based issue detection split on question boundaries, abbreviation-aware statute binding,
+and procedural-direction scoring — and consults the language model only for the residual. All model
+output passes through the grounding gate. Two behaviours proved necessary for correctness:
+
+* **Issue extraction** splits runs of `Whether …? Whether …?` into distinct issues and filters
+  administrative questions (digest, leave-to-appeal, larger bench) out of substantive legal issues.
+* **Statute binding** is abbreviation-aware (`BNS`, `BNSS`, `BSA`, `IPC`, `CrPC`, and dotted forms
+  such as `B.N.S.S.`) and disambiguates bare section numbers using a document-level statutory context
+  only when the document belongs to the modern regime.
+
+---
+
+## 8. Knowledge Graph Schema
+
+Implemented in `app/kg/` (client `falkordb_client.py`, `entity_extractor.py`,
+`relationship_builder.py`). Nodes and relations are written and queried with openCypher:
 
 ```mermaid
 graph LR
-    CaseNode["(:Case)"] -->|INVOLVES| PartyNode["(:Party)"]
-    CaseNode -->|VIOLATES| SectionNode["(:Section)"]
-    SectionNode -->|SUBJECT_TO| ArticleNode["(:Article)"]
-    CaseNode -->|CITES| CitationNode["(:Citation)"]
-    CitationNode -->|INTERPRETS| SectionNode
+    Case[":Case"] -->|INVOLVES| Party[":Party"]
+    Case -->|VIOLATES| Section[":Section"]
+    Case -->|CITES| Citation[":Citation"]
+    Section -->|SUBJECT_TO| Article[":Article"]
+    Citation -->|INTERPRETS| Section
 ```
 
-* **Node Labels:** `Case`, `Party`, `Section`, `Article`, `Citation`.
-* **Relationship Types:**
-  * `(:Case)-[:INVOLVES {role: 'Petitioner'|'Respondent'|'Accused'}]->(:Party)`
-  * `(:Case)-[:VIOLATES {relevance: float}]->(:Section)`
-  * `(:Section)-[:SUBJECT_TO]->(:Article)`
-  * `(:Case)-[:CITES]->(:Citation)`
-  * `(:Citation)-[:INTERPRETS]->(:Section)`
+* `(:Case)-[:INVOLVES {role: 'Petitioner'|'Respondent'|'Accused'}]->(:Party)`
+* `(:Case)-[:VIOLATES {relevance: float}]->(:Section)`
+* `(:Case)-[:CITES]->(:Citation)`
+* `(:Section)-[:SUBJECT_TO]->(:Article)`
+* `(:Citation)-[:INTERPRETS]->(:Section)`
 
-### Relational Database Schema (SQLAlchemy)
+---
 
-The relational schema (`backend/app/db/models/__init__.py`) manages structured entities:
+## 9. Trust Calibration and Grounding
+
+### Trust score
+
+`confidence_fusion_agent` computes a weighted fusion of the agents that actually ran, then blends in
+independent signals:
+
+$$\text{trust} = w\!\sum_i \frac{c_i p_i}{\sum_i p_i} \;+\; 0.15\,e \;+\; 0.10\,r \;+\; 0.05\,(1-\bar{c})$$
+
+where $c_i$ and $p_i$ are agent $i$'s confidence and weight, $e$ is the evidence-quality score,
+$r$ is the procedural-compliance score, and $\bar{c}$ is the mean contradiction confidence.
+
+The score is then constrained by the **citation-verification gate** and bounded to $[0,1]$. If the
+verification rate is high and no fabrication is found, the score is lifted; if the rate is low, it is
+capped; each confirmed fabrication subtracts a penalty. Critically, if the local model failed to load
+and agents fell back to deterministic placeholders, the trust score is forced to **0** — the framework
+never claims high confidence on unverified output.
+
+### Citation verification gate
+
+`app/verification/hallucination_gate.py` validates every cited **section** against a curated codebook
+(valid section ranges and aliases for BNS, BNSS, BSA, IPC, CrPC, IEA, Contract Act, Specific Relief
+Act, Arbitration and Conciliation Act, and others) and every **precedent** against its citation
+string. It returns a verification rate and a fabrication count that feed the trust constraint.
+
+### Source provenance gate
+
+`app/agents/universal_grounding.py` binds each extracted item (fact, issue, section, precedent) to a
+verbatim quote in the source, recording the page number and an overlap score. Items below threshold
+are pruned or explicitly relabelled as *inference*, never silently emitted as fact.
+
+---
+
+## 10. Local Inference Stack and Reproducibility
+
+LexOrch-KG runs **entirely offline**; no request leaves the host.
+
+| Component | Model | Runtime | Notes |
+| :--- | :--- | :--- | :--- |
+| Language model | Quantised GGUF instruct model (e.g. Qwen2.5-3B/7B-Instruct, Q4_K_M) | `llama.cpp` | CPU/GPU split; larger models via the Transformers backend |
+| Embeddings | BGE-M3 (1024-d) | sentence-transformers | Local weights under `models/bge-m3` |
+| Reranker | ms-marco-MiniLM-L-6-v2 | sentence-transformers | Local weights under `models/` |
+| Vector store | Qdrant | local container | 1024-d cosine |
+| Graph store | FalkorDB | local container | openCypher |
+
+The inference layer (`app/llm/`) is an abstraction with three **local** backends selected by
+`LLM_BACKEND`:
+
+1. **`mock`** — deterministic, dependency-free provider for CI and hardware-free development.
+2. **`llama_cpp`** — in-process GGUF inference (CPU, with optional GPU layer offload).
+3. **`transformers`** — in-process PyTorch inference with automatic device mapping.
+
+Determinism aids reproducibility: deterministic extractors run first, decoding is greedy, weights are
+pinned locally, and ingestion is idempotent, so repeated runs on the same input are stable.
+
+---
+
+## 11. Relational Data Model
+
+Implemented in `app/db/models/` with async SQLAlchemy over SQLite:
 
 ```text
-┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
-│     User        │       │      Case       │       │    Document     │
-├─────────────────┤       ├─────────────────┤       ├─────────────────┤
-│ id (PK)         │1     *│ id (PK)         │1     *│ id (PK)         │
-│ email           ├───────┤ user_id (FK)    ├───────┤ case_id (FK)    │
-│ hashed_password │       │ title           │       │ filename        │
-│ is_active       │       │ case_type       │       │ filepath        │
-│ created_at      │       │ status          │       │ page_count      │
-└─────────────────┘       │ court_name      │       │ parsed_text     │
-                          │ case_number     │       │ metadata_ (JSON)│
-                          └────────┬────────┘       └─────────────────┘
-                                   │1
-                     ┌─────────────┴─────────────┐
-                    *│                          *│
-          ┌──────────┴──────┐          ┌─────────┴───────┐
-          │    Analysis     │          │     Report      │
-          ├─────────────────┤          ├─────────────────┤
-          │ id (PK)         │          │ id (PK)         │
-          │ case_id (FK)    │          │ case_id (FK)    │
-          │ summary         │          │ title           │
-          │ legal_issues    │          │ sections (JSON) │
-          │ applicable_acts │          │ trust_score     │
-          │ precedents      │          │ exp_graph (JSON)│
-          │ trust_score     │          │ kg_graph (JSON) │
-          └─────────────────┘          └─────────────────┘
+ User  1───*  Case  1───*  Document
+                 │
+                 ├───*  Analysis   (summary, legal_issues, applicable_acts, precedents, trust_score)
+                 └───*  Report     (title, sections[JSON], trust_score, explain_graph[JSON], kg_graph[JSON])
 ```
 
-### LLM Provider Abstraction Layer
-
-LexOrch-KG abstracts LLM inference (`app/llm/`) allowing seamless provider switching:
-
-1. **Mock Provider (`LLM_BACKEND=mock`):** Deterministic, zero-dependency provider for CI pipelines, automated testing, and development without GPU hardware.
-2. **Llama.cpp Provider (`LLM_BACKEND=llama_cpp`):** Optimized CPU/GPU split execution for quantized GGUF models (e.g., Qwen2.5-3B/7B-Instruct-Q4_K_M).
-3. **Transformers Provider (`LLM_BACKEND=transformers`):** Direct HuggingFace PyTorch pipeline utilizing `torch.float16` and automatic device map offloading to NVIDIA CUDA GPUs.
-4. **OpenAI-compatible Provider (`LLM_BACKEND=openai_compatible`):** HTTP client integration for remote or self-hosted LLM endpoints (vLLM, Ollama's OpenAI API, etc.).
+Each analysis stores its trust score and per-agent confidences, and each report stores its section
+payload and explainability/knowledge-graph snapshots, so any output is traceable after the fact.
 
 ---
 
-## 📑 16-Section Legal Advisory Report
+## 12. The 16-Section Advisory Report
 
-Each case analysis compiles into 16 structured, advocate-aligned sections:
-
-| # | Section Name | Description & Grounding Scope |
-| :---: | :--- | :--- |
-| **1** | **Executive Summary** | Concise 3-4 sentence legal briefing outlining the core dispute and recommended posture. |
-| **2** | **Case Facts** | Chronological timeline of material facts, annotated with source document page citations. |
-| **3** | **Legal Issues Identified** | Substantive legal questions categorized as `DOCUMENT FACT` or `AI ANALYSIS`. |
-| **4** | **Applicable Acts** | Governing statutory acts (e.g., Bharatiya Nyaya Sanhita, NDPS, Prevention of Corruption Act). |
-| **5** | **Applicable Sections** | Specific sections with definitions, distinguishing between cited and inferred provisions. |
-| **6** | **Supporting Judgments** | Reranked High Court and Supreme Court precedents relevant to the legal questions. |
-| **7** | **Evidence Analysis** | Evaluation of primary, secondary, electronic (§63 BSA), and testimonial evidence. |
-| **8** | **Contradiction Analysis** | Inconsistencies or contradictions across witness statements, FIRs, and pleadings. |
-| **9** | **Risk Assessment** | Quantitative vulnerability score, potential adverse outcomes, and strategic risk ratings. |
-| **10** | **Procedural Compliance** | Verification of statutory timelines, filing requirements, and limitation periods. |
-| **11** | **Strategy Recommendation** | Actionable litigation strategies, defense arguments, and alternative dispute paths. |
-| **12** | **Trust Score** | Calibrated quantitative score (40–99%) reflecting factual evidence overlap. |
-| **13** | **Confidence Scores** | Modular confidence metrics across individual agents (Research, Reasoning, Extraction). |
-| **14** | **Explainability Graph** | Active topological graph model representing evidence-to-conclusion derivations. |
-| **15** | **Knowledge Graph Snapshot** | Rendered snapshot of the FalkorDB case entity network. |
-| **16** | **References & Disclaimer** | Comprehensive legal bibliography and standard liability disclaimer. |
+| # | Section | Grounding scope |
+| :-: | :--- | :--- |
+| 1 | Executive Summary | synthesised (3–4 sentences) |
+| 2 | Case Facts | verbatim, with page citations |
+| 3 | Legal Issues | labelled `DOCUMENT FACT` or `AI ANALYSIS` |
+| 4 | Applicable Acts | from extraction and retrieval |
+| 5 | Applicable Sections | cited vs inferred, with cross-regime mapping |
+| 6 | Supporting Judgments | reranked precedents |
+| 7 | Evidence Analysis | incl. electronic records (BSA §63) |
+| 8 | Contradiction Analysis | contradictions across pleadings and exhibits |
+| 9 | Risk Assessment | quantitative vulnerability score |
+| 10 | Procedural Compliance | timelines, filing, limitation |
+| 11 | Strategy Recommendation | actionable litigation strategy |
+| 12 | Trust Score | calibrated, bounded within `[0.40, 0.99]` |
+| 13 | Confidence Scores | per-agent breakdown |
+| 14 | Explainability Graph | evidence-to-conclusion derivations |
+| 15 | Knowledge-Graph Snapshot | case entity network |
+| 16 | References and Disclaimer | bibliography and disclaimer |
 
 ---
 
-## 📡 REST API Reference
+## 13. Programmatic Interface
 
-All backend routes are mounted under `/api/v1` and documented via OpenAPI Swagger at `http://localhost:8000/docs`.
+The application exposes a local interface for the client, documented by an interactive schema at
+`http://localhost:8000/docs`. All routes are served from the host.
 
-### Authentication Endpoints (`/api/v1/auth`)
-* `POST /login` — Authenticate user and issue JWT access token.
-* `POST /register` — Register a new advocate user account.
-* `GET /me` — Retrieve current authenticated user profile.
-
-### Case Management (`/api/v1/cases`)
-* `GET /` — List all cases for the current user.
-* `POST /` — Create a new case brief folder.
-* `GET /{case_id}` — Get case details and attached documents.
-* `PUT /{case_id}` — Update case metadata (title, description, court name).
-* `DELETE /{case_id}` — Delete case and associated analysis records.
-
-### Document Management (`/api/v1/documents`)
-* `POST /upload` — Upload a PDF case file (multipart `file`, `case_id`, `document_type`); triggers parsing + ingestion.
-* `GET /` — List documents for the current user (filter by `case_id`).
-* `GET /{document_id}/status` — Poll a document's ingestion status and error state.
-* `GET /{document_id}/file` — Download the raw uploaded file.
-* `GET /case/{case_id}/file` — Download the primary file for a case.
-
-### Analysis & Multi-Agent Execution (`/api/v1/analysis`)
-* `POST /case/{case_id}` — Trigger the multi-agent LangGraph analysis workflow.
-* `GET /case/{case_id}/stream` — SSE endpoint streaming real-time agent progress (accepts `?token=`).
-* `GET /case/{case_id}` — Retrieve the structured analysis result.
-* `POST /case/{case_id}/chat` — Query the grounded RAG assistant against case documents.
-* `POST /case/{case_id}/draft` — Generate a grounded draft from case context.
-
-### Report Generation (`/api/v1/reports`)
-* `POST /case/{case_id}` — Generate a 16-section advisory report for a case.
-* `GET /case/{case_id}` — Retrieve the latest compiled report.
-* `GET /case/{case_id}/download` — Download the report export.
-
-### Knowledge Graph & Indian Kanoon (`/api/v1/indiankanoon`)
-* `GET /search` — Search the Indian Kanoon public legal database.
-* `GET /doc/{doc_id}` — Fetch full judgment text by Kanoon document ID.
-* `POST /import/{case_id}/{doc_id}` — Import a Kanoon judgment into a case.
-
-### System, Health & Admin
-* `GET /health` — Basic API service health check (mounted at root, not under `/api/v1`).
-* `GET /api/v1/health/retrieval` — Diagnostic status of Qdrant, FalkorDB, and embedding models.
-* `GET /api/v1/admin/status` — System storage metrics and queue health (admin only).
-* `GET /api/v1/admin/users` — List registered users (admin only).
-* `POST /api/v1/admin/datasets/ingest` — Trigger dataset ingestion (admin only).
-* `POST /api/v1/admin/kg/seed` — Seed the knowledge graph (admin only).
+* **Authentication** — login, registration, current-user.
+* **Cases** — list, create, retrieve, update, delete a case brief.
+* **Documents** — upload a case file (triggers parsing and ingestion), list, status, download.
+* **Analysis** — trigger the multi-agent workflow, stream live progress (Server-Sent Events),
+  retrieve results, and query the grounded case assistant.
+* **Reports** — generate, retrieve, and download the 16-section advisory report.
+* **Knowledge graph** — read and query endpoints backing the visualiser.
+* **System** — health and diagnostics endpoints (storage and model status).
 
 ---
 
-## 🧪 Evaluation & Grounding Framework
+## 14. Datasets and Evaluation Protocol
 
-LexOrch-KG includes an automated evaluation framework in `backend/evals/` and `backend/scripts/eval_suite.py`, benchmarked against a verified gold standard dataset.
+### Corpus
 
-### 8-Suite Evaluation Matrix (E1–E8)
+* **Statutory corpus** — central Acts (BNS, BNSS, BSA, IPC, CrPC, IEA, Constitution of India, and
+  domain Acts such as NDPS and the Arbitration and Conciliation Act) ingested into Qdrant; the
+  reference build indexes **523,074** vectors in `legal_documents`.
+* **Case-file corpus** — **605** realistic PDFs (criminal bail, constitutional writs, commercial
+  arbitration, civil property) used for the robustness sweep.
+* **Gold standard** — **4** fully annotated judgments spanning bail, writ, arbitration, and civil
+  categories, with field-level labels (parties, court, dates, judges, citations, sections, articles,
+  precedents, outcome, timeline), in `backend/evals/gold.py`.
+
+### Evaluation suites (E1–E8)
+
+| Suite | Component | Metric | Pass criterion |
+| :--- | :--- | :--- | :--- |
+| **E1** | Extraction | per-field exact match; section/article macro-F1 | macro-F1 ≥ 0.90 |
+| **E2** | Retrieval | Recall@5, P@5, MRR, nDCG@10 (per channel and hybrid) | MRR ≥ 0.80 |
+| **E3** | Grounding | banned-string scan; whitespace-insensitive quote match | violations = 0 |
+| **E4** | Reasoning | IRAC structure; outcome-verb alignment | consistency = 1.0, acc ≥ 0.75 |
+| **E5** | Human pack | generates evaluation artefacts (SUS sheet) | artefact produced |
+| **E6** | Performance | stage latency (p50/p95), throughput, RSS delta | throughput ≥ 10 docs/min |
+| **E7** | Robustness | leave-one-type-out pass rate | pass rate ≥ 0.95 |
+| **E8** | Ablation | Δ matrix: `-kg`, `-gate`, `-bm25`, `-vector`, `-reranker` | comparative log |
 
 ```bash
 cd backend
 python -m scripts.eval_suite --suite all
-```
-
-| Suite | Component Tested | Metric / Methodology | Pass Criteria |
-| :--- | :--- | :--- | :--- |
-| **E1 Extraction** | Metadata & Section Extraction | Per-field exact match vs GOLD; Section→Act macro-F1 | Macro-F1 $\ge 0.90$ |
-| **E2 Retrieval** | Hybrid RAG Engine | Recall@5, P@5, MRR, and nDCG@10 over gold qrels | MRR $\ge 0.80$ |
-| **E3 Grounding ⭐** | Hallucination Gate | Banned-string scan, whitespace-insensitive quote match | Violations $= 0$ |
-| **E4 Reasoning** | IRAC Logic & Outcomes | Outcome verb alignment (`allowed / dismissed / disposed`) | IRAC $= 1.0$, Acc $\ge 0.75$ |
-| **E5 Human Pack** | Evaluation Artifacts | Generates `reports/human_eval_pack.md` & 10-item SUS sheet | Output generated |
-| **E6 Performance**| Latency & Throughput | Pipeline stage latency (p50/p95 ms), memory RSS delta | Throughput $\ge 10$ docs/min |
-| **E7 Robustness** | Corpus Pass Rate | Automated execution over full `test_data/` corpus | Pass Rate $\ge 95\%$ |
-| **E8 Ablation** | Component Contributions | $\Delta$ matrix: `-kg`, `-gate`, `-bm25`, `-vector`, `-reranker` | Comparative log |
-
-### Corpus Grounding Gate (600 Docs)
-
-Run batch validation across the full 600-judgment dataset:
-
-```bash
-cd backend
 python -m scripts.batch_eval --dir ./test_data --out ./reports --workers 8
 ```
 
-**Validation Checks (V01–V10):**
-* **V01:** No unhandled exceptions during parsing, retrieval, or synthesis.
-* **V02:** Banned-string scan (zero placeholder tokens or unparsed template tags).
-* **V03:** Case title non-empty and distinct from raw filename stem.
-* **V04:** Metadata fields strictly follow status enum (`extracted`, `inferred`, `not_found`).
-* **V05:** Calibrated trust score strictly within $[40, 99]$ (never fabricated 100%).
-* **V06:** Timeline chronological integrity matching judgment decision date.
-* **V07:** Statutory section format compliance (`Section — Act`).
-* **V08:** Precedents validated (no junk citations, similarity $\le 100$, one citation per authority).
-* **V09:** Case categorization within validated taxonomy.
-* **V10:** Submissions, evidence, and risk profiles populated with category labels.
+### Batch validation checks (V01–V10)
+
+Over the full corpus, the harness enforces: no unhandled exceptions (V01); no placeholder or banned
+strings (V02); non-empty, de-templated case titles (V03); strict metadata status enums (V04); trust
+score bounded within `[0.40, 0.99]` and never fabricated at 100% (V05); timeline chronological
+integrity (V06); `Section — Act` formatting (V07); validated, de-duplicated precedents (V08);
+category within the validated taxonomy (V09); and populated submissions, evidence, and risk sections
+(V10).
 
 ---
 
-## 🚀 Installation & Getting Started
+## 15. Results
+
+Reference run over the four-document gold set (deterministic path), produced by
+`scripts/eval_suite.py` and written to `reports/eval_*.json`.
+
+### E1 — Structured extraction
+
+| Metric | Value |
+| :--- | ---: |
+| Micro exact-match | **0.985** |
+| Macro F1 | **0.961** |
+| Section-to-Act F1 | 0.950 |
+| Article F1 | 0.950 |
+| Precedent-pair accuracy | 0.875 |
+
+Per-document field accuracy is 1.00 for court, petitioner, respondent, decision date, case number,
+and category across all four documents.
+
+### E2 — Retrieval (per channel)
+
+| Channel | Recall@5 | P@5 | MRR | nDCG@10 |
+| :--- | ---: | ---: | ---: | ---: |
+| BM25 only | 0.950 | 0.650 | 0.875 | **0.919** |
+| Vector only | 0.146 | 0.100 | 0.281 | 0.478 |
+| Hybrid (RRF) | 0.621 | 0.400 | 0.708 | 0.742 |
+| **Hybrid + rerank** | 0.579 | 0.400 | **0.875** | 0.815 |
+
+The ablation is instructive: exact-identifier matching (BM25) dominates on statutory queries, while
+the cross-encoder recovers ranking quality. The hybrid design is motivated by their complementary
+error profiles.
+
+### E3–E7
+
+| Suite | Result |
+| :--- | :--- |
+| E3 Grounding | **0 violations** |
+| E4 Reasoning | IRAC consistency **1.00**, outcome accuracy **1.00**, label accuracy **1.00** |
+| E5 Human pack | generated (`reports/human_eval_pack.md`, 4 docs) |
+| E6 Performance | **2148 docs/min** (deterministic path), avg 27.9 ms/doc, RSS Δ ≈ 0 |
+| E7 Robustness | leave-one-type-out completed; 16/20 cue-masked detection changes |
+
+> **Interpretation.** These figures characterise the deterministic extraction path over a small,
+> carefully annotated gold set; they are a reproducible reference, not a claim of generalisation to
+> arbitrary documents. The full-corpus sweep (E7) and the model-backed path are reported separately.
+
+---
+
+## 16. Ablation Study
+
+E8 toggles individual components and records the effect on extraction, retrieval, and grounding:
+
+| Configuration | Knowledge graph | Grounding gate | BM25 | Vector | Reranker |
+| :--- | :-: | :-: | :-: | :-: | :-: |
+| Full system | ✔ | ✔ | ✔ | ✔ | ✔ |
+| `-kg` | ✘ | ✔ | ✔ | ✔ | ✔ |
+| `-gate` | ✔ | ✘ | ✔ | ✔ | ✔ |
+| `-bm25` | ✔ | ✔ | ✘ | ✔ | ✔ |
+| `-vector` | ✔ | ✔ | ✔ | ✘ | ✔ |
+| `-reranker` | ✔ | ✔ | ✔ | ✔ | ✘ |
+
+The E2 per-channel table already demonstrates the single largest effect (BM25 vs. dense retrieval),
+and the `-gate` ablation isolates the hallucination-prevention contribution (grounding violations rise
+from 0 when the gate is removed).
+
+---
+
+## 17. Reproducibility Checklist
+
+* Deterministic extractors first; the model is consulted only for residuals.
+* Content-hash de-duplication makes ingestion idempotent.
+* Local embeddings and reranker with pinned weights under `models/`.
+* Greedy/deterministic decoding for the language model.
+* Fixed gold annotations (`backend/evals/gold.py`) with explicit pass/fail thresholds.
+* Timestamped evaluation artefacts (`reports/eval_*.json`, `.csv`, `.html`) per run.
+
+---
+
+## 18. Limitations and Threats to Validity
+
+* **Gold-set size.** The annotated benchmark is small (4 documents); extraction figures are a
+  reproducible reference, not a population estimate. Expanding it with inter-annotator agreement is
+  the primary next step.
+* **Synthetic case corpus.** The 605-document corpus is realistic but synthetic; transfer to
+  heterogeneous real filings is untested.
+* **Model scale.** The default local model is small; a larger local model would likely improve the
+  model-backed path, which is not fully characterised here.
+* **Jurisdictional scope.** The statutory codebook and cross-regime mapping cover Indian central law;
+  state amendments and specialised tribunals are out of scope.
+* **Partial data.** Retrieved context can be incomplete; the grounding gate prevents fabrication but
+  cannot supply missing law.
+
+---
+
+## 19. Ethics and Responsible Use
+
+LexOrch-KG is a **research and decision-support** system, not a source of legal advice. Every report
+includes a disclaimer; outputs are labelled as `DOCUMENT FACT` or `AI ANALYSIS` so users can
+distinguish extracted content from inference. The system runs locally to protect client
+confidentiality, and it never presents unverified citations as authoritative. Practitioners must
+verify all output against primary sources.
+
+---
+
+## 20. Installation and Getting Started
 
 ### Prerequisites
 
-* **Docker & Docker Compose** (v24.0+)
-* **Python** 3.11, 3.12, or 3.13 (`python3.13` recommended)
-* **Node.js** v18+ & **npm** v9+
-* *(Optional)* NVIDIA GPU with CUDA 12+ for accelerated local LLM and embedding inference.
+* Python **3.11–3.13** (3.13 recommended)
+* Node.js **18+** and npm **9+**
+* Docker & Docker Compose (for Qdrant, FalkorDB, Redis)
+* *(Optional)* NVIDIA GPU with CUDA for accelerated local inference
 
----
-
-### Option A: Docker Compose (Quickest)
-
-To spin up all services (FalkorDB, Qdrant, Redis, FastAPI Backend, Celery Worker, and Vite Frontend) in Docker:
+### Option A — Containerised services (quickest)
 
 ```bash
-# 1. Clone the repository
+# 1) Clone
 git clone https://github.com/gokul03-tech/lex-org.git
 cd final-year-project
 
-# 2. Copy environment configurations
+# 2) Environment files
 cp configs/.env.example .env
 cp configs/.env.example backend/.env
 
-# 3. Build and launch all containers
+# 3) Launch all services
 docker compose -f docker/docker-compose.yml up --build -d
-
-# 4. View running container status
 docker compose -f docker/docker-compose.yml ps
 ```
 
----
+### Option B — Local development
 
-### Option B: Local Development Setup
-
-For active code development, run the database containers in Docker and execute the backend and frontend locally:
-
-#### Step 1: Start Database Containers
 ```bash
-# Launch Qdrant, FalkorDB, and Redis
+# 1) Databases
 docker compose -f docker/docker-compose.yml up -d qdrant falkordb redis
-```
 
-#### Step 2: Set Up Backend Environment
-```bash
+# 2) Backend
 cd backend
-
-# Create virtual environment with Python 3.13
 python3.13 -m venv .venv
 source .venv/bin/activate
-
-# Install backend dependencies in editable mode
 pip install -e .
-
-# Start FastAPI development server
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
 
-#### Step 3: Start Celery Worker (in a separate terminal)
-```bash
-cd backend
-source .venv/bin/activate
+# 3) Background worker (separate terminal)
 celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
-```
 
-#### Step 4: Set Up and Start Frontend Client
-```bash
-cd frontend
-
-# Install Node dependencies
+# 4) Frontend (separate terminal)
+cd ../frontend
 npm install
-
-# Start Vite development server
 npm run dev
 ```
 
----
+### Service endpoints
 
-### 🌐 Service Endpoints
+| Service | URL |
+| :--- | :--- |
+| Web application | `http://localhost:5173` |
+| Service schema / docs | `http://localhost:8000/docs` |
+| Health check | `http://localhost:8000/health` |
+| Qdrant dashboard | `http://localhost:6333/dashboard` |
+| FalkorDB (Redis protocol) | `localhost:6380` |
 
-| Service | Access URL | Credentials / Notes |
-| :--- | :--- | :--- |
-| **Frontend Web Application** | [`http://localhost:5173`](http://localhost:5173) | Interactive Advocate Interface |
-| **Backend Swagger API Docs** | [`http://localhost:8000/docs`](http://localhost:8000/docs) | Interactive OpenAPI Explorer |
-| **Backend Health Check** | [`http://localhost:8000/health`](http://localhost:8000/health) | System status monitor |
-| **Qdrant Vector Dashboard** | [`http://localhost:6333/dashboard`](http://localhost:6333/dashboard) | Vector collection explorer |
-| **FalkorDB (Redis Protocol)** | `localhost:6380` (or `6379`) | Cypher Graph console |
-
----
-
-### Data Ingestion & Embedding Cache
-
-Seed the Qdrant vector database with Indian statutory legal corpora:
+### Local data preparation
 
 ```bash
-# 1. Download/cache local BGE-M3 model weights (optional; run from repo root).
-#    Reads/writes models/bge-m3, overridable via LEXORCH_MODELS_DIR.
+# Cache local embedding weights (repo root)
 python setup_bge_m3.py
 
-cd backend
-source .venv/bin/activate
-
-# 2. Ingest the Constitution of India (LEXORCH_CONSTITUTION_DATA overrides the source path)
-python scripts/ingest_constitution.py
-
-# 3. Ingest Central Acts (BNS, BNSS, BSA, IPC, CrPC, etc.)
-python scripts/ingest_datasets.py
-
-# 4. Bulk-embed the parsed json_output corpus into Qdrant (run from repo root)
-#    cd .. && python embed_and_upsert.py
+cd backend && source .venv/bin/activate
+python scripts/ingest_constitution.py   # Constitution of India
+python scripts/ingest_datasets.py       # Central Acts (BNS, BNSS, BSA, IPC, CrPC, ...)
 ```
 
 ---
 
-## 🔧 Configuration Reference (`.env`)
+## 21. Configuration Reference
 
-Below are the primary environment variables configured in `configs/.env.example`:
+Primary variables (see `configs/.env.example`):
 
 ```ini
-# ── Application Settings ──────────────────────────────────────
+# Application
 APP_NAME=LexOrch-KG
 APP_ENV=development
 APP_VERSION=1.0.0
 DEBUG=true
 API_PREFIX=/api/v1
-SECRET_KEY=change-this-to-a-secure-random-secret-key-in-production
-CORS_ORIGINS=["http://localhost:5173","http://localhost:3000","http://127.0.0.1:5173"]
+SECRET_KEY=change-this-to-a-secure-random-secret-key
 
-# ── Relational Database ───────────────────────────────────────
+# Relational database
 DATABASE_URL=sqlite+aiosqlite:///./data/lexorch.db
 
-# ── Qdrant Vector Database ────────────────────────────────────
+# Qdrant vector database
 QDRANT_URL=http://localhost:6333
-QDRANT_API_KEY=
 QDRANT_COLLECTION_DOCS=legal_documents
 QDRANT_COLLECTION_SECTIONS=legal_sections
 QDRANT_VECTOR_SIZE=1024
 
-# ── FalkorDB Graph Database ───────────────────────────────────
+# FalkorDB knowledge graph
 FALKORDB_HOST=localhost
 FALKORDB_PORT=6379
-FALKORDB_PASSWORD=
 FALKORDB_GRAPH_NAME=lexorch
 
-# ── Redis & Celery Task Queue ─────────────────────────────────
+# Redis and background workers
 REDIS_URL=redis://localhost:6379/0
 CELERY_BROKER_URL=redis://localhost:6379/1
-CELERY_RESULT_BACKEND=redis://localhost:6379/2
 
-# ── LLM Inference Provider ────────────────────────────────────
-# Options: mock | llama_cpp | transformers | openai_compatible
-LLM_BACKEND=mock
+# Local inference backend (mock | llama_cpp | transformers)
+LLM_BACKEND=llama_cpp
 QWEN_MODEL_PATH=./models/Qwen2.5-3B-Instruct-Q4_K_M.gguf
 DEEPSEEK_MODEL_PATH=./models/Qwen2.5-3B-Instruct-Q4_K_M.gguf
-LLM_N_CTX=2048
-LLM_TEMPERATURE=0.0
-LLM_MAX_TOKENS=2048
+LLM_N_CTX=4096
+LLM_N_THREADS=8
+LLM_N_GPU_LAYERS=0
 
-# ── Embeddings & Reranking ────────────────────────────────────
-EMBEDDING_MODEL_NAME=BAAI/bge-m3
-EMBEDDING_DEVICE=cpu
-EMBEDDING_BATCH_SIZE=32
+# Local embeddings and reranker
+EMBEDDING_MODEL_NAME=./models/bge-m3
 ```
 
 ---
 
-## 📁 Repository Structure
+## 22. Repository Structure
 
 ```text
 final-year-project/
-├── backend/                       # FastAPI Backend Application
+├── backend/
 │   ├── app/
-│   │   ├── agents/                # LangGraph Multi-Agent Analyst Pipeline
-│   │   │   ├── supervisor.py       # 12-node LangGraph StateGraph + router
-│   │   │   ├── analysis.py         # All 12 agent node implementations
-│   │   │   ├── metadata_extractor.py    # Structured metadata extraction (LLM-backed)
-│   │   │   ├── document_classifier.py   # Document-type classification
-│   │   │   ├── universal_grounding.py   # Verbatim grounding gate
-│   │   │   ├── doc_meta_guard.py        # Disclaimer / boilerplate guard
-│   │   │   ├── presentation_universal.py# Report-facing normalization helpers
-│   │   │   └── agentic_pipeline.py      # Additive LLM enrichment helpers
-│   │   ├── api/                   # API Routers & Controllers
-│   │   │   ├── deps.py            # Auth/ownership dependencies (get_db, require_user, require_admin)
-│   │   │   └── v1/                # Versioned routers mounted under /api/v1
-│   │   │       ├── admin.py       # Admin & system stats endpoints
-│   │   │       ├── analysis.py    # LangGraph lifecycle, SSE stream & chat endpoints
-│   │   │       ├── auth.py        # User authentication & tokens
-│   │   │       ├── cases.py       # Case folder CRUD operations
-│   │   │       ├── documents.py   # PDF upload, status & parser triggers
-│   │   │       ├── evaluation.py  # E1-E8 evaluation triggers
-│   │   │       ├── health.py      # Service & DB health checks
-│   │   │       ├── indiankanoon.py# Kanoon search & external retrieval
-│   │   │       └── reports.py     # 16-section report exports
-│   │   ├── core/                  # Core configuration, security, and logging
-│   │   ├── db/                    # SQLAlchemy async models & session factory
-│   │   ├── document_pipeline/     # PDF parsing, chunking, ingestion & metadata
-│   │   ├── embeddings/            # BGE-M3 embedding wrapper & Qdrant manager
-│   │   ├── evaluation/            # Benchmark datasets & gold standards
-│   │   ├── kg/                    # FalkorDB client & Cypher query builders
-│   │   ├── llm/                   # LLM provider abstractions (Mock, LlamaCpp, etc.)
-│   │   ├── rag/                   # BM25, vector search, RRF, and CrossEncoder
-│   │   ├── sandbox/               # Isolated execution sandbox (process/docker)
-│   │   ├── schemas/               # Pydantic serialization models
-│   │   ├── services/              # Domain services (report_service, indiankanoon)
-│   │   └── tasks/                 # Celery background tasks
-│   ├── scripts/                   # Ingestion, batch eval, and benchmark scripts
-│   ├── tests/                     # Pytest automated test suites
-│   └── pyproject.toml             # Python dependencies and metadata
-├── configs/                       # Environment configuration templates
-├── datasets/                      # Central Acts legal texts & corpora
-├── docker/                        # Dockerfiles and docker-compose configurations
-├── frontend/                      # React 19 + TypeScript SPA
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── analysis/          # SSE progress checklist & reasoning cards
-│   │   │   ├── case/              # Case create modal, cards, and metadata badges
-│   │   │   ├── document/          # Document upload dropzone & file list
-│   │   │   ├── graph/             # React Flow interactive case graph
-│   │   │   ├── layout/            # App sidebar, navigation header, and shell
-│   │   │   ├── report/            # 16-section report reader & print view
-│   │   │   └── ui/                # Reusable UI primitives (Dialog, Tabs, Toast)
-│   │   ├── hooks/                 # Custom React hooks (auth, SSE, queries)
-│   │   ├── pages/                 # Top-level routes
-│   │   │   ├── case/              # Case Workspace tabs (Overview, Statutes, etc.)
-│   │   │   ├── AdminPage.tsx      # System diagnostics & admin dashboard
-│   │   │   ├── CasesPage.tsx      # Case directory page
-│   │   │   ├── DashboardPage.tsx  # Advocate home dashboard
-│   │   │   ├── LoginPage.tsx      # Login form
-│   │   │   ├── RegisterPage.tsx   # Registration form
-│   │   │   └── ReportPage.tsx     # Fullscreen printable report page
-│   │   ├── stores/                # Zustand global state stores
-│   │   ├── types/                 # TypeScript interface definitions
-│   │   ├── App.tsx                # React Router root definitions
-│   │   └── main.tsx               # Application entry point
-│   ├── package.json               # Frontend dependencies & build scripts
-│   └── tailwind.config.js         # Tailwind styling & dark mode configuration
-└── README.md                      # Comprehensive project documentation
+│   │   ├── agents/          # LangGraph supervisor, 12 agents, grounding, deterministic extractors
+│   │   ├── rag/             # retrievers, fusion, query rewriter, intent detector, reranker
+│   │   ├── kg/              # FalkorDB client, entity extractor, relationship builder, queries
+│   │   ├── llm/             # local inference providers (mock, llama_cpp, transformers)
+│   │   ├── document_pipeline/  # parser, OCR, cleaner, chunker, embedder, ingestion
+│   │   ├── embeddings/      # BGE-M3 embedder and Qdrant client
+│   │   ├── verification/    # citation-verification gate
+│   │   ├── services/        # report assembly and domain services
+│   │   ├── api/             # request routes
+│   │   ├── db/              # async SQLAlchemy models
+│   │   └── tasks/           # background workers
+│   ├── evals/               # gold standard and metrics
+│   ├── scripts/             # ingestion, eval suite, batch eval
+│   └── tests/               # pytest suites
+├── configs/                 # environment templates
+├── datasets/                # central Acts corpora
+├── docker/                  # compose + Dockerfiles
+├── frontend/                # React 19 + TypeScript SPA
+└── README.md
 ```
 
 ---
 
-## 🧪 Testing & Quality Assurance
-
-### Run Backend Test Suite
-Execute the full pytest suite to validate agent transitions, retrieval pipelines, and database operations:
+## 23. Testing and Quality Assurance
 
 ```bash
-cd backend
-source .venv/bin/activate
-pytest -v
-```
+cd backend && source .venv/bin/activate
+pytest -q                                   # full suite
+pytest tests/test_batch_grounding.py -q     # grounding gate
+python -m scripts.eval_suite --suite all    # E1–E8
+python -m scripts.batch_eval --dir ./test_data --out ./reports --workers 8
 
-### Run Grounding Evaluation Gate
-Validate zero-hallucination guarantees and string-grounding rules across test cases:
-
-```bash
-cd backend
-source .venv/bin/activate
-pytest tests/test_batch_grounding.py -v
-```
-
-### Run Frontend Typecheck & Build Validation
-Verify TypeScript types and compile the production bundle:
-
-```bash
-cd frontend
-npm run build
+cd ../frontend && npm run build             # typecheck + production build
 ```
 
 ---
 
-## 📜 License
+## 24. Citation
 
-This project is licensed under the **Apache-2.0 License**. See the [LICENSE](LICENSE) file for complete details.
+```bibtex
+@misc{lexorchkg2026,
+  title        = {LexOrch-KG: A Trust-Calibrated Multi-Agent Framework for Grounded
+                  Legal Advisory on Indian Criminal Law},
+  author       = {LexOrch-KG Team},
+  year         = {2026},
+  howpublished = {\url{https://github.com/gokul03-tech/lex-org}},
+  note         = {End-to-end offline legal analysis with hybrid retrieval, knowledge graph,
+                  and source-provenance grounding}
+}
+```
+
+---
+
+## 25. License
+
+This project is licensed under the **Apache-2.0 License**. See the [LICENSE](LICENSE) file.

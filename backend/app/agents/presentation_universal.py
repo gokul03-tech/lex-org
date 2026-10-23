@@ -1029,6 +1029,18 @@ def _strip_speaker(sentence: str, tokens: str) -> str:
             return sentence[m.end():].lstrip()
     return sentence
 
+# The court's own dispositive directions. A sentence that opens like this is an
+# order, not a submission: without this check a line such as "The petitioners
+# are directed to appear before the Investigating Officer" was filed into the
+# petitioner's "Strategic Ground" column as if counsel had argued it.
+_DISPOSITIVE_START_RE = re.compile(
+    r'^(?:Taking\s+into\s+consideration|Accordingly\b|In\s+view\s+of\s+the\s+above|'
+    r'The\s+(?:Court|petitioners?|appellants?|respondents?|applicant|State)\s+'
+    r'(?:is|are|was|were|has|have)?\s*directed\b)',
+    re.I,
+)
+
+
 def extract_submissions(text: str) -> tuple[list[str], list[str]]:
     # Force a sentence boundary before an enumerated argument so "(i) ..." starts
     # its own unit even when it follows a colon in the same clause.
@@ -1097,19 +1109,49 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
         r'PLEADINGS|STATEMENTS?|REPLY|WRITTEN\s+SUBMISSIONS))\b',
         re.I,
     )
+    _OPP_LEAD = r'(?:on the other hand|in opposition|opposed)'
     PAT_B_START = re.compile(
-        rf'\b(?:(?:on the other hand|per contra|in opposition|opposed).*?(?:learned APP|state|respondent|prosecution|counsel)'
+        rf'\b(?:{_OPP_LEAD}.*?'
+        rf'(?:learned APP|state|respondent|prosecution|counsel)'
+        rf'|per\s+contra'
         rf'|counsel (?:for|appearing (?:for|on behalf of)|on behalf of) (?:the )?{_B}'
         rf'|learned (?:app|asg|solicitor general|standing counsel)'
-        rf'|the {_B}(?:/vendor)? (?:contended|opposed|argued|defended|invoked)|the respondent/vendor)\b',
+        rf'|the {_B}(?:/vendor)? (?:submitted|submits|contended|contends|opposed|'
+        rf'argued|argues|defended|invoked|maintains)|the respondent/vendor)\b',
         re.I,
     )
-    VERBS = re.compile(r'\b(?:submitted|contended|argued|relied|pointed|defended|opposed|demonstrated|pleaded|urged|resisted|invoked)\b', re.I)
+    VERBS = re.compile(
+        r'\b(?:submitted|submits|contended|contends|argued|argues|relied|relies|'
+        r'pointed|points|defended|opposed|demonstrated|pleaded|pleads|urged|'
+        r'urges|resisted|invoked|maintains)\b',
+        re.I,
+    )
     # Roman numeral list items: (i), (ii), (iii), (iv), (v), etc.
     ROMAN_NUMERAL = re.compile(r'^\(\s*[ivxlcdm]+\s*\)\s*', re.I)
     # Numbered list items: 1., 2., 3., etc.
     NUMBERED_ITEM = re.compile(r'^\d+\.\s+', re.I)
-    
+
+    # Defined once at function scope, BEFORE the loop. They were previously
+    # nested inside the loop body but called earlier (the section-anchor branch
+    # at the top of each iteration), so the very first document with a heading
+    # such as "STATE'S SUBMISSIONS" raised UnboundLocalError and the whole
+    # submissions extraction returned nothing - blanking both counsel columns.
+    def _finalize(side: str | None) -> None:
+        """Close the point currently being accumulated for ``side``."""
+        nonlocal current_point
+        if current_point and current_point.strip():
+            (a if side == 'a' else b).append(current_point.strip())
+        current_point = ''
+
+    def _switch(side: str) -> None:
+        """Close the previous speaker's points and make ``side`` current."""
+        nonlocal cur, current_point, section_mode
+        if cur is not None and cur != side:
+            _finalize(cur)
+        cur = side
+        current_point = ''
+        section_mode = False
+
     for s in split_sentences(n):
         s_clean = s.strip()
         if ' vs ' in s_clean or ' versus ' in s_clean or s_clean.startswith('Bench:'):
@@ -1152,7 +1194,10 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
             section_mode = True
             continue
 
-        if re.search(r'\b(?:We have heard|We hold|In our considered view|The petition is|Bail is allowed|Award is set aside)\b', s_clean, re.I):
+        if _DISPOSITIVE_START_RE.match(s_clean) or re.search(
+            r'\b(?:We have heard|We hold|In our considered view|The petition is|'
+            r'Bail is allowed|Award is set aside)\b', s_clean, re.I
+        ):
             # Court's own reasoning ends the submissions: close the open point.
             if cur is not None:
                 if current_point.strip():
@@ -1180,32 +1225,16 @@ def extract_submissions(text: str) -> tuple[list[str], list[str]]:
         is_list_item = bool(roman_match or numbered_match)
         clean_s = re.sub(r'^\d+\.\s*', '', s_clean)
 
-        def _finalize(side: str | None) -> None:
-            """Close the point currently being accumulated for ``side``."""
-            nonlocal current_point
-            if current_point and current_point.strip():
-                (a if side == 'a' else b).append(current_point.strip())
-            current_point = ''
-
-        def _switch(side: str) -> None:
-            """Close the previous speaker's points and make ``side`` current."""
-            nonlocal cur, current_point, section_mode
-            if cur is not None and cur != side:
-                _finalize(cur)
-            cur = side
-            current_point = ''
-            section_mode = False
-
         # Detect speaker start. Enumerated points are emitted as separate
         # entries so the UI lists (i), (ii), (iii) separately instead of
         # collapsing a whole argument block into one paragraph.
         if PAT_B_START.search(s_clean):
             _switch('b')
-            if clean_s.strip() and (has_verb or is_list_item):
+            if clean_s.strip():
                 current_point = clean_s
         elif PAT_A_START.search(s_clean):
             _switch('a')
-            if clean_s.strip() and (has_verb or is_list_item):
+            if clean_s.strip():
                 current_point = clean_s
         elif cur and (has_verb or is_list_item):
             if is_list_item and current_point.strip():
@@ -2040,6 +2069,36 @@ _ISSUE_QUESTION_RE = re.compile(
     re.I,
 )
 
+# A standalone "Whether ...?" interrogative sentence - how many petitions and
+# writs state the question for determination without an "ISSUES FRAMED" heading.
+_WHETHER_Q_RE = re.compile(r'\bwhether\b', re.I)
+
+# An explicit prayer / relief clause. Relief-based issue inference fires ONLY
+# when one is present, so a document that states no issue and no prayer is
+# never handed a fabricated one.
+_RELIEF_MARKER_RE = re.compile(
+    r'\b(?:it\s+is\s+(?:therefore\s+)?prayed|humbly\s+prays?|prays?\s+that|'
+    r'prayer|relief\s+sought|seeks?\s+the\s+following\s+relief|'
+    r'the\s+(?:petitioner|applicant|appellant)\s+(?:therefore\s+)?(?:seeks?|prays?))\b',
+    re.I,
+)
+
+# Administrative questions a Supreme Court judgment prints at the top of the
+# report ("Whether Reporters of Local Papers may be allowed to see the
+# judgment?". These are not legal issues - they are reporting formalities - and
+# a bare "Whether ...?" scan would otherwise surface every one of them as an
+# issue. The list is deliberately narrow: it matches only the standard
+# administrative heads, never a substantive "Whether the appellant ...".
+_ADMIN_QUESTION_RE = re.compile(
+    r'\b(?:reporters?\s+of\s+local\s+papers?|local\s+papers?\s+may\s+be\s+allowed|'
+    r'(?:be\s+)?reported\s+in\s+the\s+digest|reported\s+or\s+not|'
+    r'substantial\s+question\s+of\s+law\s+as\s+to\s+the\s+interpretation|'
+    r'leave\s+to\s+appeal\s+(?:be\s+)?granted|'
+    r'special\s+leave\s+petition\s+(?:be\s+)?(?:allowed|granted)|'
+    r'matter\s+be\s+referred\s+to\s+(?:a\s+)?larger\s+bench)\b',
+    re.I,
+)
+
 
 def _enumerated_issues(text: str) -> list[dict[str, Any]]:
     """Issues stated as an explicit enumerated list, with or without a heading.
@@ -2096,10 +2155,21 @@ def _enumerated_issues(text: str) -> list[dict[str, Any]]:
     # matched but the region is an issues section, fall back to its question
     # sentences rather than reporting an empty list.
     if not results:
-        for s in SENT(n):
-            if _ISSUE_QUESTION_RE.search(s) and 30 <= len(s) <= 300 and '?' in s or (
-                _ISSUE_QUESTION_RE.search(s) and s.strip().lower().startswith(('first', 'second', 'third', 'fourth'))
-            ):
+        # split_sentences does not break on "?", so a judgment that prints its
+        # questions as one run ("Whether A? Whether B? Whether C?") arrived here
+        # as a single unit and was returned whole. Split each unit on its own
+        # "?" first, and drop the administrative reporting heads.
+        for raw in split_sentences(n):
+            for s in re.split(r'(?<=\?)', raw):
+                s = s.strip()
+                if len(s) < 20:
+                    continue
+                if not (
+                    _ISSUE_QUESTION_RE.search(s) or re.search(r'\bwhether\b', s, re.I)
+                ):
+                    continue
+                if _ADMIN_QUESTION_RE.search(s):
+                    continue
                 key = nows(s)[:60]
                 if key in seen:
                     continue
@@ -2108,10 +2178,89 @@ def _enumerated_issues(text: str) -> list[dict[str, Any]]:
                     'issue': s, 'text': s, 'evidence': s,
                     'source': 'document', 'page': '1-2',
                 })
+                if len(results) >= 6:
+                    break
             if len(results) >= 6:
                 break
 
     return results[:6]
+
+
+def _question_issues(text: str) -> list[dict[str, Any]]:
+    """Document-stated issue questions ("Whether ...?") with no issues heading.
+
+    Many petitions and writs state the question for determination as a plain
+    interrogative sentence rather than under an "ISSUES FRAMED" heading. Such a
+    sentence is written by the document itself, so surfacing it is extraction,
+    not invention. Called only after framed/enumerated issues found none.
+    """
+    if not text:
+        return []
+    n = norm(_strip_signature(text))
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    # split_sentences does not break on "?", and a judgment often prints several
+    # "Whether ...?" questions in one run, so split each unit on its own "?"
+    # first - otherwise one administrative head would suppress the whole block.
+    for sent in split_sentences(n):
+        for s in re.split(r'(?<=\?)', sent):
+            s = s.strip()
+            if not (20 <= len(s) <= 320) or '?' not in s:
+                continue
+            if not (re.match(r'^whether\b', s, re.I) or _WHETHER_Q_RE.search(s)):
+                continue
+            if re.search(r'\b(?:what\s+is|why\s+is|how\s+is)\b', s, re.I):
+                continue
+            if _ADMIN_QUESTION_RE.search(s):
+                continue
+            key = nows(s)[:60]
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({
+                'issue': s, 'text': s, 'evidence': s,
+                'source': 'document', 'page': '1-2',
+            })
+            if len(out) >= 6:
+                return out
+    return out
+
+
+def _relief_issues(text: str) -> list[dict[str, Any]]:
+    """Infer the relief-based issue(s) from an explicit prayer/relief clause.
+
+    Fires ONLY when the document states a prayer ("it is prayed", "prays that",
+    "relief sought"). Without such a clause it returns nothing, so a document
+    that states neither an issue nor a prayer is never given a fabricated one.
+    The synthetic wording follows standard pleading form; the ``evidence`` span
+    is the document's own prayer text.
+    """
+    if not text:
+        return []
+    n = norm(_strip_signature(text))
+    m = _RELIEF_MARKER_RE.search(n)
+    if not m:
+        return []
+    window = n[m.start(): m.start() + 800]
+    low = window.lower()
+    drafts: list[str] = []
+    if re.search(r'\bquash\w*', low):
+        drafts.append(
+            "Whether the proceedings/FIR impugned in the petition are liable to be quashed?"
+        )
+    if re.search(r'\b(?:anticipatory\s+|regular\s+)?bail\b', low):
+        drafts.append("Whether the applicant is entitled to bail?")
+    if not drafts and re.search(r'\b(?:set\s+aside|challeng\w+)\b', low):
+        drafts.append(
+            "Whether the order/action under challenge is liable to be set aside?"
+        )
+    return [
+        {
+            'issue': s, 'text': s, 'evidence': window[:300].strip(),
+            'source': 'inferred', 'page': '1-2',
+        }
+        for s in drafts[:3]
+    ]
 
 
 def _court_framed_issues(text: str) -> list[dict[str, Any]]:
@@ -2175,7 +2324,12 @@ def _court_framed_issues(text: str) -> list[dict[str, Any]]:
     # No "Issue I:" framing. Accept an explicitly enumerated issue list instead
     # ("First, whether ...", "1. whether ..."), which study documents, moot notes
     # and academic dossiers use. Every item is still text the document states.
-    return _enumerated_issues(text)
+    enumerated = _enumerated_issues(text)
+    if enumerated:
+        return enumerated
+    # Still nothing framed: surface a plain "Whether ...?" question the document
+    # itself wrote, or the issue implied by an explicit prayer clause.
+    return _question_issues(text) or _relief_issues(text)
 
 def extract_grounded_issues(r: dict[str, Any], text: str) -> list[dict[str, Any]]:
     """Extract grounded legal issues paired with real verbatim quotes from this specific document.

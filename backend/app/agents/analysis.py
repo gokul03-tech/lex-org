@@ -649,8 +649,10 @@ CRITICAL RULES:
    Appellant/Petitioner. Keywords to look for: "We hold that", "The Court finds
    that", "The High Court erred in", "It is held that", "The appeal is
    allowed".
-2. Extract each finding VERBATIM from the reasoning section, or as close a
-   summary as the text allows.
+2. Copy each finding EXACTLY, word-for-word, as it appears in the judgment: a
+   single contiguous sentence (or two adjacent sentences). Do NOT paraphrase,
+   summarise, or merge sentences. The string you return must appear
+   character-for-character in the document or it is discarded as ungrounded.
 3. The finding must favour the Appellant/Petitioner: it either upholds their
    claim or criticises the reasoning against them.
 4. NEVER extract counsel submissions, the issue list, procedural closings, or
@@ -660,25 +662,44 @@ CRITICAL RULES:
    If no favorable finding exists, return an empty list — never a placeholder.
 """ + UNIVERSAL_EXTRACTION_PROMPT
 
-# Fallback-only. Mirrors KEY_STRENGTHS_PROMPT for the adverse side of the record.
+# Fallback-only. Derives the case's weak points from the opposing side's
+# submissions (what the petitioner must overcome), not from the court's own
+# findings; falls back to the court's limiting observations when the document
+# records no opposing submissions.
 POTENTIAL_GAPS_PROMPT = """
-Extract the Court's findings that are unfavorable to the Appellant/Petitioner,
-or limitations in the Appellant's case, looking specifically in the "ANALYSIS
-AND REASONING" section of the judgment, or the "CONCLUSION AND ORDER" section.
+Identify the "Potential Gaps" a Petitioner/Appellant must overcome: the
+weaknesses in their case that the OPPOSING side relies on.
+
+PRIMARY SOURCE: analyze the "RESPONDENT'S SUBMISSIONS", "STATE'S SUBMISSIONS",
+"PROSECUTION'S SUBMISSIONS", "PER CONTRA" or equivalent second-party heading -
+the arguments put forward by the State/Prosecution/Respondent. Look especially
+for their arguments that highlight:
+- flight risk (likelihood of absconding, evading trial, no fixed abode);
+- evidence tampering or witness influencing;
+- gravity/seriousness of the offence and its societal impact;
+- any other ground on which they oppose the relief sought.
+These are exactly the points the petitioner must rebut.
+
+FALLBACK SOURCE: if no opposing submissions are recorded, use the Court's own
+limiting observations in the "ANALYSIS AND REASONING" or "CONCLUSION AND ORDER"
+sections (keywords: "However", "The appellants have not provided", "The mere
+fact of").
 
 CRITICAL RULES:
-1. Look for paragraphs where the Court notes limitations or unfavorable
-   findings. Keywords to look for: "However", "The appellants have not
-   provided", "The mere fact of".
-2. Extract each finding VERBATIM from the reasoning section, or as close a
-   summary as the text allows (e.g. "no loss was proved under Section 74 of the
-   Indian Contract Act", "and in rest it is affirmed").
-3. The finding must go against the Appellant/Petitioner: part of the claim is
-   rejected, a condition is not proved, or most of the award is upheld.
-4. NEVER extract counsel submissions or academic commentary as gap findings.
-5. NEVER invent findings that do not appear in the document.
+1. Copy each point EXACTLY, word-for-word, as it appears in the document: a
+   single contiguous sentence (or two adjacent sentences). Do NOT paraphrase,
+   summarise, or merge sentences. The string you return must appear
+   character-for-character in the document or it is discarded as ungrounded.
+2. The point must go against the Appellant/Petitioner: it is an opposing
+   contention, a rejected claim, an unproved condition, or a limitation the
+   Court records.
+3. Quote the opposing submission itself, not your own summary of it - the text
+   must be verbatim from the document.
+4. NEVER extract academic commentary, bibliographies, or the document's own
+   metadata as a gap finding.
+5. NEVER invent points that do not appear in the document.
 6. Do NOT use generic fallbacks like "No adverse contentions extracted yet."
-   If no adverse finding exists, return an empty list — never a placeholder.
+   If no adverse point exists, return an empty list - never a placeholder.
 """ + UNIVERSAL_EXTRACTION_PROMPT
 
 STRATEGY_PROMPT = """
@@ -689,7 +710,35 @@ STRICT GROUNDING RULES:
 2. NEVER output UI error messages like "No sufficiently relevant precedent found" or "(N/A)".
 
 EXTRACTION RULES:
-- Strategic Ground: Extract the actual arguments made by the Appellant/Petitioner (look for "Mr. [Name] submitted..."). Do NOT use procedural closing lines like "Pending interlocutory applications...".
+- Strategic Ground (STRICT SECTION TARGETING): Extract the arguments made by the
+  Appellant/Petitioner ONLY from sections explicitly labelled "SUBMISSIONS FOR
+  THE PETITIONER", "PETITIONER'S SUBMISSIONS", "APPELLANT'S SUBMISSIONS",
+  "DEFENCE CONTENTIONS", "PLAINTIFF'S SUBMISSIONS", or an equivalent first-party
+  heading, or from sentences that name their counsel ("Mr. [Name] submitted..."/
+  "Learned counsel for the appellant argued..."). If no such section or speaker
+  exists, return an empty string - do NOT fall back to the judgment's own text or
+  to procedural closing lines like "Pending interlocutory applications...".
+- NEGATIVE CONSTRAINT (Strategic Ground): NEVER extract the court's own findings
+  as a lawyer's argument. Reject any text that begins with or amounts to
+  "We hold", "The Court finds", "It is held", "Therefore, the petition is
+  allowed", "In the result", or "The appeal is dismissed". Those are judicial
+  findings, not submissions. This applies with full force to the "CONCLUSION",
+  "CONCLUSION AND ORDER", "OPERATIVE ORDER" and "JUDGMENT" sections: NEVER mine
+  those sections for a Strategic Ground. If a sentence starts with "The Court
+  ordered", "The appeal is allowed", "The petition is disposed of", or "It is
+   ordered that", it is a judicial finding - ignore it, even if it sounds
+   favourable to the appellant.
+- Counter / Opposing Counsel: extract ONLY the RESPONDENT / STATE / PROSECUTION
+  side ("Per contra", "the learned Additional Public Prosecutor submitted",
+  "  counsel for the respondent/State contended", "the State argued"). NEVER place
+  the petitioner's own arguments in this field - a petitioner submission is a
+  strategic ground, not a counter-attack - and NEVER fill it with the court's
+  findings. If no respondent-side submission is recorded, return an empty string.
+- NEGATIVE CONSTRAINT (both columns): never treat the court's dispositive
+  directions as counsel argument. Reject any sentence beginning "Taking into
+  consideration", "The Court directed", "The petitioners are directed to",
+  "Accordingly", "In view of the above" or "In the result" - those are judicial
+  orders, not submissions by either side.
 - Key Strengths: Extract substantive favorable findings made by the Court from the "ANALYSIS AND REASONING" section or the "CONCLUSION AND ORDER" section (look for "We hold that", "The Court finds that", "The High Court erred in", "It is held that", "The appeal is allowed", "We are of the view that...", "The circular fails..."). Do NOT use generic fallbacks.
 - Action Plan: Extract ONLY direct procedural orders/directions from the Court (look for "The Registry is directed...", "The appellants shall..."). Do NOT include legal reasoning or precedent citations.
 - ACTION-PLAN ISOLATION (MANDATORY): Build the Action Plan STRICTLY from the provided text of the CURRENT case only. Do not import procedural steps from any other case, general legal templates, or external knowledge, and do not hallucinate them. Look ONLY for the "CONCLUSION AND ORDER"/"OPERATIVE ORDER"/"IN THE RESULT"/"DISPOSITION" section in the provided text; if no operative order exists there, return an empty list rather than a generic step list.
@@ -1009,6 +1058,27 @@ async def case_understanding_agent(state: AgentState) -> AgentState:
             state["timeline"] = []
             return _record_completion(state, "case_understanding", 0.5, "case_summary", state["case_summary"])
 
+        # OCR repair pre-pass: a badly scanned document poisons every downstream
+        # agent, so repair the text before it is chunked, embedded or summarised.
+        # Clean documents are returned untouched by the heuristic inside.
+        from app.agents.agentic_pipeline import clean_ocr_text_with_llm
+
+        for doc in documents:
+            raw_text = doc.get("text") or doc.get("parsed_text") or doc.get("raw_text") or ""
+            repaired = await clean_ocr_text_with_llm(
+                raw_text, max_chars=getattr(settings, "OCR_CLEAN_MAX_CHARS", 0) or None
+            )
+            if repaired and repaired != raw_text:
+                doc["text"] = repaired
+                doc["parsed_text"] = repaired
+                doc["ocr_cleaned"] = True
+                repaired_pages = repaired.split("\n\n")
+                pages = doc.get("metadata", {}).get("pages")
+                if isinstance(pages, list) and pages:
+                    doc["metadata"]["pages"] = repaired_pages
+                if isinstance(doc.get("pages"), list) and doc["pages"]:
+                    doc["pages"] = repaired_pages
+
         # Dynamic Chunking and Embedding Generation at Startup
         chunker = LegalChunker()
         embedder = EmbeddingGenerator()
@@ -1020,10 +1090,17 @@ async def case_understanding_agent(state: AgentState) -> AgentState:
             if not pages:
                 text = doc.get("text") or doc.get("parsed_text") or doc.get("raw_text") or ""
                 pages = [text] if text else []
-            
+
             # Splitting and chunking with page retention
             doc_chunks = chunker.chunk_pages(pages, {"filename": filename, "case_id": case_id})
             doc["chunks"] = doc_chunks
+
+            # Ingestion already chunked+embedded this exact document (and, when
+            # the text was OCR-repaired there, stored the repaired text). Re-
+            # embedding here duplicated the work and the vectors, so skip it
+            # unless this pass changed the text.
+            if doc.get("indexed") and not doc.get("ocr_cleaned"):
+                continue
 
             # Generate embeddings and upsert to Qdrant
             if doc_chunks and qdrant.is_available():
@@ -1236,6 +1313,16 @@ Additional Query: {query}
 
 
 # ── Agent 2: Legal Research Agent ──────────────────────────
+# Last-resort RAG query when the case yields no issues, no summary and no
+# recoverable caption. A generic-but-researchable query beats passing the raw
+# "Client: ." string to the retriever, which returns nothing and collapses the
+# trust score.
+_FALLBACK_RESEARCH_QUERY = (
+    "Whether the petition is maintainable and what statutory provisions, "
+    "sections and precedents apply to the relief sought"
+)
+
+
 async def legal_research_agent(state: AgentState) -> AgentState:
     """Retrieve applicable acts, sections, and precedents using RAG.
 
@@ -1246,6 +1333,7 @@ async def legal_research_agent(state: AgentState) -> AgentState:
     logger.info(f"[LegalResearch] Searching for applicable law")
 
     try:
+        from app.agents.agentic_pipeline import recover_from_ocr, validate_understanding_query
         from app.rag.rag_pipeline import RAGPipeline
 
         issues = state.get("legal_issues", [])
@@ -1256,7 +1344,36 @@ async def legal_research_agent(state: AgentState) -> AgentState:
         if state.get("case_summary"):
             query_parts.append(state["case_summary"])
         
-        query = " ".join(query_parts) if query_parts else (state.get("query", "") or "legal case analysis")
+        query = " ".join(query_parts) if query_parts else (state.get("query", "") or "")
+
+        # Quality gate (Fix 4): the query must be genuinely researchable. With no
+        # issues or summary it can be the raw case text ("Client: ."), which
+        # retrieves nothing and collapses the trust score. Escalate through three
+        # fallbacks: the recovered caption, a snippet of the document text, then a
+        # generic research query so the RAG pipeline is never handed junk.
+        raw_text = "\n\n".join(
+            d.get("text") or d.get("content") or "" for d in state.get("documents", [])
+        )
+        if not validate_understanding_query(query):
+            recovered = await recover_from_ocr(raw_text) if raw_text.strip() else {}
+            rebuilt = " ".join(
+                p for p in (
+                    recovered.get("case_name"),
+                    recovered.get("judgment_date"),
+                    recovered.get("final_order"),
+                ) if p
+            ).strip()
+            if validate_understanding_query(rebuilt):
+                query = rebuilt
+                logger.info("[LegalResearch] Recovered query from document header/footer")
+            elif validate_understanding_query(" ".join(raw_text.split())[:400]):
+                query = " ".join(raw_text.split())[:400]
+                logger.info("[LegalResearch] Query rebuilt from document text")
+            else:
+                query = _FALLBACK_RESEARCH_QUERY
+                logger.warning(
+                    "[LegalResearch] No usable query could be built; using generic research query"
+                )
 
         # Use the RAG pipeline for multi-source retrieval
         rag = RAGPipeline()
@@ -1409,7 +1526,7 @@ async def legal_research_agent(state: AgentState) -> AgentState:
             )
             for sm in sec_matches:
                 sec_num = sm.group(1)
-                sec_act = map_section_to_act(sec_num, binds, category=category, decision_date=case_decision_date)
+                sec_act = map_section_to_act(sec_num, binds, category=category, decision_date=case_decision_date, doc_text=doc_text_full)
                 start_pos = max(0, sm.start() - 40)
                 end_pos = min(len(doc_text_full), sm.end() + 140)
                 snippet = doc_text_full[start_pos:end_pos].replace("\n", " ").strip()
@@ -1443,7 +1560,7 @@ async def legal_research_agent(state: AgentState) -> AgentState:
         seen = set()
         unique_sections = []
         for s in sections:
-            clean_act = map_section_to_act(s['section_number'], binds, category=category, decision_date=case_decision_date)
+            clean_act = map_section_to_act(s['section_number'], binds, category=category, decision_date=case_decision_date, doc_text=doc_text_full)
             s['act'] = clean_act
             key = f"{s['section_number']}_{clean_act}"
             if key not in seen:
@@ -1796,9 +1913,19 @@ Check the following procedural aspects:
 Case facts and timeline:
 {json.dumps({"facts": facts, "timeline": timeline}, indent=2)}
 
-Respond with JSON:
-{{"compliance_score": 0.0, "checks": [{{"aspect": "", "status": "compliant|partially_compliant|non_compliant|unable_to_determine", "score": 0.0, "notes": ""}}], "summary": ""}}
-"""
+        Respond with JSON:
+        {{"compliance_score": <mean of check scores>,
+          "checks": [{{"aspect": "<name>",
+                       "status": "compliant|partially_compliant|non_compliant|unable_to_determine",
+                       "score": <0.0-1.0>, "notes": "<short>"}}],
+          "summary": "<short>"}}
+
+        Scoring: compliance_score is the MEAN of the per-check score values you
+        could actually assess. Mark a check "unable_to_determine" when the facts do
+        not say whether it was followed, and exclude it from the mean. Use 0.0 ONLY
+        when every assessable check is non_compliant; if nothing is assessable use
+        0.5 (inconclusive), never 0.0 by default.
+        """
         provider = get_qwen_provider()
         result = provider.generate_structured(
             prompt,
@@ -1815,8 +1942,29 @@ Respond with JSON:
             max_tokens=520,
         )
 
+        # Trust the checks over the top-level scalar: a model that echoes the
+        # example's 0.0 (or finds nothing assessable) must not be reported as
+        # "fully non-compliant" when the truth is "unknown".
+        if not isinstance(result, dict):
+            result = {}
+        checks = result.get("checks")
+        checks = checks if isinstance(checks, list) else []
+        assessable = [
+            c for c in checks
+            if isinstance(c, dict)
+            and c.get("status") not in (None, "unable_to_determine")
+            and isinstance(c.get("score"), (int, float))
+        ]
+        if assessable:
+            score: float = sum(float(c["score"]) for c in assessable) / len(assessable)
+        else:
+            raw_score = result.get("compliance_score")
+            score = float(raw_score) if isinstance(raw_score, (int, float)) and raw_score else 0.5
+        result["compliance_score"] = round(score, 4)
+        result["checks"] = checks
+
         state["procedural_status"] = result
-        confidence = result.get("compliance_score", 0.5)
+        confidence = result["compliance_score"]
         duration_ms = (time.monotonic() - start_time) * 1000
         logger.info(f"[ProceduralCompliance] Score: {confidence:.2f} ({duration_ms:.0f}ms)")
         return _record_completion(state, "procedural_compliance", confidence, "procedural_status", result)
@@ -1897,10 +2045,11 @@ Respond with JSON:
             },
 system_prompt=QWEN_SYSTEM_PROMPT,
             temperature=0.1,
-            # 520 truncated this combined JSON mid-sentence: counsel
-            # submissions are the longest field and the closing brace was being
-            # cut, which discarded summary/facts/parties along with it.
-            max_tokens=1400,
+            # A complex case's combined JSON (issues + rules + application +
+            # conclusion + alternatives) exceeded 1400 tokens and was cut off
+            # mid-object, so the parser discarded everything. The provider caps
+            # Groq output at _groq_output_limit (2600), leaving headroom here.
+            max_tokens=2400,
         )
 
         irac_issues = [str(i).strip() for i in (result.get("issues_identified") or []) if str(i).strip()]
@@ -2220,7 +2369,10 @@ async def confidence_fusion_agent(state: AgentState) -> AgentState:
 
         if hallucinated:
             trust_score -= 0.05 * hallucinated
-            logger.warning(f"[ConfidenceFusion] {hallucinated} hallucinated citation(s) detected")
+            logger.info(
+                f"[ConfidenceFusion] {hallucinated} citation(s) corrected by the "
+                f"verification gate"
+            )
 
         # If the GGUF could not be allocated, every LLM field above is mock text.
         # A high trust score on invented content is worse than an explicit zero.

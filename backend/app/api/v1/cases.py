@@ -188,22 +188,22 @@ async def delete_case(
     # Purge the case's indexed chunks from Qdrant so deleted cases don't
     # leave orphan vectors polluting future retrieval results.
     try:
-        from qdrant_client.models import FieldCondition, Filter, MatchAny
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
 
         from app.core.config import settings as _settings
         from app.embeddings.qdrant_client import get_qdrant_manager
 
         qdrant = get_qdrant_manager()
-        if qdrant.is_available() and filenames:
+        # Delete every vector tagged with this case_id, regardless of doc_type.
+        # Ingestion writes doc_type from the document's own type (e.g.
+        # "judgment"), so filtering on a fixed "uploaded_document" doc_type left
+        # those vectors orphaned in the collection after the case was deleted.
+        if qdrant.is_available():
             qdrant.client.delete(
                 collection_name=_settings.QDRANT_COLLECTION_DOCS,
                 points_selector=Filter(
                     must=[
-                        FieldCondition(
-                            key="doc_type",
-                            match=MatchAny(any=["uploaded_document"]),
-                        ),
-                        FieldCondition(key="source", match=MatchAny(any=filenames)),
+                        FieldCondition(key="case_id", match=MatchValue(value=case_id)),
                     ]
                 ),
             )

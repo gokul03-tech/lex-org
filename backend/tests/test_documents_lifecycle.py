@@ -208,6 +208,42 @@ async def test_ingestion_failure_sets_failed_status(
 
 
 @pytest.mark.asyncio
+async def test_reingest_is_claimed_once(
+    client: AsyncClient, user_factory, session_factory
+) -> None:
+    """Only one runner may ingest a document; duplicates are rejected, not re-embedded."""
+    headers, _ = await user_factory()
+    case_id = await _create_case(client, headers)
+    fake_qdrant = _FakeQdrant()
+
+    body = b"IN THE HIGH COURT\nCriminal Petition No. 3 of 2024. Bail. " * 20
+
+    from app.document_pipeline.ingestion import ingest_document
+
+    p1, p2, p3, p4 = _patch_ingestion(session_factory, fake_qdrant)
+    with p1, p2, p3, p4:
+        resp = await client.post(
+            "/api/v1/documents/upload",
+            files={"file": ("once.txt", body, "text/plain")},
+            data={"case_id": case_id, "document_type": "judgment"},
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        doc_id = resp.json()["id"]
+        assert len(fake_qdrant.upserts) == 1
+
+        # A second (e.g. analysis-inline) runner is rejected without re-embedding.
+        again = await ingest_document(doc_id)
+        assert again["status"] == "already_claimed"
+        assert len(fake_qdrant.upserts) == 1
+
+        # force=True is the explicit recovery path and does run again.
+        forced = await ingest_document(doc_id, force=True)
+        assert forced["status"] == "complete"
+        assert len(fake_qdrant.upserts) == 2
+
+
+@pytest.mark.asyncio
 async def test_deleting_case_removes_documents(
     client: AsyncClient, user_factory, session_factory
 ) -> None:

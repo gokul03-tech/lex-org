@@ -103,7 +103,7 @@ class LegalMetadataExtractor:
         while the decision date and the full bench usually appear only in the tail.
         """
         try:
-            provider = get_llm_provider("qwen")
+            provider = get_llm_provider("fast")
 
             header_text = self._header_block(text)
             tail_text = self._signature_block(text)
@@ -428,6 +428,22 @@ class LegalMetadataExtractor:
 
         if not case_title and filename:
             case_title = filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ")
+
+        # A machine-generated name (a 32+ hex-character hash from an upload) is
+        # not a case title. When that is all we have, fall back to scanning the
+        # document header for a real "X v. Y" caption before giving up.
+        compact_name = re.sub(r'[^a-z0-9]', '', (case_title or "").lower())
+        if re.fullmatch(r'[a-f0-9]{32,}', compact_name):
+            for chunk in (text[:500], *lines_12[:10]):
+                parts = self._VS_SPLIT_RE.split(chunk, maxsplit=1)
+                if len(parts) != 2:
+                    continue
+                p_clean = self._clean_party_name(parts[0])
+                r_clean = self._clean_party_name(parts[1])
+                if p_clean and r_clean and len(p_clean) < 80 and len(r_clean) < 80:
+                    petitioner, respondent = p_clean, r_clean
+                    case_title = f"{p_clean} vs {r_clean}"
+                    break
 
         return {
             "case_title": {"value": case_title, "status": "extracted" if case_title else "not_found"},
@@ -912,20 +928,26 @@ class LegalMetadataExtractor:
         # Known docket types, optionally carrying a civil/criminal qualifier in
         # brackets ("Writ Petition (Civil) No. 456 of 2023"). The year may be
         # written "of 2023" or "/2019".
-        _DOCKET = (
-            r"(?:Special\s+Case|Criminal\s+Petition|Criminal\s+Appeal|Civil\s+Appeal|Civil\s+Petition|Appeal|"
+        _DOCKET_TERMS = (
+            r"Special\s+Case|Criminal\s+Petition|Criminal\s+Appeal|Civil\s+Appeal|Civil\s+Petition|Appeal|"
             r"Writ\s+Petition|Contempt\s+Petition|Review\s+Petition|"
             r"W\.?P\.?|S\.?L\.?P\.?|R\.?A\.?|C\.?R\.?L\.?A\.?|C\.?R\.?A\.?|"
             r"C\.?R\.?O\.?L\.?|C\.?R\.?M\.?A\.?|C\.?C\.?|C\.?R\.?C\.?|"
-            r"I\.?A\.?|D\.?O\.?R\.?|FIR)"
+            r"I\.?A\.?|D\.?O\.?R\.?"
         )
         _QUAL = r"(?:\s*\(\s*(?:Civil|Criminal|Commercial|Company|Labour)\s*\))?"
         _NO = r"\s*(?:No\.?|Number)?\s*[:\-]?\s*\d+"
         _YEAR = r"(?:\s*/\s*\d{2,4}|\s+of\s+\d{2,4})"
-        pat = rf"({_DOCKET}{_QUAL}{_NO}{_YEAR})"
-        m = re.search(pat, head, re.IGNORECASE)
-        if m:
-            return {"value": m.group(1).strip(), "status": "extracted"}
+        # A hearing/appeal docket names the matter before the court. An FIR number
+        # in the same caption names only the underlying police case ("Criminal
+        # Appeal No. 2847 of 2024 arising out of FIR No. 143 of 2024"), so it is
+        # tried last: matching the first docket the regex happens to see returned
+        # the FIR number as the case number.
+        for terms in (_DOCKET_TERMS, _DOCKET_TERMS + r"|FIR"):
+            pat = rf"((?:{terms}){_QUAL}{_NO}{_YEAR})"
+            m = re.search(pat, head, re.IGNORECASE)
+            if m:
+                return {"value": m.group(1).strip(), "status": "extracted"}
 
         # Generic docket: short uppercase-ish prefix + "No." + number + "of" + year.
         generic = r'((?:[A-Z][A-Za-z]{0,8}\.?){1,3}\s*(?:No\.?|Number)\s*[:\-]?\s*\d+\s+of\s+\d{4})'

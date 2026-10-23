@@ -13,6 +13,11 @@ from loguru import logger
 
 from app.core.config import settings
 
+# Process-wide cache so multiple EmbeddingGenerator instances (ingestion, case
+# understanding, re-indexing) share one loaded SentenceTransformer instead of
+# re-reading the weights from disk on every call.
+_MODEL_CACHE: dict[tuple[str, str], Any] = {}
+
 
 class EmbeddingGenerator:
     """Generate embeddings using BGE-M3 or fallback models.
@@ -52,6 +57,13 @@ class EmbeddingGenerator:
 
     def _load_model(self) -> None:
         """Load the embedding model, trying multiple backends."""
+        cache_key = (self.model_name, str(self.device))
+        cached = _MODEL_CACHE.get(cache_key)
+        if cached is not None:
+            self._model = cached
+            self._backend = "sentence_transformers"
+            return
+
         # Try sentence-transformers (BGE-M3)
         try:
             from sentence_transformers import SentenceTransformer
@@ -61,8 +73,15 @@ class EmbeddingGenerator:
             if "cuda" in str(self.device):
                 self._model.half()
             self._backend = "sentence_transformers"
-            dim = self._model.get_sentence_embedding_dimension()
-            logger.info(f"Loaded embedding model: {self.model_name} (dim={dim}, device={self.device})")
+            _MODEL_CACHE[cache_key] = self._model
+            get_dim = getattr(self._model, "get_embedding_dimension", None) or getattr(
+                self._model, "get_sentence_embedding_dimension"
+            )
+            dim = get_dim()
+            logger.info(
+                f"Loaded embedding model: {self.model_name} "
+                f"(dim={dim}, device={self.device})"
+            )
             return
         except ImportError:
             logger.warning("sentence-transformers not installed.")
@@ -74,8 +93,28 @@ class EmbeddingGenerator:
         self._model = None
         self._backend = "random"
 
+    def _shared_embedder(self):
+        """Return the shared cloud/local embedder, or None to use this class's
+        own local/random path.
+
+        Returns None when EMBEDDING_BACKEND=local, or when "auto" has no API
+        key configured, so standalone behaviour stays unchanged.
+        """
+        backend = (getattr(settings, "EMBEDDING_BACKEND", "auto") or "auto").lower()
+        if backend == "local":
+            return None
+        if backend == "auto" and not (settings.EMBEDDING_API_BASE and settings.EMBEDDING_API_KEY):
+            return None
+        from app.embeddings.embedder import get_embedder
+
+        return get_embedder()
+
     def embed(self, texts: str | list[str]) -> np.ndarray:
         """Generate embeddings for one or more texts.
+
+        Uses the configured embedding backend (cloud first when active, with
+        automatic local fallback), otherwise the local sentence-transformers
+        model, and finally a deterministic fallback.
 
         Args:
             texts: Single text string or list of strings.
@@ -88,6 +127,23 @@ class EmbeddingGenerator:
 
         if not texts:
             return np.zeros((0, self.vector_size), dtype=np.float32)
+
+        shared = self._shared_embedder()
+        if shared is not None:
+            try:
+                vecs = shared.encode(texts, normalize=True)
+                if vecs.shape[1] == self.vector_size:
+                    return vecs
+                logger.warning(
+                    f"Cloud embedding dim {vecs.shape[1]} != QDRANT_VECTOR_SIZE "
+                    f"{self.vector_size}; using local embedder instead."
+                )
+            except Exception as exc:
+                logger.warning(f"Cloud embedding failed; using local embedder: {exc}")
+
+        # Lazy-load: embed() may be called without touching the `.model` property.
+        if self._backend is None and self._model is None:
+            self._load_model()
 
         if self._backend == "sentence_transformers" and self._model is not None:
             return self._embed_sentence_transformers(texts)

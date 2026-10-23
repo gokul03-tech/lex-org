@@ -10,6 +10,7 @@ import warnings
 from pathlib import Path
 from typing import Literal
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Repository-relative locations, resolved from this file so no developer's
@@ -90,11 +91,59 @@ class Settings(BaseSettings):
     LLM_TEMPERATURE: float = 0.0
     LLM_MAX_TOKENS: int = 1500
 
-    # OpenAI-compatible API configurations (vLLM / Ollama)
-    LLM_API_BASE: str = "https://api.groq.com/openai/v1"
+    # OpenAI-compatible API configurations (vLLM / Ollama / OpenRouter)
+    LLM_API_BASE: str = "https://openrouter.ai/api/v1"
     LLM_API_KEY: str = ""
-    QWEN_MODEL_NAME: str = "llama-3.1-70b-versatile"
-    DEEPSEEK_MODEL_NAME: str = "llama-3.1-70b-versatile"
+    QWEN_MODEL_NAME: str = "meta-llama/llama-3.3-70b-instruct"
+    DEEPSEEK_MODEL_NAME: str = "meta-llama/llama-3.3-70b-instruct"
+
+    # ── Model routing (cost / rate-limit optimisation) ──────────
+    # High-frequency, low-complexity tasks (noise filtering, formatting, intent
+    # detection, query rewriting) run on FAST_MODEL_NAME; genuinely complex
+    # reasoning (critic, verification, debate, strategy, research) runs on
+    # STRONG_MODEL_NAME. With the openai_compatible backend these are provider
+    # model ids. Both are set to the same Llama 3.3 70B model on OpenRouter so
+    # every step uses a single model. Both GROQ_MODEL_* and FAST/STRONG_MODEL_NAME
+    # env names are accepted (GROQ_* takes priority).
+    FAST_MODEL_NAME: str = Field(
+        "meta-llama/llama-3.3-70b-instruct",
+        validation_alias=AliasChoices("GROQ_MODEL_FAST", "FAST_MODEL_NAME"),
+    )
+    STRONG_MODEL_NAME: str = Field(
+        "meta-llama/llama-3.3-70b-instruct",
+        validation_alias=AliasChoices("GROQ_MODEL_REASONING", "STRONG_MODEL_NAME"),
+    )
+
+    # ── LLM request retry / backoff ─────────────────────────────
+    # Exponential backoff for transient provider errors (HTTP 429 / 5xx):
+    # delay = min(base + 2**attempt, max) seconds, plus jitter.
+    LLM_MAX_RETRIES: int = 5
+    LLM_RETRY_BASE_DELAY: float = 5.0
+    LLM_RETRY_MAX_DELAY: float = 60.0
+
+    # Minimum seconds between Groq requests (a floor under the token-budget
+    # pacing below). Small calls may fire faster; large ones are throttled by
+    # GROQ_TPM.
+    GROQ_MIN_INTERVAL: float = 2.0
+
+    # Tokens-per-minute budget for the Groq endpoint (free on-demand tier is
+    # 8,000 TPM, shared account-wide). Requests are paced so the rolling
+    # 60-second total never exceeds this, which is what keeps the multi-agent
+    # pipeline clear of HTTP 429s.
+    GROQ_TPM: int = 8000
+
+    # Groq's gpt-oss models are reasoning models: left unbounded they spend the
+    # whole completion budget on hidden reasoning and return empty content (which
+    # breaks structured JSON parsing). "low" keeps reasoning minimal.
+    GROQ_REASONING_EFFORT: str = "low"
+
+    # ── Google AI Studio (Gemini) ───────────────────────────────
+    # When GEMINI_API_KEY is set it becomes the primary LLM endpoint (free
+    # tier) and the LLM_API_BASE/LLM_API_KEY endpoint (e.g. OpenRouter) is used
+    # as an automatic fallback. Both speak the OpenAI chat-completions protocol.
+    GEMINI_API_BASE: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.5-flash"
 
     # Transformers local model configurations
     QWEN_HF_MODEL_ID: str = "Qwen/Qwen3-8B-AWQ"
@@ -113,11 +162,33 @@ class Settings(BaseSettings):
     EMBEDDING_DEVICE: str = "cpu"
     EMBEDDING_BATCH_SIZE: int = 32
 
+    # ── Cloud Embedding Backend ─────────────────────────────────
+    # "local"  -> sentence-transformers BGE-M3 (models/bge-m3)
+    # "cloud"  -> OpenAI-compatible /embeddings endpoint (SiliconFlow by default)
+    # "auto"   -> cloud when API base + key are set, else local
+    EMBEDDING_BACKEND: Literal["local", "cloud", "auto"] = "auto"
+    EMBEDDING_API_BASE: str = "https://api.siliconflow.cn/v1"
+    EMBEDDING_API_KEY: str = ""
+    EMBEDDING_CLOUD_MODEL: str = "BAAI/bge-m3"
+    # When the cloud endpoint fails, fall back to local BGE-M3 (per-request).
+    EMBEDDING_ALLOW_LOCAL_FALLBACK: bool = True
+
     # ── Document Processing ─────────────────────────────────────
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
     OCR_LANG: str = "en"
     OCR_USE_GPU: bool = False
+    # Cap the OCR-repair pre-pass to the leading N characters of a document
+    # (0 = repair the whole document). The caption/issues band matters most, so
+    # a small cap cuts LLM cost/latency on long scanned judgments.
+    OCR_CLEAN_MAX_CHARS: int = 3000
+    # Vision-LLM OCR fallback: when PyMuPDF text is too short or too garbled,
+    # re-read the first pages as images through a multimodal model. Uses the
+    # Gemini endpoint (same key as the primary LLM) by default; any
+    # OpenAI-compatible vision endpoint works.
+    VLM_OCR_ENABLED: bool = True
+    VLM_OCR_MODEL: str = "google/gemini-2.5-flash"
+    VLM_OCR_MAX_PAGES: int = 5
     MAX_UPLOAD_SIZE_MB: int = 50
 
     # ── Sandbox ─────────────────────────────────────────────────

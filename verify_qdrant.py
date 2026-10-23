@@ -204,16 +204,32 @@ def print_collection_info(client: QdrantClient, collection_name: str) -> None:
 
 
 def search_demo(client: QdrantClient, model_dir: str) -> None:
-    from FlagEmbedding import BGEM3FlagModel
+    # Reuse the ingester's backend selection so the query embedding matches
+    # however the corpus was indexed (cloud OpenAI-compatible or local BGE-M3).
+    encoder = None
+    model = None
+    try:
+        from embed_and_upsert import Encoder
 
-    logger.info(f"Loading BGE-M3 model from {model_dir} on CUDA...")
-    model = BGEM3FlagModel(model_dir, use_fp16=True, device="cuda")
+        encoder = Encoder()
+        logger.info(f"Query embedding backend: {encoder.backend} (local model: {model_dir})")
+    except Exception as exc:  # noqa: BLE001
+        from FlagEmbedding import BGEM3FlagModel
+
+        logger.warning(f"Falling back to direct BGE-M3 load: {exc}")
+        logger.info(f"Loading BGE-M3 model from {model_dir} on CUDA...")
+        model = BGEM3FlagModel(model_dir, use_fp16=True, device="cuda")
+
+    def _encode(text: str):
+        if encoder is not None:
+            return encoder.encode([text])[0]
+        return model.encode(
+            text, return_dense=True, return_sparse=False, return_colbert_vecs=False
+        )["dense_vecs"].tolist()
 
     query_text = "What are the fundamental rights under the Constitution of India?"
     logger.info(f"Generating embedding for query: '{query_text}'...")
-    query_vector = model.encode(
-        query_text, return_dense=True, return_sparse=False, return_colbert_vecs=False
-    )["dense_vecs"].tolist()
+    query_vector = _encode(query_text)
 
     logger.info("Searching in Qdrant...")
     hits = client.query_points(

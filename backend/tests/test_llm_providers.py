@@ -6,14 +6,14 @@ Transformers provider (mocking dependency imports).
 
 from __future__ import annotations
 
-import json
+import time
 from unittest.mock import MagicMock, patch
 
-import pytest
-
+from app.llm.json_utils import parse_structured_response
 from app.llm.mock_provider import MockProvider
 from app.llm.openai_compatible_provider import OpenAICompatibleProvider
 from app.llm.provider import get_llm_provider
+from app.llm.routing import get_fast_provider, get_strong_provider
 from app.llm.transformers_provider import TransformersProvider
 
 
@@ -107,6 +107,32 @@ def test_openai_compatible_provider_generate_structured() -> None:
         assert result.get("valid") is True
 
 
+def test_openai_compatible_provider_sends_bearer_and_output_limit() -> None:
+    provider = OpenAICompatibleProvider(
+        model_name="groq",
+        api_base="https://api.groq.com/openai/v1",
+        api_key="test-key",
+        model_id="llama-3.1-70b-versatile",
+    )
+    response = MagicMock()
+    response.status_code = 200
+    response.is_error = False
+    response.json.return_value = {
+        "choices": [{"message": {"content": '{"ok": true}'}}]
+    }
+
+    with patch("httpx.Client.post", return_value=response) as mock_post:
+        result = provider.generate_structured(
+            "Prompt",
+            {"type": "object", "properties": {"ok": {"type": "boolean"}}},
+            max_tokens=1500,
+        )
+
+    assert result == {"ok": True}
+    assert mock_post.call_args.kwargs["headers"]["Authorization"] == "Bearer test-key"
+    assert mock_post.call_args.kwargs["json"]["max_tokens"] == 1500
+
+
 def test_openai_compatible_provider_stream() -> None:
     """Test OpenAICompatibleProvider stream_generate method yielding text chunks."""
     provider = OpenAICompatibleProvider(
@@ -168,3 +194,202 @@ def test_get_llm_provider_factory() -> None:
             provider = get_llm_provider("qwen")
             assert isinstance(provider, TransformersProvider)
             assert provider.model_id == "hf-qwen-model"
+
+
+def test_parse_structured_response_variants() -> None:
+    """The robust parser handles fences, prose, nesting and junk."""
+    assert parse_structured_response('{"a": 1}') == {"a": 1}
+    assert parse_structured_response('```json\n{"a": 1}\n```') == {"a": 1}
+    assert parse_structured_response('Sure: {"a": [1, 2]} done') == {"a": [1, 2]}
+    assert parse_structured_response("prefix [1, 2, 3] suffix") == [1, 2, 3]
+    assert parse_structured_response("no json here") == []
+    assert parse_structured_response("{not valid json}") == {}
+    assert parse_structured_response(None) == []
+    assert parse_structured_response("garbage", default={"x": 1}) == {"x": 1}
+
+
+def test_provider_routes_fast_and_strong_models() -> None:
+    """Fast/strong roles select FAST_MODEL_NAME / STRONG_MODEL_NAME."""
+    with (
+        patch("app.core.config.settings.LLM_BACKEND", "openai_compatible"),
+        patch("app.core.config.settings.LLM_API_BASE", "http://localhost:9999/v1"),
+        patch("app.core.config.settings.FAST_MODEL_NAME", "fast-model"),
+        patch("app.core.config.settings.STRONG_MODEL_NAME", "strong-model"),
+    ):
+        fast = get_fast_provider()
+        strong = get_strong_provider()
+        fast_direct = get_llm_provider("fast")
+        strong_direct = get_llm_provider("strong")
+
+    assert isinstance(fast, OpenAICompatibleProvider)
+    assert isinstance(strong, OpenAICompatibleProvider)
+    assert fast.model_id == "fast-model"
+    assert strong.model_id == "strong-model"
+    assert fast_direct.model_id == "fast-model"
+    assert strong_direct.model_id == "strong-model"
+
+
+def _http_response(status_code: int, payload: dict) -> MagicMock:
+    response = MagicMock()
+    response.status_code = status_code
+    response.headers = {}
+    response.json.return_value = payload
+    return response
+
+
+def test_generate_structured_retries_on_rate_limit() -> None:
+    """A 429 is retried with backoff; the following 200 succeeds."""
+    provider = OpenAICompatibleProvider(
+        model_name="openrouter",
+        api_base="https://openrouter.ai/api/v1",
+        api_key="test-key",
+        model_id="meta-llama/llama-3.3-70b-instruct",
+    )
+    throttled = _http_response(429, {"error": {"message": "rate limited"}})
+    ok = _http_response(200, {"choices": [{"message": {"content": '{"valid": true}'}}]})
+
+    with (
+        patch("httpx.Client.post", side_effect=[throttled, ok]) as mock_post,
+        patch("time.sleep") as mock_sleep,
+    ):
+        result = provider.generate_structured("Prompt", {"type": "object"})
+
+    assert result == {"valid": True}
+    assert mock_post.call_count == 2
+    mock_sleep.assert_called_once()
+
+
+def test_generate_structured_does_not_retry_client_errors() -> None:
+    """Non-retryable 4xx (e.g. 404 unknown model) fails fast, no retries."""
+    provider = OpenAICompatibleProvider(
+        model_name="openrouter",
+        api_base="https://openrouter.ai/api/v1",
+        api_key="test-key",
+        model_id="meta-llama/does-not-exist",
+    )
+    not_found = _http_response(404, {"error": {"message": "model not found"}})
+
+    with (
+        patch("httpx.Client.post", return_value=not_found) as mock_post,
+        patch("time.sleep") as mock_sleep,
+    ):
+        result = provider.generate_structured("Prompt", {"type": "object"})
+
+    assert result.get("parse_error") is True
+    assert mock_post.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+def test_model_name_env_aliases(monkeypatch) -> None:
+    """GROQ_MODEL_* env names win; FAST/STRONG_MODEL_NAME is the fallback."""
+    from app.core.config import Settings
+
+    monkeypatch.delenv("GROQ_MODEL_FAST", raising=False)
+    monkeypatch.delenv("GROQ_MODEL_REASONING", raising=False)
+    monkeypatch.setenv("GROQ_MODEL_FAST", "alias-fast")
+    monkeypatch.setenv("GROQ_MODEL_REASONING", "alias-strong")
+    monkeypatch.setenv("FAST_MODEL_NAME", "fallback-fast")
+    monkeypatch.setenv("STRONG_MODEL_NAME", "fallback-strong")
+    settings = Settings(_env_file=None)
+    assert settings.FAST_MODEL_NAME == "alias-fast"
+    assert settings.STRONG_MODEL_NAME == "alias-strong"
+
+    monkeypatch.delenv("GROQ_MODEL_FAST")
+    monkeypatch.delenv("GROQ_MODEL_REASONING")
+    fallback = Settings(_env_file=None)
+    assert fallback.FAST_MODEL_NAME == "fallback-fast"
+    assert fallback.STRONG_MODEL_NAME == "fallback-strong"
+
+
+def _groq_provider(model_id: str = "openai/gpt-oss-20b") -> OpenAICompatibleProvider:
+    return OpenAICompatibleProvider(
+        model_name="groq",
+        api_base="https://api.groq.com/openai/v1",
+        api_key="k",
+        model_id=model_id,
+    )
+
+
+def test_estimate_tokens_counts_prompt_and_completion() -> None:
+    payload = {
+        "messages": [
+            {"role": "system", "content": "x" * 400},
+            {"role": "user", "content": "y" * 800},
+        ],
+        "max_tokens": 200,
+    }
+    # 1200 chars / 4 = 300 prompt tokens + 200 completion budget.
+    assert OpenAICompatibleProvider._estimate_tokens(payload) == 500
+
+
+def test_groq_payload_extras_only_for_gpt_oss_on_groq(monkeypatch) -> None:
+    monkeypatch.setattr(OpenAICompatibleProvider, "_groq_reasoning_effort", "low")
+    assert _groq_provider()._groq_payload_extras() == {"reasoning_effort": "low"}
+    # Non-gpt-oss Groq model: no reasoning_effort field.
+    assert _groq_provider("allam-2-7b")._groq_payload_extras() == {}
+    # Non-Groq endpoint: never adds Groq-only fields.
+    other = OpenAICompatibleProvider(
+        model_name="openrouter",
+        api_base="https://openrouter.ai/api/v1",
+        api_key="k",
+        model_id="openai/gpt-oss-20b",
+    )
+    assert other._groq_payload_extras() == {}
+
+
+def test_pace_groq_request_within_budget_does_not_sleep(monkeypatch) -> None:
+    provider = _groq_provider()
+    monkeypatch.setattr(OpenAICompatibleProvider, "_groq_min_interval", 0.0)
+    monkeypatch.setattr(OpenAICompatibleProvider, "_groq_last_request", 0.0)
+    OpenAICompatibleProvider._groq_token_window.clear()
+    with patch("time.sleep") as sleep_mock:
+        provider._pace_groq_request(1000)
+    assert not sleep_mock.called
+    assert sum(t for _, t in OpenAICompatibleProvider._groq_token_window) == 1000
+
+
+def test_pace_groq_request_waits_when_budget_exceeded(monkeypatch) -> None:
+    monkeypatch.setattr(OpenAICompatibleProvider, "_groq_min_interval", 0.0)
+    provider = _groq_provider()
+    provider._groq_token_window.clear()
+    # Pretend 7,500 tokens were already sent just now; an 8k budget leaves 500.
+    OpenAICompatibleProvider._groq_token_window.append((time.monotonic(), 7900))
+    with patch("time.sleep") as sleep_mock:
+        provider._pace_groq_request(1000)
+    assert sleep_mock.called
+    assert sleep_mock.call_args[0][0] > 0
+
+
+def test_pace_skips_non_groq_endpoint() -> None:
+    provider = OpenAICompatibleProvider(
+        model_name="openrouter",
+        api_base="https://openrouter.ai/api/v1",
+        api_key="k",
+        model_id="meta-llama/llama-3.3-70b-instruct",
+    )
+    before = list(OpenAICompatibleProvider._groq_token_window)
+    with patch("time.sleep") as sleep_mock:
+        provider._pace_groq_request(999999)
+    assert not sleep_mock.called
+    assert list(OpenAICompatibleProvider._groq_token_window) == before
+
+
+
+def test_daily_token_limit_is_detected_from_429_body() -> None:
+    """Groq's per-day token quota must be recognised so the provider fails fast
+    instead of retrying three times at 60s each (the retry storm)."""
+    import httpx
+
+    daily = httpx.Response(
+        429,
+        json={"error": {"message": "Rate limit reached ... on tokens per day (TPD): "
+                                   "Limit 200000, Used 199443. Please try again in 6m47s."}},
+    )
+    burst = httpx.Response(
+        429,
+        json={"error": {"message": "Rate limit reached ... on tokens per minute (TPM). "
+                                   "Please try again in 6s."}},
+    )
+    assert OpenAICompatibleProvider._is_daily_limit(daily) is True
+    assert OpenAICompatibleProvider._is_daily_limit(burst) is False
+    assert OpenAICompatibleProvider._is_daily_limit(None) is False

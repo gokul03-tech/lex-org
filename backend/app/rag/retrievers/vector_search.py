@@ -43,11 +43,11 @@ class VectorRetriever:
         start_time = time.monotonic()
 
         try:
-            from app.embeddings.bge_m3 import get_bge_m3
+            from app.embeddings.embedder import get_embedder
             from app.embeddings.qdrant_client import get_qdrant_manager
 
             # Encode query
-            embedder = get_bge_m3()
+            embedder = get_embedder()
             query_vector = embedder.encode_queries([query])[0]
 
             # Search Qdrant
@@ -88,10 +88,10 @@ class VectorRetriever:
             List of result lists, one per input query.
         """
         try:
-            from app.embeddings.bge_m3 import get_bge_m3
+            from app.embeddings.embedder import get_embedder
             from app.embeddings.qdrant_client import get_qdrant_manager
 
-            embedder = get_bge_m3()
+            embedder = get_embedder()
             qdrant = get_qdrant_manager()
 
             # Encode all queries

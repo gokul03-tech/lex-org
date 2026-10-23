@@ -107,9 +107,9 @@ class IntentDetector:
     def _llm_classify(self, query: str) -> LegalIntent:
         """Use LLM to classify ambiguous queries."""
         try:
-            from app.llm.qwen import get_qwen_provider
+            from app.llm.routing import get_fast_provider
 
-            provider = get_qwen_provider()
+            provider = get_fast_provider()
             prompt = (
                 f"Classify the following legal query into EXACTLY ONE category:\n\n"
                 f"Query: {query}\n\n"

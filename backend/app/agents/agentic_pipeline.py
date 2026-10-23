@@ -12,7 +12,8 @@ Guarantees implemented here:
     heurist regex) or returns a pre-agreed fallback.
   * Every agent is wrapped in try/except; on any failure the caller falls back
     to the raw/deterministic extraction (nothing is fabricated).
-  * LLM calls are lightweight (default Qwen via get_qwen_provider) and run off
+  * LLM calls are lightweight (fast model for agents 1-3, strong model for the
+    Critic) and run off
     the event loop with asyncio.to_thread.
   * provider= may be injected for testing (a fake provider keeps tests
     deterministic and offline).
@@ -27,7 +28,7 @@ from typing import Any
 
 from loguru import logger
 
-from app.llm.qwen import get_qwen_provider
+from app.llm.routing import get_fast_provider, get_strong_provider
 
 AGENTIC_SYSTEM_PROMPT = (
     "You are a precise legal-document extraction agent for LexOrch-KG. "
@@ -44,8 +45,13 @@ def _fit_context(text: str, limit: int) -> str:
 
 
 def _get_provider(provider: Any = None) -> Any:
-    """Return the injected provider or the lightweight default (Qwen)."""
-    return provider if provider is not None else get_qwen_provider()
+    """Return the injected provider or the fast default (simple agents)."""
+    return provider if provider is not None else get_fast_provider()
+
+
+def _get_strong_provider(provider: Any = None) -> Any:
+    """Return the injected provider or the strong default (Critic agent)."""
+    return provider if provider is not None else get_strong_provider()
 
 
 def _extract_json(text: str) -> Any:
@@ -167,6 +173,139 @@ async def clean_document_text(text: str, provider: Any = None) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# OCR REPAIR (pre-processing, runs before case_understanding)
+# ══════════════════════════════════════════════════════════════════════════════
+_OCR_WORD_RE = re.compile(r"[A-Za-z][A-Za-z']*")
+# Characters fused with the wrong neighbour are the clearest scan fingerprint:
+# "224of", "2017can", "thecourt". Legal text otherwise keeps digits and words
+# apart (the "Section 482" case), so a small rate of fusion means real damage.
+_OCR_FUSION_RE = re.compile(r"\b\d+[a-z]{2,}\b|\b[a-z]{2,}\d+\b")
+_OCR_ACRONYM_RE = re.compile(r"^[A-Z]{2,6}$")
+
+
+def _looks_like_ocr_noise(text: str) -> bool:
+    """Cheap heuristic: did scanning mangle this text badly enough to repair?
+
+    Avoids paying an LLM round-trip for the common case of a clean digital
+    judgment. Triggers on replacement/mojibake characters, on a meaningful rate
+    of digit-letter fusion, or on vowel-less "words" that prose never produces.
+    """
+    sample = (text or "")[:6000]
+    if not sample:
+        return False
+    if "\ufffd" in sample or "Ã" in sample:
+        return True
+    words = _OCR_WORD_RE.findall(sample)
+    if len(words) < 100:
+        return False
+    if len(_OCR_FUSION_RE.findall(sample.lower())) / len(words) >= 0.02:
+        return True
+    vowel_less = sum(
+        1
+        for w in words
+        if len(w) >= 5 and not _OCR_ACRONYM_RE.match(w) and not re.search(r"[aeiou]", w.lower())
+    )
+    return vowel_less / len(words) >= 0.03
+
+
+def _split_for_repair(text: str, chunk_size: int) -> list[str]:
+    """Split on line boundaries so a window never cuts a word in half."""
+    parts: list[str] = []
+    start = 0
+    while start < len(text):
+        end = min(len(text), start + chunk_size)
+        if end < len(text):
+            nl = text.rfind("\n", start + chunk_size // 2, end)
+            if nl != -1:
+                end = nl + 1
+        parts.append(text[start:end])
+        start = end
+    return parts
+
+
+async def _repair_ocr_chunk(chunk: str, provider: Any) -> str:
+    prompt = f"""You are an expert legal document cleaner for Indian court
+judgments. The text below was scanned and then OCR'd, so it contains severe
+character-recognition errors.
+
+Correct the damage using legal context. Typical cases:
+- Section numbers misread as letters: "52g" or "52S" -> "528"; "1o5" -> "105".
+- Missing spaces between words: "224of" -> "224 of", "thecourt" -> "the court".
+- Confused characters: "CrounOs" -> "Grounds", "Hioh" -> "High", "cou(" ->
+  "Court", "opvoi" -> "copy", "copplsl" -> "complex", "rn" -> "m".
+- Broken words: "pro_ceJdings" -> "proceedings", "tu'oda-ys" -> "two days".
+
+Rules:
+1. Fix all spelling, OCR and spacing errors using the legal context.
+2. Do NOT change the legal meaning, facts, dates, section numbers or case names.
+3. Never paraphrase, summarise, translate, reorder, or add commentary.
+
+Return STRICT JSON ONLY: {{"cleaned_text": "the repaired text"}}
+
+SCANNED TEXT:
+{chunk}"""
+    parsed = await _call_json(
+        provider,
+        prompt,
+        max_tokens=max(600, len(chunk) // 2),
+        output_schema={
+            "type": "object",
+            "properties": {"cleaned_text": {"type": "string"}},
+            "required": ["cleaned_text"],
+        },
+    )
+    cleaned = str(parsed.get("cleaned_text", "")).strip() if isinstance(parsed, dict) else ""
+    # Content-loss guard: a window that comes back at under half its size was
+    # summarised or truncated, which is worse than the OCR noise it fixed.
+    if not cleaned or len(cleaned) < 0.5 * len(chunk):
+        return chunk
+    return cleaned
+
+
+async def clean_ocr_text_with_llm(
+    text: str,
+    provider: Any = None,
+    force: bool = False,
+    chunk_size: int = 6000,
+    max_chars: int | None = None,
+) -> str:
+    """Repair severe OCR damage before the analysis agents read the document.
+
+    A badly scanned PDF poisons every downstream extractor, so this pre-pass
+    translates garbled text back into clean text. It fires only when the text
+    actually looks damaged (unless ``force``); clean documents are returned
+    untouched. The document is repaired in bounded windows so one long judgment
+    never depends on a single truncation-prone completion, and any window that
+    fails or shrinks suspiciously falls back to its original text.
+
+    ``max_chars`` caps how much of the document is sent to the model (0/None =
+    the whole document). When a cap is set only the leading ``max_chars`` are
+    repaired and the untouched tail is re-appended, so the caption/issues band
+    (which drives downstream extraction) is fixed without paying to repair the
+    full body.
+    """
+    if not text:
+        return text or ""
+    if not force and not _looks_like_ocr_noise(text):
+        return text
+    provider = _get_provider(provider)
+    head, tail = text, ""
+    if max_chars and 0 < max_chars < len(text):
+        head, tail = text[:max_chars], text[max_chars:]
+    parts = _split_for_repair(head, chunk_size)
+    repaired = [await _repair_ocr_chunk(part, provider) for part in parts]
+    cleaned = "\n".join(repaired) + tail
+    if cleaned == text:
+        return text
+    logger.info(
+        f"[OCRRepair] repaired scanned text: {len(text)} -> {len(cleaned)} chars "
+        f"(head {len(head)})"
+    )
+    return cleaned
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # AGENT 2 — CONTEXT RESOLVER (statutes & dates)
 # ══════════════════════════════════════════════════════════════════════════════
 def _context_window(text: str, sec: str, words: int = 50) -> str:
@@ -239,6 +378,199 @@ async def resolve_act_from_context(
         if sec and act and act.lower() != "null":
             result[sec] = act
     return result
+
+
+_YEAR_RE = re.compile(r"\b(1[6-9]\d{2}|20\d{2})\b")
+
+
+def _split_act_and_year(act: str) -> tuple[str, str]:
+    """Split "Code of Criminal Procedure, 1973" into ("Code of Criminal
+    Procedure", "1973"). An Act with no year returns an empty year."""
+    match = re.search(r"\b(1[6-9]\d{2}|20\d{2})\b", act)
+    if not match:
+        return act.strip(" ,"), ""
+    return act[: m.start()].strip(" ,") if (m := match) else act, m.group(1)
+
+
+async def resolve_act_from_snippet(
+    section: str, context: str, provider: Any = None
+) -> dict[str, str]:
+    """Identify the Act a section belongs to from its number and context snippet.
+
+    Given the section number and the ~50 words surrounding it, return the full
+    Act name and year. Never guesses an Act the context does not name - empty
+    strings are returned instead.
+    """
+    provider = _get_provider(provider)
+    prompt = f"""I am extracting a legal statute. Here is the section number and
+the 50 words of text surrounding it:
+
+SECTION: {section}
+CONTEXT: {context}
+
+Based STRICTLY on this context, what is the full name and year of the Act this
+section belongs to? If the context does not name the Act, leave act_name and
+year empty - never guess.
+
+Return STRICT JSON ONLY:
+{{"section": "...", "act_name": "...", "year": "..."}}"""
+    parsed = await _call_json(
+        provider,
+        prompt,
+        max_tokens=300,
+        output_schema={
+            "type": "object",
+            "properties": {
+                "section": {"type": "string"},
+                "act_name": {"type": "string"},
+                "year": {"type": "string"},
+            },
+            "required": ["section", "act_name", "year"],
+        },
+    )
+    if not isinstance(parsed, dict):
+        return {"section": str(section), "act_name": "", "year": ""}
+    return {
+        "section": str(parsed.get("section", section) or section).strip(),
+        "act_name": str(parsed.get("act_name", "") or "").strip(),
+        "year": str(parsed.get("year", "") or "").strip(),
+    }
+
+
+async def resolve_acts_detailed(
+    sections: list[str], text: str, provider: Any = None
+) -> dict[str, dict[str, str]]:
+    """Batched form of :func:`resolve_act_from_snippet`.
+
+    Returns {section: {"act_name": ..., "year": ...}}. A section whose context
+    names no Act is absent. An Act returned as one string ("Code of Criminal
+    Procedure, 1973") is split into name and trailing four-digit year.
+    """
+    if not sections:
+        return {}
+    provider = _get_provider(provider)
+    lines = []
+    for sec in sections:
+        ctx = _context_window(text, str(sec))
+        if ctx:
+            lines.append(f"SECTION: {sec}\nCONTEXT: {ctx}")
+    if not lines:
+        return {}
+    block = "\n\n".join(lines)
+    prompt = f"""I am extracting legal statutes. For each section below you are
+given its number and the 50 words of text surrounding it.
+
+Based STRICTLY on that context, give the full name and year of the Act the
+section belongs to. If the context does not name an Act, leave act_name and year
+empty - never guess.
+
+Return STRICT JSON ONLY:
+{{"resolutions": [{{"section": "...", "act_name": "...", "year": "..."}}]}}
+
+SECTIONS:
+{block}"""
+    parsed = await _call_json(
+        provider,
+        prompt,
+        max_tokens=800,
+        output_schema={
+            "type": "object",
+            "properties": {
+                "resolutions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "section": {"type": "string"},
+                            "act_name": {"type": "string"},
+                            "year": {"type": "string"},
+                        },
+                        "required": ["section", "act_name"],
+                    },
+                }
+            },
+            "required": ["resolutions"],
+        },
+    )
+    if not isinstance(parsed, dict):
+        return {}
+    result: dict[str, dict[str, str]] = {}
+    for item in parsed.get("resolutions", []):
+        sec = str(item.get("section", "")).strip()
+        name = str(item.get("act_name", "") or "").strip()
+        year = str(item.get("year", "") or "").strip()
+        if not name:
+            act = str(item.get("act", "") or "").strip()
+            if act and act.lower() != "null":
+                match = re.search(r"\b(1[6-9]\d{2}|20\d{2})\b", act)
+                if match:
+                    year = year or match.group(1)
+                    name = act[: match.start()].strip(" ,")
+                else:
+                    name = act
+        if sec and name:
+            result[sec] = {"act_name": name, "year": year}
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HEADER BLOCK CLASSIFIER
+# ══════════════════════════════════════════════════════════════════════════════
+def _split_header_blocks(text: str, max_blocks: int, head_chars: int = 8000) -> list[str]:
+    """Split the top of a judgment into paragraphs (falling back to lines)."""
+    head = (text or "")[:head_chars]
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", head) if b.strip()]
+    if len(blocks) <= 1:
+        blocks = [ln.strip() for ln in head.splitlines() if ln.strip()]
+    return blocks[:max_blocks]
+
+
+async def classify_header_blocks(
+    text: str, provider: Any = None, max_blocks: int = 25
+) -> list[str]:
+    """Keep only the Legal Content blocks at the top of a judgment.
+
+    Reporter permissions, fair copy requests, circulation notes and copyright
+    boilerplate sit above the real judgment but break label-anchored extraction.
+    Each block is classified as "Administrative Metadata" or "Legal Content" and
+    only the legal blocks are returned. On any failure every block is returned,
+    so content is never dropped because the LLM misbehaved.
+    """
+    blocks = _split_header_blocks(text, max_blocks)
+    if len(blocks) <= 1:
+        return blocks
+    provider = _get_provider(provider)
+    listing = "\n".join(f"[{i}] {b}" for i, b in enumerate(blocks))
+    prompt = f"""Read the following text blocks from the top of a legal judgment.
+Classify each block as either "Administrative Metadata" (e.g. reporter
+permissions, fair copy requests, circulation notes, copyright notices) or
+"Legal Content" (e.g. facts, arguments, issues, orders).
+
+Return STRICT JSON ONLY: {{"legal_content": [<indices of Legal Content blocks>]}}
+
+BLOCKS:
+{listing}"""
+    parsed = await _call_json(
+        provider,
+        prompt,
+        max_tokens=400,
+        output_schema={
+            "type": "object",
+            "properties": {"legal_content": {"type": "array", "items": {"type": "integer"}}},
+            "required": ["legal_content"],
+        },
+    )
+    if not isinstance(parsed, dict) or "legal_content" not in parsed:
+        return blocks
+    keep: list[str] = []
+    for idx in parsed.get("legal_content", []):
+        try:
+            i = int(idx)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= i < len(blocks):
+            keep.append(blocks[i])
+    return keep or blocks
 
 
 _DATES_PROMPT = """Extract EVERY date present in the document below.
@@ -386,12 +718,119 @@ ARGUMENTS:
 # ══════════════════════════════════════════════════════════════════════════════
 # AGENT 4 — CRITIC (self-correction / reflexion)
 # ══════════════════════════════════════════════════════════════════════════════
+# The court's own dispositive/reasoning language. An "issue" is the legal
+# question; once a phrase like "We hold" bleeds in, the extractor has captured
+# the judgment instead. Matched case-insensitively.
+JUDICIAL_REASONING_PHRASES = (
+    "we hold",
+    "the court finds",
+    "therefore, the petition is allowed",
+    "in the result",
+)
+
+
+def clean_issues_deterministic(issues: list[str]) -> list[str]:
+    """Rule-based issue cleanup that needs no LLM.
+
+    An issue is the legal question; anything long or carrying the court's own
+    reasoning is a judgment, not an issue. Over-long issues are truncated at the
+    first question mark, and an issue that trails into judicial reasoning is cut
+    back to its last question mark. Blank entries are dropped, and the standard
+    administrative reporting heads ("Whether Reporters of Local Papers may be
+    allowed to see the judgment?") are dropped because they are not legal issues.
+    """
+    from app.agents.presentation_universal import _ADMIN_QUESTION_RE
+
+    cleaned: list[str] = []
+    for raw in issues:
+        issue = str(raw).strip()
+        if not issue:
+            continue
+        if _ADMIN_QUESTION_RE.search(issue):
+            continue
+        if len(issue.split()) > 100 and "?" in issue:
+            issue = issue.split("?")[0].strip() + "?"
+        low = issue.lower()
+        if any(phrase in low for phrase in JUDICIAL_REASONING_PHRASES) and "?" in issue:
+            issue = issue[: issue.rfind("?") + 1].strip()
+        cleaned.append(issue)
+    return cleaned
+
+
+# A meaningful legal query must name an area of law; a blank or boilerplate
+# query ("Client: .") carries none and starves the RAG pipeline of a signal.
+_LEGAL_QUERY_KEYWORDS = ("petition", "appeal", "bail", "quash", "section", "act")
+
+
+def validate_understanding_query(query: str) -> bool:
+    """Quality gate for a case-understanding query.
+
+    Returns False for empty/too-short strings, or ones that name no legal
+    keyword - the two failure modes that leave the RAG pipeline with nothing to
+    retrieve and collapse the trust score.
+    """
+    q = (query or "").strip().lower()
+    return len(q) >= 20 and any(word in q for word in _LEGAL_QUERY_KEYWORDS)
+
+
+async def recover_from_ocr(text: str, provider: Any = None) -> dict[str, str]:
+    """Header/footer-only recovery for badly OCR'd documents.
+
+    When the body is garbled a full read fails, but the caption band (top) and
+    the final order (bottom) usually survive OCR intact. This asks for just
+    those, so a degraded document still yields a usable case name, date and
+    outcome instead of a blank understanding.
+    """
+    provider = _get_provider(provider)
+    head = text[:1500]
+    tail = text[-1500:] if len(text) > 1500 else text
+    prompt = f"""The document text appears to have severe OCR errors or formatting
+issues. Ignore the garbled body. Look ONLY at the header (top) and the Final
+Order (bottom) of the document below.
+
+Extract:
+- case_name: the case caption ("X v. Y" or "X vs Y")
+- judgment_date: the judgment/decision date
+- final_order: the final order, e.g. "Bail granted", "Petition allowed"
+
+Return STRICT JSON: {{"case_name": "...", "judgment_date": "...", "final_order": "..."}}
+
+HEADER:
+{head}
+
+FINAL ORDER:
+{tail}"""
+    parsed = await _call_json(
+        provider,
+        prompt,
+        max_tokens=600,
+        output_schema={
+            "type": "object",
+            "properties": {
+                "case_name": {"type": "string"},
+                "judgment_date": {"type": "string"},
+                "final_order": {"type": "string"},
+            },
+        },
+    )
+    if not isinstance(parsed, dict):
+        return {"case_name": "", "judgment_date": "", "final_order": ""}
+    return {
+        "case_name": str(parsed.get("case_name") or "").strip(),
+        "judgment_date": str(parsed.get("judgment_date") or "").strip(),
+        "final_order": str(parsed.get("final_order") or "").strip(),
+    }
+
+
 async def critic_issues(issues: list[str], provider: Any = None) -> list[str]:
     """Issue Critic: truncate every issue to ONLY the legal question (an issue
     should rarely exceed 2 sentences). Reasoning/analysis is removed."""
     if not issues:
         return issues
-    provider = _get_provider(provider)
+    # Deterministic pre-pass: strip obvious judicial-reasoning bleed reliably,
+    # even if the LLM call below fails or returns an unusable shape.
+    pre_cleaned = clean_issues_deterministic(issues)
+    provider = _get_strong_provider(provider)
     prompt = f"""Review these extracted Legal Issues.
 
 For each issue: if it contains the court's reasoning or analysis, TRUNCATE it
@@ -400,7 +839,7 @@ to ONLY the legal question. An issue should rarely exceed 2 sentences.
 Return STRICT JSON: {{"issues": ["..."]}}
 
 ISSUES:
-{chr(10).join(f"- {i}" for i in issues)}"""
+{chr(10).join(f"- {i}" for i in pre_cleaned)}"""
     parsed = await _call_json(
         provider,
         prompt,
@@ -413,9 +852,9 @@ ISSUES:
     )
     if isinstance(parsed, dict):
         cleaned = [str(i).strip() for i in parsed.get("issues", []) if str(i).strip()]
-        if len(cleaned) == len(issues):
+        if len(cleaned) == len(pre_cleaned):
             return cleaned
-    return list(issues)
+    return pre_cleaned
 
 
 async def critic_strengths(
@@ -424,7 +863,7 @@ async def critic_strengths(
     """Strengths Critic: if a strength is a generic fallback ("No favorable
     findings extracted"), re-read the ANALYSIS AND REASONING section of the
     source and extract the court's actual favorable findings."""
-    provider = _get_provider(provider)
+    provider = _get_strong_provider(provider)
     has_placeholder = any(
         not s.strip() or "no " in s.lower()[:40] or s.lower().startswith("none")
         for s in strengths
@@ -469,7 +908,7 @@ async def critic_strengths_and_gaps(
     provider: Any = None,
 ) -> dict[str, list[str]]:
     """Critic pass for both party strengths and potential gaps."""
-    provider = _get_provider(provider)
+    provider = _get_strong_provider(provider)
     prompt = f"""Review the Analysis and Reasoning section below.
 
 Extract only document-grounded findings:
@@ -563,15 +1002,20 @@ async def run_agentic_pipeline(
         Dict with every agent's output. Any agent that fails degrades to the
         caller-supplied value (never fabricated).
     """
-    cleaned = await clean_text_with_llm(text, provider)
+    repaired = await clean_ocr_text_with_llm(text, provider)
+    cleaned = await clean_text_with_llm(repaired, provider)
     out: dict[str, Any] = {"cleaned_text": cleaned, "raw_text": text}
+
+    out["legal_content_blocks"] = await classify_header_blocks(cleaned, provider)
 
     out["judgment_date"] = await classify_judgment_date(cleaned, provider)
 
     if sections:
         out["act_resolutions"] = await resolve_act_from_context(list(sections), cleaned, provider)
+        out["act_details"] = await resolve_acts_detailed(list(sections), cleaned, provider)
     else:
         out["act_resolutions"] = {}
+        out["act_details"] = {}
 
     out["counsel_attribution"] = await attribute_counsel_arguments(
         list(petitioner_args or []),
