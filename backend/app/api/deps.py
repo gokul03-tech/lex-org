@@ -46,6 +46,13 @@ async def get_current_user_id(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
+    if payload.get("type") != "access":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access token required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     user_id: str | None = payload.get("sub")
     if user_id is None:
         raise HTTPException(

@@ -7,6 +7,7 @@ generates PDF via WeasyPrint, and manages report storage.
 from __future__ import annotations
 
 import json
+from html import escape
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -266,13 +267,13 @@ class ReportGenerator:
         """Render report as HTML."""
         sections_html = ""
         for section in report.get("sections", []):
-            title = section.get("title", "")
+            title = escape(str(section.get("title", "")))
             content = section.get("content", {})
 
             if isinstance(content, dict):
-                content_str = json.dumps(content, indent=2, default=str)
+                content_str = escape(json.dumps(content, indent=2, default=str))
             else:
-                content_str = str(content)
+                content_str = escape(str(content))
 
             sections_html += f"""
             <div class="section">
